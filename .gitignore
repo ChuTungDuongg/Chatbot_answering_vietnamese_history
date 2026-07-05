@@ -1,0 +1,120 @@
+# =========================
+# Python / Notebook
+# =========================
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Secrets / Env
+# =========================
+.env
+.env.*
+*.key
+*.pem
+secrets/
+credentials.json
+token.json
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+wandb/
+runs/
+mlruns/
+tensorboard/
+
+# =========================
+# Model checkpoints / LoRA / weights
+# =========================
+checkpoints/
+outputs/
+output/
+models/
+model/
+adapters/
+adapter/
+merged_model/
+hf_cache/
+.cache/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# =========================
+# Hugging Face / training cache
+# =========================
+.huggingface/
+datasets/
+dataset_cache/
+transformers_cache/
+
+# =========================
+# RAG artifacts
+# =========================
+vector_db/
+faiss_index/
+chroma/
+chroma_db/
+qdrant_storage/
+*.faiss
+*.index
+*.pkl
+*.pickle
+
+# =========================
+# Generated dataset files
+# =========================
+*_rag_sft_*.jsonl
+*_rag_sft_*.csv
+*_rag_sft_*.json
+*_full_with_context.csv
+*_preview.csv
+*_structured.jsonl
+*_messages.jsonl
+*_stats.json
+
+# =========================
+# Chunk export outputs
+# =========================
+rag_dataset_prep/chunk_batches/
+rag_dataset_prep/dataset_templates/
+chunk_batches/
+dataset_templates/
+pack_*.md
+
+# =========================
+# Large raw / processed data
+# =========================
+data/raw/
+data/processed/
+processed/
+raw/
+*.parquet
+*.arrow
+*.sqlite
+*.db
+
+# =========================
+# Keep examples if needed
+# =========================
+!examples/
+!examples/*.jsonl
+!examples/*.md
