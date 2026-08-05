@@ -84,16 +84,13 @@ class RetrieveResponse(BaseModel):
     analysis: QuestionAnalysis | None = None
 
     query_variants: list[str] = Field(default_factory=list)
-
     final_context: list[RetrievalContextItem] = Field(default_factory=list)
 
-    # Chỉ trả khi debug=True.
     candidates: list[RetrievalContextItem] | None = None
     tool_trace: list[str] | None = None
 
     max_dense: float | None = None
     context_title_diversity: float = 0.0
-
     latency_ms: float
 
 
@@ -111,6 +108,7 @@ class ChatRequest(BaseModel):
         ],
     )
 
+    final_k: int = Field(default=6, ge=1, le=10)
     debug: bool = False
 
 

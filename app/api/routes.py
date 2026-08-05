@@ -1,17 +1,24 @@
 import asyncio
+import json
 import logging
 import time
-from typing import Any
+from typing import Any, Iterator
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.schemas import (
+    ChatRequest,
+    ChatResponse,
     RetrieveRequest,
     RetrieveResponse,
     RetrievalContextItem,
+    SourceItem,
 )
 
+
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter(
     prefix="/api/v1",
@@ -19,8 +26,11 @@ router = APIRouter(
 )
 
 
+# ============================================================
+# Helpers
+# ============================================================
+
 def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
-    """Convert an internal retrieval chunk into a safe API response object."""
     return RetrievalContextItem(
         chunk_id=str(chunk.get("chunk_id", "")),
         title=chunk.get("title"),
@@ -33,6 +43,36 @@ def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
     )
 
 
+def _source_to_api(service, source_id: str) -> SourceItem:
+    chunk = service.chunk_by_id.get(str(source_id))
+
+    return SourceItem(
+        chunk_id=str(source_id),
+        title=chunk.get("title") if chunk else None,
+    )
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _answer_chunks(text: str, words_per_chunk: int = 3) -> Iterator[str]:
+    words = text.split()
+
+    for index in range(0, len(words), words_per_chunk):
+        chunk = " ".join(words[index:index + words_per_chunk])
+
+        if index + words_per_chunk < len(words):
+            chunk += " "
+
+        yield chunk
+
+
+# ============================================================
+# Retrieve
+# ============================================================
+
 @router.post(
     "/retrieve",
     response_model=RetrieveResponse,
@@ -42,22 +82,6 @@ async def retrieve(
     payload: RetrieveRequest,
     request: Request,
 ) -> RetrieveResponse:
-    """
-    Run the Phase 9 hybrid retrieval pipeline.
-
-    Pipeline:
-    question
-        -> query analysis
-        -> query expansion
-        -> E5 + FAISS
-        -> BM25
-        -> weighted RRF
-        -> cross-encoder reranking
-        -> metadata soft boost
-        -> diversity selection
-        -> final contexts
-    """
-
     service = request.app.state.rag_service
     retriever = request.app.state.retriever
 
@@ -79,8 +103,6 @@ async def retrieve(
     started = time.perf_counter()
 
     try:
-        # Retrieval + reranking are blocking operations.
-        # Move them to a worker thread so the FastAPI event loop is not blocked.
         result = await asyncio.to_thread(
             retriever.retrieve,
             payload.question,
@@ -138,9 +160,289 @@ async def retrieve(
         candidates=candidates,
         tool_trace=tool_trace,
         max_dense=result.get("max_dense"),
-        context_title_diversity=result.get(
-            "context_title_diversity",
-            0.0,
-        ),
+        context_title_diversity=result.get("context_title_diversity", 0.0),
         latency_ms=latency_ms,
+    )
+
+
+# ============================================================
+# Chat
+# ============================================================
+
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def chat(
+    payload: ChatRequest,
+    request: Request,
+) -> ChatResponse:
+    service = request.app.state.rag_service
+    generator = request.app.state.generator
+
+    if generator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Generation runtime is not loaded. "
+                "Use APP_MODE=full to enable chat."
+            ),
+        )
+
+    if not service.loaded or service.model is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Generation model is not ready.",
+        )
+
+    started = time.perf_counter()
+
+    try:
+        result = await asyncio.to_thread(
+            generator.chat,
+            payload.question,
+            payload.final_k,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+        logger.exception("Generation runtime error")
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("Unexpected chat error")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal generation error.",
+        ) from exc
+
+    latency_ms = (time.perf_counter() - started) * 1000
+
+    sources = [
+        _source_to_api(service, source_id)
+        for source_id in result.get("source_ids", [])
+    ]
+
+    debug = None
+
+    if payload.debug:
+        retrieval = result.get("retrieval", {})
+
+        debug = {
+            "analysis": result.get("analysis"),
+            "tool_trace": result.get("tool_trace", []),
+            "prompt_budget": result.get("prompt_budget"),
+            "support_score": result.get("support_score"),
+            "quality_warnings": result.get("quality_warnings", []),
+            "initial_quality_issues": result.get("initial_quality_issues", []),
+            "repair_attempted": result.get("repair_attempted", False),
+            "model_source_ids": result.get("model_source_ids", []),
+            "invalid_source_ids": result.get("invalid_source_ids", []),
+            "unsupported_years": result.get("unsupported_years", []),
+            "format_ok": result.get("format_ok"),
+            "is_ood": retrieval.get("is_ood", False),
+            "ood_reason": retrieval.get("ood_reason", ""),
+            "query_variants": retrieval.get("query_variants", []),
+            "retrieval_latency_ms": (
+                result.get("retrieval_latency_sec", 0.0) * 1000
+            ),
+        }
+
+    return ChatResponse(
+        answer=result["answer"],
+        status=result["status"],
+        sources=sources,
+        latency_ms=latency_ms,
+        rewrite_used=result.get("rewrite_used", False),
+        debug=debug,
+    )
+
+
+# ============================================================
+# Validated SSE Chat Stream
+# ============================================================
+
+@router.post(
+    "/chat/stream",
+    status_code=status.HTTP_200_OK,
+)
+async def chat_stream(
+    payload: ChatRequest,
+    request: Request,
+):
+    service = request.app.state.rag_service
+    generator = request.app.state.generator
+
+    # Return a normal HTTP 503 before opening the SSE connection.
+    if generator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Generation runtime is not loaded. "
+                "Use APP_MODE=full to enable chat streaming."
+            ),
+        )
+
+    if not service.loaded or service.model is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Generation model is not ready.",
+        )
+
+    async def event_stream():
+        stream_started = time.perf_counter()
+
+        yield _sse(
+            "status",
+            {
+                "stage": "processing",
+                "message": "Retrieving evidence, generating and validating answer.",
+            },
+        )
+
+        # Run the complete RAG pipeline in a worker thread.
+        # No answer text is exposed before this task completes.
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                generator.chat,
+                payload.question,
+                payload.final_k,
+            )
+        )
+
+        # Keep the SSE connection alive during long GPU inference.
+        while not task.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=8.0,
+                )
+            except asyncio.TimeoutError:
+                yield _sse(
+                    "ping",
+                    {
+                        "timestamp": time.time(),
+                    },
+                )
+
+        try:
+            result = await task
+
+        except ValueError as exc:
+            yield _sse(
+                "error",
+                {
+                    "type": "bad_request",
+                    "message": str(exc),
+                },
+            )
+            return
+
+        except RuntimeError as exc:
+            logger.exception("Streaming generation runtime error")
+
+            yield _sse(
+                "error",
+                {
+                    "type": "runtime_error",
+                    "message": str(exc),
+                },
+            )
+            return
+
+        except Exception:
+            logger.exception("Unexpected streaming chat error")
+
+            yield _sse(
+                "error",
+                {
+                    "type": "internal_error",
+                    "message": "Internal generation error.",
+                },
+            )
+            return
+
+        # At this point:
+        # retrieval -> generation -> guards -> optional repair
+        # has already completed.
+        yield _sse(
+            "status",
+            {
+                "stage": "validated",
+                "status": result.get("status"),
+                "rewrite_used": result.get("rewrite_used", False),
+            },
+        )
+
+        # Stream only the accepted final answer.
+        for delta in _answer_chunks(result["answer"]):
+            yield _sse(
+                "answer_delta",
+                {
+                    "delta": delta,
+                },
+            )
+
+            # Small delay purely for progressive UI rendering.
+            await asyncio.sleep(0.015)
+
+        sources = [
+            _source_to_api(service, source_id).model_dump()
+            for source_id in result.get("source_ids", [])
+        ]
+
+        yield _sse(
+            "sources",
+            {
+                "items": sources,
+            },
+        )
+
+        if payload.debug:
+            retrieval = result.get("retrieval", {})
+
+            yield _sse(
+                "debug",
+                {
+                    "tool_trace": result.get("tool_trace", []),
+                    "support_score": result.get("support_score"),
+                    "quality_warnings": result.get("quality_warnings", []),
+                    "repair_attempted": result.get("repair_attempted", False),
+                    "rewrite_used": result.get("rewrite_used", False),
+                    "invalid_source_ids": result.get("invalid_source_ids", []),
+                    "unsupported_years": result.get("unsupported_years", []),
+                    "is_ood": retrieval.get("is_ood", False),
+                    "ood_reason": retrieval.get("ood_reason", ""),
+                },
+            )
+
+        elapsed_ms = (time.perf_counter() - stream_started) * 1000
+
+        yield _sse(
+            "done",
+            {
+                "status": result.get("status"),
+                "latency_ms": elapsed_ms,
+                "rewrite_used": result.get("rewrite_used", False),
+            },
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )

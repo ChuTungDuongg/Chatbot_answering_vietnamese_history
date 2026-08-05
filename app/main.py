@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 
 from app.api.routes import router as api_router
 from app.config import settings
+from app.rag.generation import RAGGenerator
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
 from app.services.rag_service import RAGService
@@ -16,25 +17,28 @@ from app.services.rag_service import RAGService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     service = RAGService()
-
-    # Load resources according to APP_MODE.
-    #
-    # api-only:
-    #   load nothing
-    #
-    # retrieval-only:
-    #   corpus + FAISS + BM25 + E5 + reranker
-    #
-    # full:
-    #   retrieval stack + Qwen
     service.load()
 
-    app.state.rag_service = service
+    retriever = None
+    generator = None
 
     if settings.should_load_retrieval:
-        app.state.retriever = HybridRetriever(service)
-    else:
-        app.state.retriever = None
+        retriever = HybridRetriever(service)
+
+    if settings.should_load_model:
+        if retriever is None:
+            raise RuntimeError(
+                "Full mode requires the retrieval runtime."
+            )
+
+        generator = RAGGenerator(
+            service=service,
+            retriever=retriever,
+        )
+
+    app.state.rag_service = service
+    app.state.retriever = retriever
+    app.state.generator = generator
 
     yield
 
@@ -50,8 +54,8 @@ app = FastAPI(
     version=settings.app_version,
     description=(
         "Vietnamese History Hybrid RAG API using Qwen2.5, "
-        "multilingual E5, FAISS, BM25S, Reciprocal Rank Fusion "
-        "and cross-encoder reranking."
+        "multilingual E5, FAISS, BM25S, Reciprocal Rank Fusion, "
+        "cross-encoder reranking and grounded-generation guards."
     ),
     lifespan=lifespan,
 )
@@ -107,7 +111,7 @@ async def ready(request: Request):
 
 
 # ============================================================
-# API routers
+# API router
 # ============================================================
 
 app.include_router(api_router)
