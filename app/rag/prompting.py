@@ -215,8 +215,12 @@ class PromptBuilder:
         ).strip()
 
     @staticmethod
-    def build_rag_prompt(user_text: str) -> str:
-        return f"{IM_START}user\n{user_text}{IM_END}\n{IM_START}assistant\n"
+    def build_rag_prompt(self, user_text: str) -> str:
+        return (
+            f"{IM_START}system\n{self.default_system}{IM_END}\n"
+            f"{IM_START}user\n{user_text}{IM_END}\n"
+            f"{IM_START}assistant\n"
+        )
 
     def fit_rag_prompt(
         self,
