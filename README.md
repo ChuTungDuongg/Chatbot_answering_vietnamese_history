@@ -125,6 +125,10 @@ Chatbot_answering_vietnamese_history/
 │   └── modal_volume_test.py
 ├── modal_artifact_sanity.py             # kiểm tra bộ artifact trên Modal Volume
 ├── modal_runtime_sanity.py              # smoke test retrieval runtime trên Modal
+├── full_modal_runtime_sanity.py         # smoke test full RAG trên GPU Modal
+├── modal_fix.py                         # sửa tên model shards trên Modal Volume
+├── modal_app.py                         # triển khai FastAPI lên Modal với GPU L4
+├── Dockerfile                           # image Python 3.11 cho API/Modal
 ├── Training/
 │   ├── Dataset/
 │   │   ├── Chunk_id/                    # 31 pack JSONL, tổng 520 dòng
@@ -145,6 +149,7 @@ Chatbot_answering_vietnamese_history/
 │       ├── Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb
 │       └── Phase10_VN_History_FastAPI_Export_From_Phase9 (1).ipynb
 ├── requirements.txt                     # dependency runtime FastAPI/RAG
+├── .dockerignore                        # loại artifact/cache khỏi Docker context
 └── README.md
 ~~~
 
@@ -256,6 +261,27 @@ Hoặc:
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
 ~~~
+
+### 6. Chạy bằng Docker
+
+Build image và chạy ở chế độ API-only (không cần artifact lớn):
+
+~~~powershell
+docker build -t vn-history-rag-api .
+docker run --rm -p 8000:8000 vn-history-rag-api
+~~~
+
+Để chạy retrieval/full, mount bộ artifact vào đúng đường dẫn và truyền cấu hình runtime. Ví dụ retrieval-only trên CPU:
+
+~~~powershell
+docker run --rm -p 8000:8000 `
+  -e APP_MODE=retrieval-only `
+  -e DEVICE=cpu `
+  -v "${PWD}/artifacts:/artifacts" `
+  vn-history-rag-api
+~~~
+
+Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. Endpoint kiểm tra container là <code>/health</code> và <code>/ready</code>.
 
 ## 📦 Chuẩn bị artifact
 
@@ -732,9 +758,19 @@ modal run modal_test/modal_gpu_test.py
 modal run modal_test/modal_volume_test.py
 modal run modal_artifact_sanity.py
 modal run modal_runtime_sanity.py
+modal run full_modal_runtime_sanity.py
 ~~~
 
-<code>modal_artifact_sanity.py</code> kiểm tra 58.603 corpus rows, unique IDs, model shards, FAISS, BM25S, manifest và success marker. <code>modal_runtime_sanity.py</code> load retrieval-only runtime, chạy một câu lịch sử và một câu OOD.
+<code>modal_artifact_sanity.py</code> kiểm tra 58.603 corpus rows, unique IDs, model shards, FAISS, BM25S, manifest và success marker. <code>modal_runtime_sanity.py</code> kiểm tra retrieval-only; <code>full_modal_runtime_sanity.py</code> nạp cả model trên GPU và chạy luồng chat đầy đủ.
+
+Triển khai API bằng image từ <code>Dockerfile</code>:
+
+~~~powershell
+modal serve modal_app.py
+modal deploy modal_app.py
+~~~
+
+<code>modal_app.py</code> yêu cầu hai Volume đã tồn tại: <code>vn-history-artifacts</code> và <code>vn-history-hf-cache</code>. Cấu hình mặc định dùng GPU L4, <code>APP_MODE=full</code> và mount artifact tại <code>/artifacts</code>. Script <code>modal_fix.py</code> có thay đổi file model trên Volume; chỉ chạy khi kiểm tra artifact báo sai tên shard.
 
 ## 🔐 Bảo mật và vận hành
 
@@ -748,7 +784,7 @@ modal run modal_runtime_sanity.py
 ## ⚠️ Hạn chế hiện tại
 
 - Artifact lớn không có trong Git; manifest trong repo chỉ là placeholder.
-- Chưa có Dockerfile, CI hoặc test suite tự động.
+- Đã có Dockerfile và các smoke test Modal, nhưng chưa có CI hoặc test suite tự động chuẩn hóa.
 - Chưa đo p95/p99 latency, cold start, requests/second, RAM và VRAM production.
 - Source F1 Full RAG còn thấp hơn các metric answer similarity; retrieval/final-context recall vẫn là hướng tối ưu chính.
 - Repository chưa có file <code>LICENSE</code>.
@@ -758,7 +794,7 @@ modal run modal_runtime_sanity.py
 - 📈 Thêm benchmark retrieval độc lập và error analysis theo từng giai đoạn lịch sử.
 - ⚙️ Đo p50/p95/p99, throughput, cold start, RAM/VRAM và concurrency.
 - 🧪 Bổ sung unit/integration tests cho OOD, RRF, source/year guards và SSE.
-- 🐳 Thêm Docker, CI và health/readiness probes cho production.
+- 🐳 Bổ sung CI, container healthcheck và health/readiness probes ở tầng triển khai production.
 - 🚀 Chuyển generation sang vLLM hoặc engine batching khi cần tải đồng thời cao.
 - 🔍 Tối ưu recall sau reranker và source selection.
 - 📜 Bổ sung giấy phép sử dụng dữ liệu, model và mã nguồn.
