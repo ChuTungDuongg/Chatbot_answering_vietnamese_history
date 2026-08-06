@@ -1,0 +1,62 @@
+# Python environments
+.conda/
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Large AI artifacts — NEVER bake these into Docker image
+vn_history_deployment/
+artifacts/
+models/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.index
+
+# Local datasets / generated artifacts
+data/
+outputs/
+evaluation/
+
+# Modal test scripts
+modal_*sanity.py
+full_modal_runtime_sanity.py
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+
+# OS
+.DS_Store
+Thumbs.db

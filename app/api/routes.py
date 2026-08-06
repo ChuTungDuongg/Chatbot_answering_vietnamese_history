@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Iterator
 
@@ -19,11 +20,7 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
-
-router = APIRouter(
-    prefix="/api/v1",
-    tags=["RAG"],
-)
+router = APIRouter(prefix="/api/v1", tags=["RAG"])
 
 
 # ============================================================
@@ -45,7 +42,6 @@ def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
 
 def _source_to_api(service, source_id: str) -> SourceItem:
     chunk = service.chunk_by_id.get(str(source_id))
-
     return SourceItem(
         chunk_id=str(source_id),
         title=chunk.get("title") if chunk else None,
@@ -57,41 +53,33 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-def _answer_chunks(text: str, words_per_chunk: int = 3) -> Iterator[str]:
-    words = text.split()
+def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
+    """
+    Chia final answer thành các delta nhỏ nhưng vẫn giữ whitespace/newline.
 
-    for index in range(0, len(words), words_per_chunk):
-        chunk = " ".join(words[index:index + words_per_chunk])
+    Ví dụ:
+        "Bạch Đằng năm 938.\n\nChiến thắng này..."
+    không bị biến thành một đoạn văn duy nhất khi stream.
+    """
+    pieces = re.findall(r"\S+\s*", text)
 
-        if index + words_per_chunk < len(words):
-            chunk += " "
-
-        yield chunk
+    for index in range(0, len(pieces), words_per_chunk):
+        yield "".join(pieces[index:index + words_per_chunk])
 
 
 # ============================================================
 # Retrieve
 # ============================================================
 
-@router.post(
-    "/retrieve",
-    response_model=RetrieveResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def retrieve(
-    payload: RetrieveRequest,
-    request: Request,
-) -> RetrieveResponse:
+@router.post("/retrieve", response_model=RetrieveResponse, status_code=status.HTTP_200_OK)
+async def retrieve(payload: RetrieveRequest, request: Request) -> RetrieveResponse:
     service = request.app.state.rag_service
     retriever = request.app.state.retriever
 
     if retriever is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Retrieval runtime is not loaded. "
-                "Use APP_MODE=retrieval-only or APP_MODE=full."
-            ),
+            detail="Retrieval runtime is not loaded. Use APP_MODE=retrieval-only or APP_MODE=full.",
         )
 
     if not service.loaded:
@@ -103,29 +91,20 @@ async def retrieve(
     started = time.perf_counter()
 
     try:
-        result = await asyncio.to_thread(
-            retriever.retrieve,
-            payload.question,
-            payload.final_k,
-        )
-
+        result = await asyncio.to_thread(retriever.retrieve, payload.question, payload.final_k)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-
     except RuntimeError as exc:
         logger.exception("Retrieval runtime error")
-
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-
     except Exception as exc:
         logger.exception("Unexpected retrieval error")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal retrieval error.",
@@ -146,7 +125,6 @@ async def retrieve(
             _context_to_api(chunk)
             for chunk in result.get("candidates20", [])
         ]
-
         tool_trace = result.get("tool_trace", [])
 
     return RetrieveResponse(
@@ -169,25 +147,15 @@ async def retrieve(
 # Chat
 # ============================================================
 
-@router.post(
-    "/chat",
-    response_model=ChatResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def chat(
-    payload: ChatRequest,
-    request: Request,
-) -> ChatResponse:
+@router.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     service = request.app.state.rag_service
     generator = request.app.state.generator
 
     if generator is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Generation runtime is not loaded. "
-                "Use APP_MODE=full to enable chat."
-            ),
+            detail="Generation runtime is not loaded. Use APP_MODE=full to enable chat.",
         )
 
     if not service.loaded or service.model is None:
@@ -199,29 +167,20 @@ async def chat(
     started = time.perf_counter()
 
     try:
-        result = await asyncio.to_thread(
-            generator.chat,
-            payload.question,
-            payload.final_k,
-        )
-
+        result = await asyncio.to_thread(generator.chat, payload.question, payload.final_k)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-
     except RuntimeError as exc:
         logger.exception("Generation runtime error")
-
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-
     except Exception as exc:
         logger.exception("Unexpected chat error")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal generation error.",
@@ -254,9 +213,7 @@ async def chat(
             "is_ood": retrieval.get("is_ood", False),
             "ood_reason": retrieval.get("ood_reason", ""),
             "query_variants": retrieval.get("query_variants", []),
-            "retrieval_latency_ms": (
-                result.get("retrieval_latency_sec", 0.0) * 1000
-            ),
+            "retrieval_latency_ms": result.get("retrieval_latency_sec", 0.0) * 1000,
         }
 
     return ChatResponse(
@@ -273,25 +230,15 @@ async def chat(
 # Validated SSE Chat Stream
 # ============================================================
 
-@router.post(
-    "/chat/stream",
-    status_code=status.HTTP_200_OK,
-)
-async def chat_stream(
-    payload: ChatRequest,
-    request: Request,
-):
+@router.post("/chat/stream", status_code=status.HTTP_200_OK)
+async def chat_stream(payload: ChatRequest, request: Request):
     service = request.app.state.rag_service
     generator = request.app.state.generator
 
-    # Return a normal HTTP 503 before opening the SSE connection.
     if generator is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Generation runtime is not loaded. "
-                "Use APP_MODE=full to enable chat streaming."
-            ),
+            detail="Generation runtime is not loaded. Use APP_MODE=full to enable chat streaming.",
         )
 
     if not service.loaded or service.model is None:
@@ -311,34 +258,19 @@ async def chat_stream(
             },
         )
 
-        # Run the complete RAG pipeline in a worker thread.
-        # No answer text is exposed before this task completes.
         task = asyncio.create_task(
-            asyncio.to_thread(
-                generator.chat,
-                payload.question,
-                payload.final_k,
-            )
+            asyncio.to_thread(generator.chat, payload.question, payload.final_k)
         )
 
-        # Keep the SSE connection alive during long GPU inference.
+        # Giữ SSE connection sống trong lúc retrieval/generation/guard đang chạy.
         while not task.done():
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(task),
-                    timeout=8.0,
-                )
+                await asyncio.wait_for(asyncio.shield(task), timeout=8.0)
             except asyncio.TimeoutError:
-                yield _sse(
-                    "ping",
-                    {
-                        "timestamp": time.time(),
-                    },
-                )
+                yield _sse("ping", {"timestamp": time.time()})
 
         try:
             result = await task
-
         except ValueError as exc:
             yield _sse(
                 "error",
@@ -348,10 +280,8 @@ async def chat_stream(
                 },
             )
             return
-
         except RuntimeError as exc:
             logger.exception("Streaming generation runtime error")
-
             yield _sse(
                 "error",
                 {
@@ -360,10 +290,8 @@ async def chat_stream(
                 },
             )
             return
-
         except Exception:
             logger.exception("Unexpected streaming chat error")
-
             yield _sse(
                 "error",
                 {
@@ -373,9 +301,8 @@ async def chat_stream(
             )
             return
 
-        # At this point:
-        # retrieval -> generation -> guards -> optional repair
-        # has already completed.
+        # Chỉ tới đây mới bắt đầu gửi answer:
+        # retrieval -> Qwen -> guards -> optional repair đã hoàn tất.
         yield _sse(
             "status",
             {
@@ -385,8 +312,8 @@ async def chat_stream(
             },
         )
 
-        # Stream only the accepted final answer.
-        for delta in _answer_chunks(result["answer"]):
+        # Một từ / event, giữ nguyên whitespace.
+        for delta in _answer_chunks(result["answer"], words_per_chunk=1):
             yield _sse(
                 "answer_delta",
                 {
@@ -394,8 +321,8 @@ async def chat_stream(
                 },
             )
 
-            # Small delay purely for progressive UI rendering.
-            await asyncio.sleep(0.015)
+            # Chỉ để tạo cảm giác progressive rendering.
+            await asyncio.sleep(0.012)
 
         sources = [
             _source_to_api(service, source_id).model_dump()
