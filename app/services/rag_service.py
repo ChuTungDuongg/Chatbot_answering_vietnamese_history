@@ -806,16 +806,10 @@ class RAGService:
         # Tokenizer
         # ----------------------------------------------------
 
-        self.tokenizer = (
-            AutoTokenizer
-            .from_pretrained(
-
-                settings.model_path,
-
-                trust_remote_code=True,
-
-                use_fast=True,
-            )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            str(settings.model_path),
+            trust_remote_code=True,
+            fix_mistral_regex=True,
         )
 
 
@@ -842,7 +836,7 @@ class RAGService:
 
         load_kwargs = {
 
-            "torch_dtype":
+            "dtype":
                 dtype,
 
             "trust_remote_code":

@@ -214,7 +214,7 @@ class PromptBuilder:
             f"Tài liệu tham khảo:\n{context_text}"
         ).strip()
 
-    @staticmethod
+
     def build_rag_prompt(self, user_text: str) -> str:
         return (
             f"{IM_START}system\n{self.default_system}{IM_END}\n"
