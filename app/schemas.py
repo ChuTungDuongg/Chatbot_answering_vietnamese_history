@@ -29,7 +29,7 @@ class RetrieveRequest(BaseModel):
         max_length=1000,
         examples=["Khởi nghĩa Lam Sơn diễn ra trong bối cảnh nào và kết quả ra sao?"],
     )
-    final_k: int = Field(default=8, ge=1, le=10)
+    final_k: int = Field(default=4, ge=1, le=10)
     debug: bool = False
 
 

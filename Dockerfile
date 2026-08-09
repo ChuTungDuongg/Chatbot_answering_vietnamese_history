@@ -7,12 +7,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_MODE=api-only \
     DEVICE=cpu \
     ARTIFACT_ROOT=/artifacts/vn_history_deployment \
-    HF_HOME=/hf-cache
+    HF_HOME=/hf-cache \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++
 
 WORKDIR /workspace
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        g++ \
         libgomp1 \
         curl \
     && rm -rf /var/lib/apt/lists/*
