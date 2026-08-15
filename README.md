@@ -17,7 +17,7 @@
 
 Chatbot hỏi đáp lịch sử Việt Nam với giao diện React hiện đại, truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, và hỗ trợ phản hồi streaming qua SSE.
 
-[🚀 Chạy nhanh](#-chạy-nhanh) · [💻 Frontend](#-chạy-frontend) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
+[🚀 Chạy ứng dụng](#-chạy-nhanh) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
 
 </div>
 
@@ -162,6 +162,8 @@ Chatbot_answering_vietnamese_history/
 │       ├── Phase8_VN_History_Chunk_Metadata_Enrichment_v4.ipynb
 │       ├── Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb
 │       └── Phase10_VN_History_FastAPI_Export_From_Phase9 (1).ipynb
+├── package.json                         # launcher chung cho frontend + Modal backend
+├── package-lock.json                    # dependency lock của launcher root
 ├── requirements.txt                     # dependency runtime FastAPI/RAG
 ├── .dockerignore                        # loại artifact/cache khỏi Docker context
 └── README.md
@@ -189,17 +191,24 @@ Hai notebook tiện ích dùng để khảo sát dataset và đọc/audit JSON c
 
 ## 🚀 Chạy nhanh
 
+Ứng dụng được khởi động từ **thư mục gốc** bằng một lệnh duy nhất. Script root dùng <code>concurrently</code> để chạy song song:
+
+- <code>FRONTEND</code>: Vite development server cho giao diện React;
+- <code>BACKEND</code>: <code>modal serve modal_app.py</code>, phục vụ FastAPI full RAG trên GPU L4 của Modal.
+
+Máy local không cần GPU để chạy theo luồng này. Model, corpus và các retrieval index được nạp từ Modal Volume.
+
 ### 1. Yêu cầu
 
-- Python 3.10 trở lên.
-- pip.
-- Node.js 20.19+ hoặc 22.12+ nếu chạy frontend.
-- npm.
-- Chế độ <code>api-only</code>: CPU là đủ.
-- Chế độ <code>retrieval-only</code>: cần đủ RAM cho corpus, FAISS, BM25S, E5 và reranker.
-- Chế độ <code>full</code>: GPU CUDA được khuyến nghị; Phase 10 đề xuất NVIDIA L4 24 GB. Benchmark nặng đã chạy trên A100.
+- Node.js 20.19+ hoặc 22.12+ và npm.
+- Python 3.10+ và pip để cài Modal CLI.
+- Tài khoản Modal đã đăng nhập bằng <code>modal setup</code>.
+- Hai Modal Volume <code>vn-history-artifacts</code> và <code>vn-history-hf-cache</code> đã tồn tại.
+- Volume artifact đã chứa đầy đủ deployment bundle của Phase 10.
 
-### 2. Tạo môi trường
+### 2. Chuẩn bị lần đầu
+
+Chạy các lệnh sau tại thư mục gốc của repository.
 
 Windows PowerShell:
 
@@ -207,7 +216,11 @@ Windows PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install modal
+modal setup
+
+npm install
+npm --prefix frontend install
 ~~~
 
 Linux/macOS:
@@ -216,135 +229,92 @@ Linux/macOS:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install modal
+modal setup
+
+npm install
+npm --prefix frontend install
 ~~~
 
-Nếu dùng GPU, cài bản PyTorch phù hợp CUDA của máy trước khi cài phần còn lại.
+Hai lệnh npm cài hai nhóm dependency khác nhau: package root chứa <code>concurrently</code>/<code>cross-env</code>, còn <code>frontend/</code> chứa React, Vite và ESLint.
 
-### 3. Tạo cấu hình môi trường
-
-Tạo <code>.env</code> ở thư mục gốc:
-
-~~~dotenv
-APP_NAME="Vietnamese History RAG API"
-APP_VERSION="1.0.0"
-APP_ENV="development"
-
-# api-only | retrieval-only | full
-APP_MODE="api-only"
-
-ARTIFACT_ROOT="./artifacts/vn_history_deployment"
-
-# cpu | cuda
-DEVICE="cpu"
-~~~
-
-| Chế độ | Thành phần được load | Endpoint AI khả dụng |
-|---|---|---|
-| <code>api-only</code> | Chỉ FastAPI | Endpoint hệ thống; endpoint RAG trả 503 |
-| <code>retrieval-only</code> | Corpus, FAISS, BM25S, E5, reranker | <code>/api/v1/retrieve</code> |
-| <code>full</code> | Retrieval + tokenizer + Qwen merged | retrieve, chat và chat stream |
-
-### 4. Chạy server
+Có thể kiểm tra bộ artifact trên Modal trước khi chạy ứng dụng:
 
 ~~~powershell
-$env:PYTHONUTF8="1"
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+modal run modal_artifact_sanity.py
 ~~~
 
-Mở:
+### 3. Cấu hình URL backend cho frontend
 
-- 🏠 Root: http://localhost:8000/
-- 💚 Health: http://localhost:8000/health
-- ✅ Readiness: http://localhost:8000/ready
-- 📘 Swagger UI: http://localhost:8000/docs
-- 📕 ReDoc: http://localhost:8000/redoc
+Tạo file <code>frontend/.env</code> từ file mẫu. Vẫn chạy lệnh ở thư mục gốc:
 
-Không dùng <code>--reload</code> ở production vì reload có thể nạp lại model/index lớn.
-
-<code>PYTHONUTF8=1</code> tránh lỗi console Windows dùng code page cũ khi service in log có ký tự tiếng Việt/emoji.
-
-### 5. Smoke test nhanh
+Windows PowerShell:
 
 ~~~powershell
-Invoke-RestMethod http://localhost:8000/health
-Invoke-RestMethod http://localhost:8000/ready
+Copy-Item frontend/.env.example frontend/.env
 ~~~
 
-Hoặc:
+Linux/macOS:
 
 ~~~bash
-curl http://localhost:8000/health
-curl http://localhost:8000/ready
+cp frontend/.env.example frontend/.env
 ~~~
 
-### 6. Chạy bằng Docker
+Đặt <code>VITE_API_BASE_URL</code> thành URL development do <code>modal serve</code> cấp, không thêm dấu <code>/</code> ở cuối:
 
-Build image và chạy ở chế độ API-only (không cần artifact lớn):
+~~~dotenv
+VITE_API_BASE_URL=https://your-modal-api.modal.run
+~~~
+
+Nếu chưa biết URL ở lần chạy đầu tiên, chạy <code>npm run dev</code> và tìm URL <code>https://...modal.run</code> trong log có nhãn <code>[BACKEND]</code>. Cập nhật <code>frontend/.env</code>, sau đó khởi động lại lệnh để Vite nạp biến môi trường mới. Những lần chạy sau không cần lặp lại bước này nếu URL development không thay đổi.
+
+> [!NOTE]
+> Luồng development tích hợp lấy cấu hình backend từ <code>modal_app.py</code>: <code>APP_MODE=full</code>, <code>DEVICE=cuda</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. File <code>.env</code> ở root chỉ dành cho trường hợp chạy FastAPI trực tiếp trên máy local, không điều khiển backend Modal của <code>npm run dev</code>.
+
+### 4. Khởi động toàn bộ ứng dụng
+
+Mỗi lần phát triển, mở terminal tại thư mục gốc, bảo đảm lệnh <code>modal</code> khả dụng trong môi trường hiện tại, rồi chạy:
+
+~~~powershell
+npm run dev
+~~~
+
+Lệnh này khởi động cả frontend và backend. Không cần chuyển vào thư mục <code>frontend/</code> hoặc mở thêm terminal để chạy backend.
+
+Sau khi hai tiến trình sẵn sàng:
+
+- Giao diện chatbot: <code>http://localhost:5173</code>;
+- API backend: URL <code>https://...modal.run</code> hiển thị trong log <code>[BACKEND]</code>;
+- Swagger UI: <code>&lt;MODAL_API_URL&gt;/docs</code>;
+- Health: <code>&lt;MODAL_API_URL&gt;/health</code>;
+- Readiness: <code>&lt;MODAL_API_URL&gt;/ready</code>.
+
+Lần khởi động backend đầu tiên có thể lâu hơn vì Modal cần build image hoặc khởi tạo container và nạp model/index. Chỉ bắt đầu chat sau khi endpoint <code>/ready</code> trả <code>ready=true</code>.
+
+Nhấn <code>Ctrl+C</code> trong terminal để dừng. Tùy chọn <code>-k</code> của <code>concurrently</code> bảo đảm tiến trình còn lại cũng được tắt khi một tiến trình kết thúc.
+
+### 5. Các script hữu ích
+
+| Lệnh tại root | Tác dụng |
+|---|---|
+| <code>npm run dev</code> | Chạy đồng thời frontend và backend Modal. |
+| <code>npm run frontend</code> | Chỉ chạy Vite, hữu ích khi backend Modal đã chạy sẵn. |
+| <code>npm run backend</code> | Chỉ chạy <code>modal serve modal_app.py</code>. |
+| <code>npm run frontend:lint</code> | Kiểm tra mã nguồn frontend bằng ESLint. |
+| <code>npm run frontend:build</code> | Build frontend production vào <code>frontend/dist/</code>. |
+
+Biến <code>VITE_API_BASE_URL</code> được Vite nhúng tại thời điểm build, vì vậy cần kiểm tra URL API trước khi chạy <code>npm run frontend:build</code>.
+
+### 6. Chạy API bằng Docker (tùy chọn)
+
+Docker không thuộc luồng <code>npm run dev</code>. Cách này chủ yếu dùng để kiểm tra image API độc lập ở chế độ <code>api-only</code>:
 
 ~~~powershell
 docker build -t vn-history-rag-api .
 docker run --rm -p 8000:8000 vn-history-rag-api
 ~~~
 
-Để chạy retrieval/full, mount bộ artifact vào đúng đường dẫn và truyền cấu hình runtime. Ví dụ retrieval-only trên CPU:
-
-~~~powershell
-docker run --rm -p 8000:8000 `
-  -e APP_MODE=retrieval-only `
-  -e DEVICE=cpu `
-  -v "${PWD}/artifacts:/artifacts" `
-  vn-history-rag-api
-~~~
-
-Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. Endpoint kiểm tra container là <code>/health</code> và <code>/ready</code>.
-
-## 💻 Chạy frontend
-
-Frontend nằm trong thư mục <code>frontend/</code>, được xây dựng bằng React 19 và Vite 8. Giao diện kết nối trực tiếp tới endpoint <code>/api/v1/chat/stream</code>, vì vậy backend cần chạy ở chế độ <code>full</code> hoặc trỏ tới một API full RAG đã triển khai.
-
-### 1. Cấu hình API
-
-Windows PowerShell:
-
-~~~powershell
-cd frontend
-Copy-Item .env.example .env
-~~~
-
-Linux/macOS:
-
-~~~bash
-cd frontend
-cp .env.example .env
-~~~
-
-Mở <code>frontend/.env</code> và đặt URL backend, không thêm dấu <code>/</code> ở cuối:
-
-~~~dotenv
-VITE_API_BASE_URL=http://localhost:8000
-~~~
-
-Backend hiện cho phép frontend local tại <code>http://localhost:5173</code> và <code>http://127.0.0.1:5173</code>. Khi deploy frontend ở domain khác, cần bổ sung domain đó vào CORS của API.
-
-### 2. Cài đặt và khởi chạy
-
-~~~powershell
-npm install
-npm run dev
-~~~
-
-Mở <code>http://localhost:5173</code>. Nút hình mặt trời/mặt trăng trên thanh tiêu đề dùng để đổi dark/light mode; lựa chọn được lưu trong <code>localStorage</code> cho những lần truy cập sau.
-
-### 3. Kiểm tra và build production
-
-~~~powershell
-npm run lint
-npm run build
-npm run preview
-~~~
-
-Bundle production được tạo trong <code>frontend/dist/</code>. Biến <code>VITE_API_BASE_URL</code> được nhúng tại thời điểm build, nên hãy cấu hình đúng URL API trước khi chạy <code>npm run build</code>.
+Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. Endpoint kiểm tra container là <code>http://localhost:8000/health</code> và <code>http://localhost:8000/ready</code>.
 
 ## 📦 Chuẩn bị artifact
 
@@ -380,9 +350,12 @@ artifacts/vn_history_deployment/
 1. Chạy Phase 8 để có enriched corpus.
 2. Chạy Phase 9 để có FAISS, BM25S và benchmark.
 3. Chạy Phase 10 để merge Stage 1 + Stage 2 và export deployment bundle.
-4. Copy toàn bộ nội dung bundle vào <code>artifacts/vn_history_deployment/</code>.
-5. Chuyển <code>APP_MODE</code> thành <code>retrieval-only</code> hoặc <code>full</code>.
-6. Gọi <code>GET /ready</code>; chỉ phục vụ traffic khi <code>ready=true</code>.
+4. Đưa bundle lên Modal Volume <code>vn-history-artifacts</code> tại <code>/vn_history_deployment/</code> để dùng với <code>npm run dev</code>.
+5. Giữ Hugging Face cache trong Modal Volume <code>vn-history-hf-cache</code> để giảm thời gian khởi động lại.
+6. Chạy <code>modal run modal_artifact_sanity.py</code> để xác nhận artifact hợp lệ.
+7. Khởi động bằng <code>npm run dev</code> và chỉ sử dụng chatbot khi <code>GET /ready</code> trả <code>ready=true</code>.
+
+Nếu chạy FastAPI trực tiếp trên máy thay vì qua Modal, copy bundle vào <code>artifacts/vn_history_deployment/</code> ở repository và đặt <code>APP_MODE=retrieval-only</code> hoặc <code>APP_MODE=full</code> trong file <code>.env</code> root. Đây là luồng tùy chọn, không phải luồng development mặc định của launcher npm.
 
 Runtime kiểm tra chặt:
 
