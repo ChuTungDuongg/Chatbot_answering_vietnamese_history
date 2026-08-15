@@ -87,7 +87,8 @@ merged_model/
 # =========================
 # RAG artifacts
 # =========================
-artifacts/
+artifacts/*
+!artifacts/README.md
 
 vector_db/
 faiss_index/

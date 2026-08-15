@@ -131,6 +131,7 @@ SQLite là persistence layer, không tự biến model thành chatbot có memory
 ~~~text
 Chatbot_answering_vietnamese_history/
 ├── app/
+│   ├── README.md                       # backend map và invariants
 │   ├── main.py                         # lifespan, runtime wiring, routers
 │   ├── config.py                       # runtime, artifact, SQLite và CORS settings
 │   ├── schemas.py                      # RAG, conversation, message, attachment schemas
@@ -150,9 +151,15 @@ Chatbot_answering_vietnamese_history/
 ├── data/
 │   └── chat.sqlite3                    # sinh khi chạy local; không commit
 ├── artifacts/
+│   ├── README.md                       # artifact contract và validation
 │   └── vn_history_deployment/
 │       └── manifest.json               # placeholder trong Git hiện tại
+├── Dataset/
+│   ├── README.md                       # RAG-SFT message dataset map
+│   ├── Samples/                        # 30 generated topic packs local
+│   └── merged_jsonl/all_messages.jsonl # 1.000 message samples local
 ├── frontend/
+│   ├── README.md                       # UI architecture và developer workflow
 │   ├── src/
 │   │   ├── components/                 # sidebar, messages, attachments, composer, evidence
 │   │   ├── services/api.js             # conversation/upload/SSE client + X-Client-ID
@@ -162,6 +169,7 @@ Chatbot_answering_vietnamese_history/
 │   ├── .env.example                    # mẫu VITE_API_BASE_URL
 │   └── package.json                    # React, Vite, Lucide, Markdown/GFM
 ├── modal_test/
+│   ├── README.md                       # Modal smoke-test guide
 │   ├── modal_hello.py
 │   ├── modal_gpu_test.py
 │   └── modal_volume_test.py
@@ -172,30 +180,34 @@ Chatbot_answering_vietnamese_history/
 ├── modal_app.py                         # GPU L4 + artifact/cache/chat-data Volumes
 ├── Dockerfile                           # Python 3.11 + Tesseract vie/eng
 ├── Training/
+│   ├── README.md                       # pipeline Phase 1-10 và reproducibility
+│   ├── InvestigatingDataset.zip         # archive 2 notebook audit dataset/corpus
 │   ├── Dataset/
 │   │   ├── Chunk_id/                    # 31 pack JSONL, tổng 520 dòng
 │   │   └── merged_jsonl/
 │   │       └── all_chunk_id.jsonl       # 520 dòng, 511 chunk_id duy nhất
-│   ├── InvestigatingDataset.ipynb
-│   ├── ReadingJSONCorpus.ipynb
 │   ├── requirement.txt                  # dependency cho notebook/training
 │   └── Training/
-│       ├── Phase1_SFT.ipynb
-│       ├── Phase2_CreatingCorpus.ipynb
-│       ├── Phase3_ChunkExporter.ipynb
-│       ├── Phase4_ChunkExporter_extra_topics.ipynb
-│       ├── Phase5.ipynb
-│       ├── Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb
-│       ├── Phase7_InferneceTesting.ipynb
-│       ├── Phase8_VN_History_Chunk_Metadata_Enrichment_v4.ipynb
-│       ├── Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb
-│       └── Phase10_VN_History_FastAPI_Export_From_Phase9 (1).ipynb
+│       └── Training.zip                 # archive 10 notebooks Phase 1-10
 ├── package.json                         # launcher chung cho frontend + Modal backend
 ├── package-lock.json                    # dependency lock của launcher root
 ├── requirements.txt                     # dependency runtime FastAPI/RAG
 ├── .dockerignore                        # loại artifact/cache khỏi Docker context
 └── README.md
 ~~~
+
+### README theo thư mục
+
+| Thư mục | Đọc khi cần |
+|---|---|
+| [`app/`](app/README.md) | Theo dõi backend modules, request flows, runtime modes và invariants |
+| [`artifacts/`](artifacts/README.md) | Chuẩn bị/kiểm tra deployment bundle và hiểu file nào không được commit |
+| [`Dataset/`](Dataset/README.md) | Theo dõi RAG-SFT sample packs, schema JSONL và merged messages |
+| [`frontend/`](frontend/README.md) | Sửa React UI, API client, SSE, upload, theme hoặc responsive layout |
+| [`modal_test/`](modal_test/README.md) | Chạy smoke tests cho Modal account, GPU và Volume |
+| [`Training/`](Training/README.md) | Theo dõi notebook Phase 1-10, dữ liệu huấn luyện và reproducibility |
+
+Các thư mục `.git`, `.conda`, `node_modules`, `__pycache__` và `.agents` là metadata, môi trường hoặc cache local nên không có README của dự án.
 
 > [!NOTE]
 > Corpus mẫu dùng ở Phase 6 có 520 dòng. Corpus deployment của Phase 8–10 là bộ khác, gồm 58.603 chunks và phải khớp 58.603 vectors FAISS cùng 58.603 records BM25S.
@@ -218,7 +230,7 @@ Chatbot_answering_vietnamese_history/
 | 9 | Hybrid RAG hoàn chỉnh, deterministic tool use, guards, grounded repair và benchmark. |
 | 10 | Merge model cuối, copy corpus/index/config/evaluation và export artifact cho FastAPI. |
 
-Hai notebook tiện ích dùng để khảo sát dataset và đọc/audit JSON corpus nằm trực tiếp trong <code>Training/</code>.
+Hai notebook tiện ích dùng để khảo sát dataset và đọc/audit JSON corpus nằm trong <code>Training/InvestigatingDataset.zip</code>. Mười notebook Phase 1-10 nằm trong <code>Training/Training/Training.zip</code>.
 
 ## 🚀 Chạy nhanh
 
@@ -519,7 +531,7 @@ Event thực tế:
 
 ## 📊 Benchmark Phase 9 — 100 câu × 4 cấu hình
 
-Nguồn số liệu: output cuối của notebook <code>Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb</code> và deployment export <code>benchmark_results_v3_unique_batched.jsonl</code> / <code>benchmark_summary_v3_unique_batched.csv</code>. Notebook huấn luyện/benchmark đầy đủ và artifact lớn không được commit trong repository này.
+Nguồn số liệu: output cuối của notebook <code>Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb</code> trong <code>Training/Training/Training.zip</code> và deployment export <code>benchmark_results_v3_unique_batched.jsonl</code> / <code>benchmark_summary_v3_unique_batched.csv</code>. Model, corpus deployment và retrieval indexes lớn không được commit trong repository này.
 
 ### Thiết kế benchmark
 
@@ -694,7 +706,7 @@ Diagnostic notebook ghi nhận 14 lỗi behavior, 9 câu lịch sử không qua 
 
 ## 🧪 Toàn bộ metrics Phase 6
 
-Nguồn: output đã lưu từ notebook <code>Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb</code>. Notebook huấn luyện đầy đủ không được commit; các số dưới đây là kết quả đo thật đã ghi lại, không phải mục tiêu dự kiến.
+Nguồn: output đã lưu từ notebook <code>Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb</code> trong <code>Training/Training/Training.zip</code>. Các số dưới đây là kết quả đo thật đã ghi lại, không phải mục tiêu dự kiến.
 
 ### Môi trường và cấu hình chạy
 
