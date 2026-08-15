@@ -17,7 +17,6 @@ from app.schemas import (
     SourceItem,
 )
 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
@@ -42,6 +41,7 @@ def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
 
 def _source_to_api(service, source_id: str) -> SourceItem:
     chunk = service.chunk_by_id.get(str(source_id))
+
     return SourceItem(
         chunk_id=str(source_id),
         title=chunk.get("title") if chunk else None,
@@ -91,7 +91,11 @@ async def retrieve(payload: RetrieveRequest, request: Request) -> RetrieveRespon
     started = time.perf_counter()
 
     try:
-        result = await asyncio.to_thread(retriever.retrieve, payload.question, payload.final_k)
+        result = await asyncio.to_thread(
+            retriever.retrieve,
+            payload.question,
+            payload.final_k,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -167,7 +171,11 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     started = time.perf_counter()
 
     try:
-        result = await asyncio.to_thread(generator.chat, payload.question, payload.final_k)
+        result = await asyncio.to_thread(
+            generator.chat,
+            payload.question,
+            payload.final_k,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -259,15 +267,27 @@ async def chat_stream(payload: ChatRequest, request: Request):
         )
 
         task = asyncio.create_task(
-            asyncio.to_thread(generator.chat, payload.question, payload.final_k)
+            asyncio.to_thread(
+                generator.chat,
+                payload.question,
+                payload.final_k,
+            )
         )
 
         # Giữ SSE connection sống trong lúc retrieval/generation/guard đang chạy.
         while not task.done():
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=8.0)
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=8.0,
+                )
             except asyncio.TimeoutError:
-                yield _sse("ping", {"timestamp": time.time()})
+                yield _sse(
+                    "ping",
+                    {
+                        "timestamp": time.time(),
+                    },
+                )
 
         try:
             result = await task
@@ -282,6 +302,7 @@ async def chat_stream(payload: ChatRequest, request: Request):
             return
         except RuntimeError as exc:
             logger.exception("Streaming generation runtime error")
+
             yield _sse(
                 "error",
                 {
@@ -292,6 +313,7 @@ async def chat_stream(payload: ChatRequest, request: Request):
             return
         except Exception:
             logger.exception("Unexpected streaming chat error")
+
             yield _sse(
                 "error",
                 {
@@ -313,7 +335,10 @@ async def chat_stream(payload: ChatRequest, request: Request):
         )
 
         # Một từ / event, giữ nguyên whitespace.
-        for delta in _answer_chunks(result["answer"], words_per_chunk=1):
+        for delta in _answer_chunks(
+            result["answer"],
+            words_per_chunk=1,
+        ):
             yield _sse(
                 "answer_delta",
                 {
@@ -324,21 +349,61 @@ async def chat_stream(payload: ChatRequest, request: Request):
             # Chỉ để tạo cảm giác progressive rendering.
             await asyncio.sleep(0.012)
 
-        sources = [
-            _source_to_api(service, source_id).model_dump()
+        # ====================================================
+        # Retrieved evidence
+        #
+        # Không dùng source_ids ở đây vì source_ids chỉ là những
+        # chunk mà model thực sự cite trong answer.
+        #
+        # Panel frontend cần toàn bộ final_context mà RAG đã chọn.
+        # ====================================================
+
+        retrieval = result.get("retrieval") or {}
+        final_context = retrieval.get("final_context") or []
+
+        cited_source_ids = [
+            str(source_id)
             for source_id in result.get("source_ids", [])
         ]
+        cited_source_id_set = set(cited_source_ids)
+
+        if final_context:
+            sources = []
+
+            for chunk in final_context:
+                item = _context_to_api(chunk).model_dump()
+
+                item["cited"] = (
+                    str(item.get("chunk_id", ""))
+                    in cited_source_id_set
+                )
+
+                sources.append(item)
+
+        else:
+            # Fallback nếu vì lý do nào đó retrieval.final_context
+            # không tồn tại.
+            sources = [
+                {
+                    **_source_to_api(
+                        service,
+                        source_id,
+                    ).model_dump(),
+                    "cited": True,
+                }
+                for source_id in cited_source_ids
+            ]
 
         yield _sse(
             "sources",
             {
                 "items": sources,
+                "cited_source_ids": cited_source_ids,
+                "final_context_count": len(final_context),
             },
         )
 
         if payload.debug:
-            retrieval = result.get("retrieval", {})
-
             yield _sse(
                 "debug",
                 {
@@ -351,10 +416,14 @@ async def chat_stream(payload: ChatRequest, request: Request):
                     "unsupported_years": result.get("unsupported_years", []),
                     "is_ood": retrieval.get("is_ood", False),
                     "ood_reason": retrieval.get("ood_reason", ""),
+                    "final_context_count": len(final_context),
+                    "cited_source_ids": cited_source_ids,
                 },
             )
 
-        elapsed_ms = (time.perf_counter() - stream_started) * 1000
+        elapsed_ms = (
+            time.perf_counter() - stream_started
+        ) * 1000
 
         yield _sse(
             "done",

@@ -6,6 +6,100 @@ import StatusIndicator from "./components/StatusIndicator";
 import { streamChat } from "./services/api";
 import "./App.css";
 
+const THEME_STORAGE_KEY = "vn-history-theme";
+
+function getInitialTheme() {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+
+  if (savedTheme === "dark" || savedTheme === "light") {
+    return savedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function LogoMark({ className = "" }) {
+  return (
+    <svg
+      className={`logo-mark ${className}`}
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label="Logo Su Viet AI"
+    >
+      <defs>
+        <linearGradient id="logo-gradient" x1="10" x2="54" y1="8" y2="56">
+          <stop offset="0%" stopColor="#ef4444" />
+          <stop offset="48%" stopColor="#d97706" />
+          <stop offset="100%" stopColor="#0f766e" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="16" fill="url(#logo-gradient)" />
+      <path
+        d="M14 28.5 32 15l18 13.5"
+        fill="none"
+        stroke="white"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="4.2"
+      />
+      <path
+        d="M20 30h24M23 35h18M26 40h12"
+        fill="none"
+        stroke="white"
+        strokeLinecap="round"
+        strokeWidth="3.4"
+      />
+      <path
+        d="M43.5 15.5 45.8 20l5 .7-3.6 3.5.9 5-4.6-2.4-4.5 2.4.8-5-3.6-3.5 5-.7 2.3-4.5Z"
+        fill="#fef3c7"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M20.2 14.8A8.6 8.6 0 0 1 9.2 3.8 8.8 8.8 0 1 0 20.2 14.8Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5 5l-1.4-1.4M20.4 20.4 19 19M19 5l1.4-1.4M3.6 20.4 5 19"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 function getDeltaText(data) {
   if (typeof data === "string") {
     return data;
@@ -37,6 +131,7 @@ function getSources(data) {
     []
   );
 }
+
 function App() {
   const [question, setQuestion] = useState("");
   const [submittedQuestion, setSubmittedQuestion] = useState("");
@@ -45,15 +140,26 @@ function App() {
   const [debugData, setDebugData] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
+  const [theme, setTheme] = useState(getInitialTheme);
 
   const abortControllerRef = useRef(null);
   const bottomRef = useRef(null);
 
   const isRunning = !["idle", "done", "error", "cancelled"].includes(status);
+  const isDarkTheme = theme === "dark";
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [answer, status]);
+
+  const toggleTheme = () => {
+    setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+  };
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
@@ -168,17 +274,37 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-icon">V</div>
+          <LogoMark />
 
-          <div>
-            <h1>Vietnamese History AI</h1>
-            <p>Hybrid RAG · Qwen2.5 · Grounded Generation</p>
+          <div className="brand-copy">
+            <h1>Sử Việt AI</h1>
+            <p>Trợ lý hỏi đáp lịch sử Việt Nam</p>
           </div>
         </div>
 
-        <div className="system-badge">
-          <span className="system-dot" />
-          RAG Online
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={
+              isDarkTheme ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"
+            }
+            aria-pressed={isDarkTheme}
+            title={
+              isDarkTheme ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"
+            }
+          >
+            {isDarkTheme ? <SunIcon /> : <MoonIcon />}
+            <span className="sr-only">
+              {isDarkTheme ? "Light mode" : "Dark mode"}
+            </span>
+          </button>
+
+          <div className="system-badge">
+            <span className="system-dot" />
+            RAG Online
+          </div>
         </div>
       </header>
 
@@ -187,14 +313,13 @@ function App() {
           <div className="conversation-scroll">
             {!submittedQuestion && (
               <section className="welcome">
-                <div className="welcome-icon">🇻🇳</div>
+                <LogoMark className="welcome-logo" />
 
                 <h2>Khám phá lịch sử Việt Nam</h2>
 
                 <p>
-                  Đặt câu hỏi về nhân vật, sự kiện, triều đại hoặc các giai đoạn
-                  lịch sử Việt Nam. Hệ thống sẽ truy xuất bằng chứng trước khi tạo
-                  câu trả lời.
+                  Những câu chuyện, triều đại và bước ngoặt lịch sử được đặt
+                  trong một không gian trò chuyện rõ ràng, có dẫn chứng.
                 </p>
 
                 <div className="example-grid">
@@ -299,7 +424,7 @@ function App() {
             <RetrievedChunks sources={sources} />
           ) : (
             <div className="empty-evidence">
-              <div className="empty-evidence-icon">⌕</div>
+              <LogoMark className="empty-evidence-logo" />
               <h3>Chưa có tài liệu</h3>
               <p>
                 Các chunk được Hybrid RAG lựa chọn sẽ xuất hiện tại đây sau khi

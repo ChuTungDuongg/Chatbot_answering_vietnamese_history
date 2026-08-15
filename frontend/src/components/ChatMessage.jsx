@@ -3,11 +3,11 @@ function ChatMessage({ role, children, isStreaming = false }) {
 
   return (
     <div className={`message ${isUser ? "user-message" : "assistant-message"}`}>
-      <div className="message-role">{isUser ? "Bạn" : "AI"}</div>
+      <div className="message-role">{isUser ? "Bạn" : "Sử Việt AI"}</div>
 
       <div className="message-content">
         {children}
-        {isStreaming && <span className="cursor">▋</span>}
+        {isStreaming && <span className="cursor">|</span>}
       </div>
     </div>
   );

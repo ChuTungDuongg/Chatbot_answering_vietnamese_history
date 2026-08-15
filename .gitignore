@@ -165,3 +165,5 @@ pnpm-debug.log*
 !examples/
 !examples/*.jsonl
 !examples/*.md
+
+node_modules/

@@ -1,0 +1,26 @@
+{
+  "name": "chatbot_answering_vietnamese_history",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end Vietnamese History RAG-SFT LLM application",
+  "scripts": {
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "cross-env PYTHONUTF8=1 PYTHONIOENCODING=utf-8 modal serve modal_app.py",
+    "dev": "concurrently -k -n FRONTEND,BACKEND -c cyan,magenta \"npm run frontend\" \"npm run backend\"",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:lint": "npm --prefix frontend run lint"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history.git"
+  },
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history/issues"
+  },
+  "homepage": "https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.0.0"
+  }
+}

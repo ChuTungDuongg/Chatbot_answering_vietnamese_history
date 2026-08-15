@@ -9,13 +9,15 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white">
   <img alt="Qwen2.5 3B" src="https://img.shields.io/badge/Qwen2.5-3B--Instruct-7C3AED">
   <img alt="Hybrid RAG" src="https://img.shields.io/badge/RAG-Hybrid-FFB000">
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1220">
+  <img alt="Vite 8" src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white">
   <img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-100%20questions-EC4899">
   <img alt="API" src="https://img.shields.io/badge/API-REST%20%2B%20SSE-0EA5E9">
 </p>
 
-API hỏi đáp lịch sử Việt Nam có truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, và hỗ trợ phản hồi thường hoặc streaming qua SSE.
+Chatbot hỏi đáp lịch sử Việt Nam với giao diện React hiện đại, truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, và hỗ trợ phản hồi streaming qua SSE.
 
-[🚀 Chạy nhanh](#-chạy-nhanh) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
+[🚀 Chạy nhanh](#-chạy-nhanh) · [💻 Frontend](#-chạy-frontend) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
 
 </div>
 
@@ -30,6 +32,9 @@ API hỏi đáp lịch sử Việt Nam có truy xuất bằng chứng, kiểm tr
 - 🛡️ Guardrails: phát hiện off-topic, kiểm tra <code>chunk_id</code>, chặn niên đại không có trong evidence, từ chối khi thiếu bằng chứng.
 - 🩹 Grounded repair: tự sửa tối đa một lần nếu câu trả lời thiếu ý hoặc vi phạm guard.
 - ⚡ FastAPI: REST cho retrieval/chat và SSE streaming chỉ phát câu trả lời sau khi validation hoàn tất.
+- 💻 Giao diện React responsive: hội thoại, trạng thái xử lý và bằng chứng truy xuất được trình bày rõ ràng trên desktop lẫn thiết bị di động.
+- 🌓 Dark/light mode: chuyển theme ngay trên thanh tiêu đề, tự nhận theme hệ thống ở lần đầu và ghi nhớ lựa chọn trong trình duyệt.
+- 🇻🇳 Nhận diện Sử Việt AI: logo SVG riêng đặt cạnh tên chatbot, hiển thị sắc nét ở mọi kích thước.
 - 📊 Đánh giá đầy đủ: 100 câu × 4 cấu hình = 400 lượt benchmark Phase 9.
 - 🧪 RAG-SFT có theo dõi loss, throughput, source metrics, ROUGE-L, format, abstention và composite score ở Phase 6.
 
@@ -119,6 +124,15 @@ Chatbot_answering_vietnamese_history/
 ├── artifacts/
 │   └── vn_history_deployment/
 │       └── manifest.json               # placeholder trong Git hiện tại
+├── frontend/
+│   ├── src/
+│   │   ├── components/                 # message, composer, status và evidence UI
+│   │   ├── services/api.js             # client SSE cho endpoint chat stream
+│   │   ├── App.jsx                     # giao diện chính, logo và theme state
+│   │   ├── App.css                     # layout responsive và component styles
+│   │   └── index.css                   # design tokens cho dark/light mode
+│   ├── .env.example                    # mẫu VITE_API_BASE_URL
+│   └── package.json                    # React 19, Vite 8 và scripts frontend
 ├── modal_test/
 │   ├── modal_hello.py
 │   ├── modal_gpu_test.py
@@ -179,6 +193,8 @@ Hai notebook tiện ích dùng để khảo sát dataset và đọc/audit JSON c
 
 - Python 3.10 trở lên.
 - pip.
+- Node.js 20.19+ hoặc 22.12+ nếu chạy frontend.
+- npm.
 - Chế độ <code>api-only</code>: CPU là đủ.
 - Chế độ <code>retrieval-only</code>: cần đủ RAM cho corpus, FAISS, BM25S, E5 và reranker.
 - Chế độ <code>full</code>: GPU CUDA được khuyến nghị; Phase 10 đề xuất NVIDIA L4 24 GB. Benchmark nặng đã chạy trên A100.
@@ -282,6 +298,53 @@ docker run --rm -p 8000:8000 `
 ~~~
 
 Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. Endpoint kiểm tra container là <code>/health</code> và <code>/ready</code>.
+
+## 💻 Chạy frontend
+
+Frontend nằm trong thư mục <code>frontend/</code>, được xây dựng bằng React 19 và Vite 8. Giao diện kết nối trực tiếp tới endpoint <code>/api/v1/chat/stream</code>, vì vậy backend cần chạy ở chế độ <code>full</code> hoặc trỏ tới một API full RAG đã triển khai.
+
+### 1. Cấu hình API
+
+Windows PowerShell:
+
+~~~powershell
+cd frontend
+Copy-Item .env.example .env
+~~~
+
+Linux/macOS:
+
+~~~bash
+cd frontend
+cp .env.example .env
+~~~
+
+Mở <code>frontend/.env</code> và đặt URL backend, không thêm dấu <code>/</code> ở cuối:
+
+~~~dotenv
+VITE_API_BASE_URL=http://localhost:8000
+~~~
+
+Backend hiện cho phép frontend local tại <code>http://localhost:5173</code> và <code>http://127.0.0.1:5173</code>. Khi deploy frontend ở domain khác, cần bổ sung domain đó vào CORS của API.
+
+### 2. Cài đặt và khởi chạy
+
+~~~powershell
+npm install
+npm run dev
+~~~
+
+Mở <code>http://localhost:5173</code>. Nút hình mặt trời/mặt trăng trên thanh tiêu đề dùng để đổi dark/light mode; lựa chọn được lưu trong <code>localStorage</code> cho những lần truy cập sau.
+
+### 3. Kiểm tra và build production
+
+~~~powershell
+npm run lint
+npm run build
+npm run preview
+~~~
+
+Bundle production được tạo trong <code>frontend/dist/</code>. Biến <code>VITE_API_BASE_URL</code> được nhúng tại thời điểm build, nên hãy cấu hình đúng URL API trước khi chạy <code>npm run build</code>.
 
 ## 📦 Chuẩn bị artifact
 

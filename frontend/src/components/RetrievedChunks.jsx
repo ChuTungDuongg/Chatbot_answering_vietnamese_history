@@ -1,3 +1,18 @@
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="m6 9 6 6 6-6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 function RetrievedChunks({ sources }) {
   if (!sources?.length) {
     return null;
@@ -24,7 +39,9 @@ function RetrievedChunks({ sources }) {
                   <code className="chunk-id">{chunkId}</code>
                 </div>
 
-                <span className="expand-icon">⌄</span>
+                <span className="expand-icon">
+                  <ExpandIcon />
+                </span>
               </summary>
 
               <div className="retrieved-details">
