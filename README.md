@@ -2,7 +2,7 @@
 
 # 🇻🇳✨ Chatbot Hỏi Đáp Lịch Sử Việt Nam ✨🇻🇳
 
-### FastAPI · Qwen2.5 · Hybrid RAG · FAISS · BM25S · RRF · Cross-Encoder
+### Qwen2.5 · Hybrid RAG · Conversation Memory · PDF/OCR · FastAPI · React
 
 <p>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
@@ -13,9 +13,11 @@
   <img alt="Vite 8" src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white">
   <img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-100%20questions-EC4899">
   <img alt="API" src="https://img.shields.io/badge/API-REST%20%2B%20SSE-0EA5E9">
+  <img alt="SQLite Memory" src="https://img.shields.io/badge/Memory-SQLite-0F766E?logo=sqlite&logoColor=white">
+  <img alt="PDF OCR" src="https://img.shields.io/badge/Documents-PDF%20%2B%20OCR-D97706">
 </p>
 
-Chatbot hỏi đáp lịch sử Việt Nam với giao diện React hiện đại, truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, và hỗ trợ phản hồi streaming qua SSE.
+Chatbot hỏi đáp lịch sử Việt Nam với nhiều cửa sổ hội thoại có memory, temporary corpus từ PDF/hình ảnh, truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, cùng phản hồi streaming qua SSE.
 
 [🚀 Chạy ứng dụng](#-chạy-nhanh) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
 
@@ -32,8 +34,10 @@ Chatbot hỏi đáp lịch sử Việt Nam với giao diện React hiện đại
 - 🛡️ Guardrails: phát hiện off-topic, kiểm tra <code>chunk_id</code>, chặn niên đại không có trong evidence, từ chối khi thiếu bằng chứng.
 - 🩹 Grounded repair: tự sửa tối đa một lần nếu câu trả lời thiếu ý hoặc vi phạm guard.
 - ⚡ FastAPI: REST cho retrieval/chat và SSE streaming chỉ phát câu trả lời sau khi validation hoàn tất.
-- 💻 Giao diện React responsive: hội thoại, trạng thái xử lý và bằng chứng truy xuất được trình bày rõ ràng trên desktop lẫn thiết bị di động.
-- 🌓 Dark/light mode: chuyển theme ngay trên thanh tiêu đề, tự nhận theme hệ thống ở lần đầu và ghi nhớ lựa chọn trong trình duyệt.
+- 💬 Conversation memory: nhiều cửa sổ chat, lưu message/source bằng SQLite và đưa lịch sử gần nhất vào prompt lẫn retrieval query khi cần.
+- 📄 Temporary document RAG: đọc text trực tiếp từ PDF, OCR trang scan/hình ảnh bằng Tesseract <code>vie+eng</code>, chunk + embedding và cô lập corpus theo từng conversation.
+- 💻 Giao diện React kiểu ChatGPT: sidebar hội thoại, Markdown, kéo-thả/multi-file upload, attachment status, evidence drawer và responsive trên desktop/mobile.
+- 🌓 Dark/light mode: tự nhận theme hệ thống, ghi nhớ lựa chọn trong trình duyệt và dùng chung design tokens.
 - 🇻🇳 Nhận diện Sử Việt AI: logo SVG riêng đặt cạnh tên chatbot, hiển thị sắc nét ở mọi kích thước.
 - 📊 Đánh giá đầy đủ: 100 câu × 4 cấu hình = 400 lượt benchmark Phase 9.
 - 🧪 RAG-SFT có theo dõi loss, throughput, source metrics, ROUGE-L, format, abstention và composite score ở Phase 6.
@@ -42,40 +46,44 @@ Chatbot hỏi đáp lịch sử Việt Nam với giao diện React hiện đại
 
 ~~~mermaid
 flowchart TD
-    U["👤 Người dùng"] --> API["⚡ FastAPI"]
-    API --> SYS["GET /health · GET /ready"]
-    API --> RET["POST /api/v1/retrieve"]
-    API --> CHAT["POST /api/v1/chat · /chat/stream"]
+    U["Người dùng"] --> FE["React 19 · Chat UI · X-Client-ID"]
+    FE --> CONV["Conversation CRUD"]
+    FE --> UP["Upload PDF / PNG / JPEG / WebP"]
+    FE --> CHAT["Validated SSE chat"]
 
-    RET --> HR
-    CHAT --> HR
+    CONV <--> DB[("SQLite on persistent /data")]
+    UP --> EXTRACT["PyMuPDF text extraction"]
+    EXTRACT -->|trang scan / ít text| OCR["Tesseract OCR vie+eng"]
+    OCR --> CHUNK["220-word chunks · 40-word overlap"]
+    EXTRACT --> CHUNK
+    CHUNK --> EMB["Multilingual E5 embeddings"]
+    EMB --> DB
 
-    subgraph HR["🔎 Hybrid Retriever"]
-        QA["Phân tích câu hỏi · facets · năm · OOD anchors"]
-        MQ["Mở rộng tối đa 3 query"]
-        D["E5 + FAISS Top 80"]
-        B["BM25S Top 80"]
-        RRF["Weighted RRF Top 20"]
-        CE["Cross-Encoder rerank"]
-        META["Metadata boost + context diversity"]
-        CTX["Tối đa 6 evidence chunks"]
+    CHAT --> MEM["Recent conversation history"]
+    DB --> MEM
+    CHAT --> QA
+    CHAT --> TEMP["Conversation temporary corpus"]
 
-        QA --> MQ
-        MQ --> D
-        MQ --> B
-        D --> RRF
+    subgraph GLOBAL_RAG["Global history corpus · Hybrid Retriever"]
+        QA["Facets · years · OOD anchors"] --> MQ["Multi-query"]
+        MQ --> D["E5 + FAISS Top 80"]
+        MQ --> B["BM25S Top 80"]
+        D --> RRF["Weighted RRF Top 20"]
         B --> RRF
-        RRF --> CE
-        CE --> META
-        META --> CTX
+        RRF --> CE["Cross-Encoder + metadata + diversity"]
     end
 
-    CTX --> GEN["🤖 Qwen2.5 Stage 1 + Stage 2"]
-    GEN --> GUARD["🛡️ Source/year/format/quality guards"]
-    GUARD -->|có lỗi có thể sửa| REPAIR["🩹 Evidence-only repair"]
+    DB --> TEMP
+    CE --> MERGE["Global + temporary rerank"]
+    TEMP --> MERGE
+    MEM --> GEN["Qwen2.5 Stage 1 + Stage 2"]
+    MERGE --> GEN
+    GEN --> GUARD["Source · year · format · quality guards"]
+    GUARD -->|có thể sửa| REPAIR["Evidence-only repair"]
     REPAIR --> GUARD
-    GUARD --> OUT["✅ Answer + sources + status"]
-    OUT --> API
+    GUARD --> OUT["Answer + sources + status"]
+    OUT --> DB
+    OUT --> FE
 ~~~
 
 Luồng retrieval giữ đúng cấu hình Phase 9:
@@ -104,35 +112,55 @@ retrieval evidence
   → answer được chấp nhận hoặc safe refusal
 ~~~
 
+Luồng memory và tài liệu tạm thời:
+
+~~~text
+X-Client-ID + conversation_id
+  → SQLite lấy tối đa 6 message gần nhất / 2.400 ký tự
+  → câu hỏi nối tiếp có thể dùng 4 message gần nhất để contextualize retrieval
+  → global history chunks + temporary attachment chunks
+  → cross-encoder rerank chung
+  → prompt hiện tại (history chỉ là ngữ cảnh, evidence mới được phép làm nguồn)
+  → lưu answer + cited sources trở lại SQLite
+~~~
+
+SQLite là persistence layer, không tự biến model thành chatbot có memory. Route chat chủ động đọc history từ database rồi truyền qua generation/prompting. Toàn bộ lịch sử vẫn được lưu, nhưng prompt chỉ nhận phần gần nhất theo token budget.
+
 ## 🗂️ Sơ đồ thư mục
 
 ~~~text
 Chatbot_answering_vietnamese_history/
 ├── app/
-│   ├── main.py                         # FastAPI app, lifespan, health/readiness
-│   ├── config.py                       # APP_MODE, DEVICE và đường dẫn artifact
-│   ├── schemas.py                      # Pydantic request/response schemas
+│   ├── main.py                         # lifespan, runtime wiring, routers
+│   ├── config.py                       # runtime, artifact, SQLite và CORS settings
+│   ├── schemas.py                      # RAG, conversation, message, attachment schemas
 │   ├── api/
-│   │   └── routes.py                   # retrieve, chat và validated SSE stream
+│   │   ├── conversations.py            # conversation CRUD và upload/delete attachment
+│   │   └── routes.py                   # retrieve, persisted chat và validated SSE
+│   ├── chat/
+│   │   ├── store.py                    # SQLite conversations/messages/temp chunks
+│   │   └── attachments.py              # PDF extraction, OCR, chunking và temp retrieval
 │   ├── rag/
 │   │   ├── retrieval.py                # E5 + FAISS + BM25S + RRF + reranker
-│   │   ├── prompting.py                # prompt động, token budget, parse output
-│   │   ├── generation.py               # generation, guard và repair
-│   │   └── guards.py                   # source/year/OOD/quality checks
+│   │   ├── prompting.py                # history-aware prompt và token budget
+│   │   ├── generation.py               # global/temp merge, generation và repair
+│   │   └── guards.py                   # validate cả global và temporary source IDs
 │   └── services/
 │       └── rag_service.py              # load, validate và shutdown runtime
+├── data/
+│   └── chat.sqlite3                    # sinh khi chạy local; không commit
 ├── artifacts/
 │   └── vn_history_deployment/
 │       └── manifest.json               # placeholder trong Git hiện tại
 ├── frontend/
 │   ├── src/
-│   │   ├── components/                 # message, composer, status và evidence UI
-│   │   ├── services/api.js             # client SSE cho endpoint chat stream
-│   │   ├── App.jsx                     # giao diện chính, logo và theme state
-│   │   ├── App.css                     # layout responsive và component styles
+│   │   ├── components/                 # sidebar, messages, attachments, composer, evidence
+│   │   ├── services/api.js             # conversation/upload/SSE client + X-Client-ID
+│   │   ├── App.jsx                     # conversation state, uploads và SSE orchestration
+│   │   ├── App.css                     # ChatGPT-style responsive application layout
 │   │   └── index.css                   # design tokens cho dark/light mode
 │   ├── .env.example                    # mẫu VITE_API_BASE_URL
-│   └── package.json                    # React 19, Vite 8 và scripts frontend
+│   └── package.json                    # React, Vite, Lucide, Markdown/GFM
 ├── modal_test/
 │   ├── modal_hello.py
 │   ├── modal_gpu_test.py
@@ -141,8 +169,8 @@ Chatbot_answering_vietnamese_history/
 ├── modal_runtime_sanity.py              # smoke test retrieval runtime trên Modal
 ├── full_modal_runtime_sanity.py         # smoke test full RAG trên GPU Modal
 ├── modal_fix.py                         # sửa tên model shards trên Modal Volume
-├── modal_app.py                         # triển khai FastAPI lên Modal với GPU L4
-├── Dockerfile                           # image Python 3.11 cho API/Modal
+├── modal_app.py                         # GPU L4 + artifact/cache/chat-data Volumes
+├── Dockerfile                           # Python 3.11 + Tesseract vie/eng
 ├── Training/
 │   ├── Dataset/
 │   │   ├── Chunk_id/                    # 31 pack JSONL, tổng 520 dòng
@@ -171,6 +199,9 @@ Chatbot_answering_vietnamese_history/
 
 > [!NOTE]
 > Corpus mẫu dùng ở Phase 6 có 520 dòng. Corpus deployment của Phase 8–10 là bộ khác, gồm 58.603 chunks và phải khớp 58.603 vectors FAISS cùng 58.603 records BM25S.
+
+> [!NOTE]
+> File PDF/hình ảnh gốc không được giữ trong SQLite. Hệ thống chỉ lưu metadata attachment, text đã trích xuất, chunks và embeddings; dữ liệu này tồn tại trong phạm vi conversation cho tới khi attachment hoặc conversation bị xóa.
 
 ## 🧭 Hành trình từ Phase 1 đến Phase 10
 
@@ -204,7 +235,10 @@ Máy local không cần GPU để chạy theo luồng này. Model, corpus và c�
 - Python 3.10+ và pip để cài Modal CLI.
 - Tài khoản Modal đã đăng nhập bằng <code>modal setup</code>.
 - Hai Modal Volume <code>vn-history-artifacts</code> và <code>vn-history-hf-cache</code> đã tồn tại.
+- Volume <code>vn-history-chat-data</code> được <code>modal_app.py</code> tự tạo để giữ SQLite qua scale-to-zero.
 - Volume artifact đã chứa đầy đủ deployment bundle của Phase 10.
+
+Docker image đã cài Tesseract cùng language packs <code>vie</code>/<code>eng</code>. Nếu chạy FastAPI trực tiếp trên máy local và muốn upload tài liệu, cần cài thêm Tesseract OCR, bảo đảm executable <code>tesseract</code> có trong <code>PATH</code>, rồi cài <code>requirements.txt</code>.
 
 ### 2. Chuẩn bị lần đầu
 
@@ -236,7 +270,7 @@ npm install
 npm --prefix frontend install
 ~~~
 
-Hai lệnh npm cài hai nhóm dependency khác nhau: package root chứa <code>concurrently</code>/<code>cross-env</code>, còn <code>frontend/</code> chứa React, Vite và ESLint.
+Hai lệnh npm cài hai nhóm dependency khác nhau: package root chứa <code>concurrently</code>/<code>cross-env</code>, còn <code>frontend/</code> chứa React, Vite, Lucide icons, React Markdown và ESLint.
 
 Có thể kiểm tra bộ artifact trên Modal trước khi chạy ứng dụng:
 
@@ -271,6 +305,13 @@ Nếu chưa biết URL ở lần chạy đầu tiên, chạy <code>npm run dev</
 > [!NOTE]
 > Luồng development tích hợp lấy cấu hình backend từ <code>modal_app.py</code>: <code>APP_MODE=full</code>, <code>DEVICE=cuda</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. File <code>.env</code> ở root chỉ dành cho trường hợp chạy FastAPI trực tiếp trên máy local, không điều khiển backend Modal của <code>npm run dev</code>.
 
+Nếu chạy FastAPI trực tiếp, các biến mới liên quan tới memory/CORS là:
+
+~~~dotenv
+CHAT_DATABASE_PATH=./data/chat.sqlite3
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+~~~
+
 ### 4. Khởi động toàn bộ ứng dụng
 
 Mỗi lần phát triển, mở terminal tại thư mục gốc, bảo đảm lệnh <code>modal</code> khả dụng trong môi trường hiện tại, rồi chạy:
@@ -289,7 +330,7 @@ Sau khi hai tiến trình sẵn sàng:
 - Health: <code>&lt;MODAL_API_URL&gt;/health</code>;
 - Readiness: <code>&lt;MODAL_API_URL&gt;/ready</code>.
 
-Lần khởi động backend đầu tiên có thể lâu hơn vì Modal cần build image hoặc khởi tạo container và nạp model/index. Chỉ bắt đầu chat sau khi endpoint <code>/ready</code> trả <code>ready=true</code>.
+Lần khởi động backend đầu tiên có thể lâu hơn vì Modal cần build image hoặc khởi tạo container, mount ba Volume và nạp model/index. Chỉ bắt đầu chat sau khi endpoint <code>/ready</code> trả <code>ready=true</code>.
 
 Nhấn <code>Ctrl+C</code> trong terminal để dừng. Tùy chọn <code>-k</code> của <code>concurrently</code> bảo đảm tiến trình còn lại cũng được tắt khi một tiến trình kết thúc.
 
@@ -307,14 +348,14 @@ Biến <code>VITE_API_BASE_URL</code> được Vite nhúng tại thời điểm 
 
 ### 6. Chạy API bằng Docker (tùy chọn)
 
-Docker không thuộc luồng <code>npm run dev</code>. Cách này chủ yếu dùng để kiểm tra image API độc lập ở chế độ <code>api-only</code>:
+Docker không thuộc luồng <code>npm run dev</code>. Cách này chủ yếu dùng để kiểm tra image API độc lập ở chế độ <code>api-only</code>. Mount volume vào <code>/data</code> để conversation không mất khi container được tạo lại:
 
 ~~~powershell
 docker build -t vn-history-rag-api .
-docker run --rm -p 8000:8000 vn-history-rag-api
+docker run --rm -p 8000:8000 -v vn-history-chat-data:/data vn-history-rag-api
 ~~~
 
-Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code> và <code>ARTIFACT_ROOT=/artifacts/vn_history_deployment</code>. Endpoint kiểm tra container là <code>http://localhost:8000/health</code> và <code>http://localhost:8000/ready</code>.
+Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code>, <code>CHAT_DATABASE_PATH=/data/chat.sqlite3</code> và đã có Tesseract OCR Việt/Anh. Conversation CRUD hoạt động trong mode này, nhưng retrieval/chat/upload cần runtime tương ứng: attachment ingestion cần ít nhất <code>retrieval-only</code>, còn generation cần <code>full</code>. Endpoint kiểm tra container là <code>http://localhost:8000/health</code> và <code>http://localhost:8000/ready</code>.
 
 ## 📦 Chuẩn bị artifact
 
@@ -375,26 +416,63 @@ Runtime kiểm tra chặt:
 | GET | <code>/health</code> | Liveness của tiến trình API. |
 | GET | <code>/ready</code> | Trạng thái corpus, FAISS, BM25S, E5, reranker, model và device. |
 
+### Client identity và conversation API
+
+Conversation/chat/attachment endpoints yêu cầu header <code>X-Client-ID</code> dài 8–128 ký tự, chỉ gồm chữ, số và <code>._:-</code>. Frontend tự tạo UUID một lần và lưu trong <code>localStorage</code>.
+
+> [!WARNING]
+> <code>X-Client-ID</code> chỉ là anonymous ownership key cho demo, không phải authentication. Không dùng cơ chế này để bảo vệ dữ liệu nhạy cảm trên API public.
+
+| Method | Path | Mode tối thiểu | Mô tả |
+|---|---|---|---|
+| POST | <code>/api/v1/conversations</code> | api-only | Tạo cửa sổ chat. |
+| GET | <code>/api/v1/conversations</code> | api-only | Liệt kê conversation của client. |
+| GET | <code>/api/v1/conversations/{id}</code> | api-only | Lấy conversation, messages và attachments. |
+| PATCH | <code>/api/v1/conversations/{id}</code> | api-only | Đổi tên conversation. |
+| DELETE | <code>/api/v1/conversations/{id}</code> | api-only | Xóa conversation cùng messages/temp corpus. |
+| POST | <code>/api/v1/conversations/{id}/attachments</code> | retrieval-only | Extract/OCR, chunk, embed và lưu temporary corpus. |
+| DELETE | <code>/api/v1/conversations/{id}/attachments/{attachment_id}</code> | api-only | Xóa attachment cùng temporary chunks. |
+
+Tạo conversation:
+
+~~~bash
+curl -X POST http://localhost:8000/api/v1/conversations \
+  -H "X-Client-ID: demo-client-001" \
+  -H "Content-Type: application/json" \
+  -d '{"title":null}'
+~~~
+
+Upload PDF hoặc hình ảnh vào conversation:
+
+~~~bash
+curl -X POST http://localhost:8000/api/v1/conversations/<CONVERSATION_ID>/attachments \
+  -H "X-Client-ID: demo-client-001" \
+  -F "file=@./documents/tai-lieu-lich-su.pdf"
+~~~
+
+Upload hỗ trợ PDF, PNG, JPEG và WebP, tối đa 20 MB/file; frontend nhận tối đa 5 file trong một lượt chọn. PDF tối đa 100 trang và mỗi file tối đa 400 chunks. PDF có text được đọc trực tiếp bằng PyMuPDF; trang scan/ít text và file hình ảnh được OCR bằng Tesseract <code>vie+eng</code>.
+
 ### Endpoint RAG
 
 | Method | Path | Mode tối thiểu | Mô tả |
 |---|---|---|---|
-| POST | <code>/api/v1/retrieve</code> | retrieval-only | Trả candidates/evidence sau Hybrid RAG. |
-| POST | <code>/api/v1/chat</code> | full | Trả answer, status, sources, latency và debug tùy chọn. |
-| POST | <code>/api/v1/chat/stream</code> | full | SSE; chạy retrieval → generation → guards → repair trước khi stream answer đã duyệt. |
+| POST | <code>/api/v1/retrieve</code> | retrieval-only | Hybrid retrieval trên global history corpus, không cần conversation. |
+| POST | <code>/api/v1/chat</code> | full | Chat có memory, global/temp RAG, guards và persisted messages. |
+| POST | <code>/api/v1/chat/stream</code> | full | SSE; chỉ stream answer cuối đã qua validation/repair. |
 
-Request dùng chung:
+Các trường RAG chính:
 
+- <code>conversation_id</code>: bắt buộc với chat/chat stream.
 - <code>question</code>: 2–1.000 ký tự.
 - <code>final_k</code>: 1–10, mặc định 6.
-- <code>debug</code>: bật candidates, tool trace và diagnostic fields.
+- <code>debug</code>: bật tool trace và diagnostic fields.
 
 ### Retrieval
 
 ~~~bash
 curl -X POST http://localhost:8000/api/v1/retrieve \
   -H "Content-Type: application/json" \
-  -d "{\"question\":\"Khởi nghĩa Lam Sơn diễn ra trong bối cảnh nào và kết quả ra sao?\",\"final_k\":6,\"debug\":true}"
+  -d '{"question":"Khởi nghĩa Lam Sơn diễn ra trong bối cảnh nào và kết quả ra sao?","final_k":6,"debug":true}'
 ~~~
 
 Các trường chính trong response:
@@ -410,18 +488,20 @@ Các trường chính trong response:
 
 ~~~bash
 curl -X POST http://localhost:8000/api/v1/chat \
+  -H "X-Client-ID: demo-client-001" \
   -H "Content-Type: application/json" \
-  -d "{\"question\":\"Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?\",\"final_k\":6,\"debug\":true}"
+  -d '{"conversation_id":"<CONVERSATION_ID>","question":"Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?","final_k":6,"debug":true}'
 ~~~
 
-Response gồm <code>answer</code>, <code>status</code>, danh sách <code>sources</code>, <code>latency_ms</code>, <code>rewrite_used</code> và debug diagnostics.
+Backend đọc history cũ trước khi lưu câu hỏi hiện tại, chạy global + temporary retrieval, sinh/validate answer rồi lưu assistant message cùng sources. Response gồm <code>conversation_id</code>, <code>message_id</code>, <code>answer</code>, <code>status</code>, <code>sources</code>, <code>latency_ms</code>, <code>rewrite_used</code> và debug diagnostics.
 
 ### Validated SSE stream
 
 ~~~bash
 curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "X-Client-ID: demo-client-001" \
   -H "Content-Type: application/json" \
-  -d "{\"question\":\"Vì sao chiến thắng Bạch Đằng năm 938 là một bước ngoặt?\",\"final_k\":6}"
+  -d '{"conversation_id":"<CONVERSATION_ID>","question":"Vì sao chiến thắng Bạch Đằng năm 938 là một bước ngoặt?","final_k":6}'
 ~~~
 
 Event thực tế:
@@ -432,14 +512,14 @@ Event thực tế:
 4. một hoặc nhiều <code>answer_delta</code>
 5. <code>sources</code>
 6. <code>debug</code> nếu yêu cầu
-7. <code>done</code> hoặc <code>error</code>
+7. <code>done</code> chứa <code>conversation_id</code>, user/assistant message IDs, status và latency; hoặc <code>error</code>.
 
 > [!TIP]
 > Đây là validated streaming: hệ thống không phát token thô từ model. Chỉ answer cuối đã qua guards/repair mới được chia nhỏ để stream cho giao diện.
 
 ## 📊 Benchmark Phase 9 — 100 câu × 4 cấu hình
 
-Nguồn số liệu: output cuối của [Phase 9](Training/Training/Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb) và deployment export <code>benchmark_results_v3_unique_batched.jsonl</code> / <code>benchmark_summary_v3_unique_batched.csv</code>.
+Nguồn số liệu: output cuối của notebook <code>Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb</code> và deployment export <code>benchmark_results_v3_unique_batched.jsonl</code> / <code>benchmark_summary_v3_unique_batched.csv</code>. Notebook huấn luyện/benchmark đầy đủ và artifact lớn không được commit trong repository này.
 
 ### Thiết kế benchmark
 
@@ -614,7 +694,7 @@ Diagnostic notebook ghi nhận 14 lỗi behavior, 9 câu lịch sử không qua 
 
 ## 🧪 Toàn bộ metrics Phase 6
 
-Nguồn: output đã lưu trong [Phase 6 RAG-SFT](Training/Training/Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb). Các số dưới đây là kết quả đo thật của notebook, không phải mục tiêu dự kiến.
+Nguồn: output đã lưu từ notebook <code>Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb</code>. Notebook huấn luyện đầy đủ không được commit; các số dưới đây là kết quả đo thật đã ghi lại, không phải mục tiêu dự kiến.
 
 ### Môi trường và cấu hình chạy
 
@@ -806,13 +886,27 @@ modal serve modal_app.py
 modal deploy modal_app.py
 ~~~
 
-<code>modal_app.py</code> yêu cầu hai Volume đã tồn tại: <code>vn-history-artifacts</code> và <code>vn-history-hf-cache</code>. Cấu hình mặc định dùng GPU L4, <code>APP_MODE=full</code> và mount artifact tại <code>/artifacts</code>. Script <code>modal_fix.py</code> có thay đổi file model trên Volume; chỉ chạy khi kiểm tra artifact báo sai tên shard.
+<code>modal_app.py</code> sử dụng ba Volume:
+
+| Volume | Mount | Vai trò | Khởi tạo |
+|---|---|---|---|
+| <code>vn-history-artifacts</code> | <code>/artifacts</code> | Model, adapter và index retrieval | Phải tồn tại trước |
+| <code>vn-history-hf-cache</code> | <code>/hf-cache</code> | Hugging Face cache | Phải tồn tại trước |
+| <code>vn-history-chat-data</code> | <code>/data</code> | SQLite memory và temporary corpus | Tự tạo nếu chưa có |
+
+Cấu hình mặc định dùng GPU L4, <code>APP_MODE=full</code> và lưu database tại <code>/data/chat.sqlite3</code>, vì vậy hội thoại vẫn tồn tại sau khi container scale về 0. <code>max_containers=1</code> được đặt có chủ đích để tránh nhiều Modal container cùng ghi vào một file SQLite. Khi cần scale ngang, nên chuyển conversation store sang PostgreSQL và temporary vector store sang hệ quản trị phù hợp.
+
+Image từ <code>Dockerfile</code> đã cài Tesseract với language pack <code>vie</code>/<code>eng</code> và có healthcheck tại <code>/health</code>. Khi deploy frontend ở domain riêng, cập nhật <code>CORS_ORIGINS</code> trong <code>modal_app.py</code>. Script <code>modal_fix.py</code> có thay đổi file model trên Volume; chỉ chạy khi kiểm tra artifact báo sai tên shard.
 
 ## 🔐 Bảo mật và vận hành
 
 - Không commit token, API key, credentials hoặc nội dung bí mật trong <code>.env</code>.
 - Model đang dùng <code>trust_remote_code=True</code>; chỉ load artifact/model từ nguồn tin cậy.
-- Trước khi public API, nên thêm authentication, rate limiting, request timeout, CORS policy, structured logging và monitoring.
+- <code>X-Client-ID</code> chỉ là định danh local do frontend sinh, không phải cơ chế authentication. Trước khi public API cần thay bằng user/session identity đã xác thực.
+- Database SQLite có thể chứa lịch sử chat, nội dung tài liệu và embedding tạm thời; cần bảo vệ, sao lưu và đặt retention policy phù hợp cho Volume <code>/data</code>.
+- File upload được giới hạn dung lượng, số trang và định dạng, nhưng nội dung OCR/PDF vẫn là dữ liệu không tin cậy; không nên để chỉ dẫn trong tài liệu ghi đè system prompt hoặc guardrails.
+- Trước khi public API, nên thêm authentication, quota theo người dùng, rate limiting, request timeout, structured logging và monitoring.
+- Chỉ khai báo chính xác domain frontend trong <code>CORS_ORIGINS</code>; không dùng wildcard cho bản production có authentication.
 - SSE nên đi qua reverse proxy đã tắt buffering cho endpoint stream.
 - Chỉ nhận traffic khi <code>/ready</code> trả <code>ready=true</code>.
 - Không xem benchmark notebook là SLA production; cần benchmark tải riêng trên hạ tầng deploy thật.
@@ -822,6 +916,10 @@ modal deploy modal_app.py
 - Artifact lớn không có trong Git; manifest trong repo chỉ là placeholder.
 - Đã có Dockerfile và các smoke test Modal, nhưng chưa có CI hoặc test suite tự động chuẩn hóa.
 - Chưa đo p95/p99 latency, cold start, requests/second, RAM và VRAM production.
+- SQLite phù hợp với deployment một container hiện tại nhưng chưa hỗ trợ scale ngang nhiều API worker/container cùng ghi dữ liệu.
+- PDF dạng text được đọc trực tiếp; PDF scan và ảnh chỉ được OCR thành văn bản. Hệ thống chưa hiểu bố cục phức tạp, biểu đồ, bản đồ, ảnh minh họa hoặc chữ viết tay như một vision-language model.
+- File gốc không được lưu. SQLite chỉ giữ metadata, text/chunk và embedding tạm theo từng hội thoại; hiện chưa có quota tổng dung lượng theo user hoặc conversation.
+- Frontend chưa có tài khoản người dùng; xóa local storage có thể tạo <code>X-Client-ID</code> mới và không còn thấy danh sách chat thuộc ID cũ.
 - Source F1 Full RAG còn thấp hơn các metric answer similarity; retrieval/final-context recall vẫn là hướng tối ưu chính.
 - Repository chưa có file <code>LICENSE</code>.
 
@@ -829,8 +927,11 @@ modal deploy modal_app.py
 
 - 📈 Thêm benchmark retrieval độc lập và error analysis theo từng giai đoạn lịch sử.
 - ⚙️ Đo p50/p95/p99, throughput, cold start, RAM/VRAM và concurrency.
-- 🧪 Bổ sung unit/integration tests cho OOD, RRF, source/year guards và SSE.
-- 🐳 Bổ sung CI, container healthcheck và health/readiness probes ở tầng triển khai production.
+- 🧪 Bổ sung unit/integration tests cho conversation store, upload/OCR, temporary retrieval, OOD, guards và SSE.
+- 🔐 Thêm authentication, quota lưu trữ, rate limiting và chính sách xóa dữ liệu người dùng.
+- 🗄️ Chuyển SQLite sang PostgreSQL/pgvector hoặc dịch vụ tương đương khi cần nhiều replica.
+- 📄 Đưa OCR/chunking sang background job và bổ sung VLM/document-layout parser cho tài liệu nhiều hình ảnh.
+- 🐳 Bổ sung CI và kiểm tra tự động health/readiness trong pipeline triển khai.
 - 🚀 Chuyển generation sang vLLM hoặc engine batching khi cần tải đồng thời cao.
 - 🔍 Tối ưu recall sau reranker và source selection.
 - 📜 Bổ sung giấy phép sử dụng dữ liệu, model và mã nguồn.
