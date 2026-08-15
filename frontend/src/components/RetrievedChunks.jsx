@@ -1,75 +1,59 @@
-function ExpandIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="m6 9 6 6 6-6"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
+import { BookOpen, ChevronDown, FileImage, FileText } from "lucide-react";
+
+function sourceLabel(source) {
+  return source.source_kind === "attachment" ? "Tài liệu của bạn" : "Kho sử liệu";
 }
 
 function RetrievedChunks({ sources }) {
-  if (!sources?.length) {
-    return null;
-  }
+  if (!sources?.length) return null;
 
   return (
-    <section className="retrieved-chunks">
-      <div className="retrieved-list">
-        {sources.map((source, index) => {
-          const chunkId = source.chunk_id ?? source.id ?? `chunk-${index}`;
-          const title = source.title ?? "Unknown source";
-          const text = source.text ?? source.content ?? "";
-          const score = source.final_retrieval_score;
-          const rerankScore = source.rerank_score;
+    <div className="retrieved-list">
+      {sources.map((source, index) => {
+        const chunkId = source.chunk_id ?? source.id ?? `chunk-${index}`;
+        const title = source.title ?? "Nguồn chưa có tiêu đề";
+        const text = source.text ?? source.content ?? "";
+        const score = source.final_retrieval_score;
+        const rerankerScore = source.reranker_score;
+        const isAttachment = source.source_kind === "attachment" || String(chunkId).startsWith("temp:");
+        const isImage = /\.(png|jpe?g|webp)$/i.test(title);
+        const SourceIcon = isAttachment ? (isImage ? FileImage : FileText) : BookOpen;
 
-          return (
-            <details className="retrieved-card" key={chunkId}>
-              <summary className="retrieved-summary">
-                <div className="retrieved-summary-main">
-                  <strong>
-                    {index + 1}. {title}
-                  </strong>
-
-                  <code className="chunk-id">{chunkId}</code>
-                </div>
-
-                <span className="expand-icon">
-                  <ExpandIcon />
+        return (
+          <details className="retrieved-card" key={chunkId}>
+            <summary className="retrieved-summary">
+              <SourceIcon className="retrieved-type-icon" />
+              <span className="retrieved-summary-main">
+                <span className="retrieved-source-type">{sourceLabel(source)}</span>
+                <strong>{title}</strong>
+                <span className="retrieved-meta">
+                  {source.page_number ? `Trang ${source.page_number}` : `Nguồn ${index + 1}`}
+                  {source.cited ? " · Được trích dẫn" : ""}
                 </span>
-              </summary>
+              </span>
+              <ChevronDown className="expand-icon" />
+            </summary>
 
-              <div className="retrieved-details">
-                {typeof score === "number" && (
-                  <div className="retrieved-score">
-                    Final score: {score.toFixed(4)}
-                  </div>
-                )}
+            <div className="retrieved-details">
+              <code className="chunk-id">{chunkId}</code>
 
-                {typeof rerankScore === "number" && (
-                  <div className="retrieved-score">
-                    Rerank score: {rerankScore.toFixed(4)}
-                  </div>
-                )}
+              {(typeof score === "number" || typeof rerankerScore === "number") && (
+                <div className="score-row">
+                  {typeof score === "number" && <span>Final {score.toFixed(3)}</span>}
+                  {typeof rerankerScore === "number" && <span>Rerank {rerankerScore.toFixed(3)}</span>}
+                </div>
+              )}
 
-                {text ? (
-                  <p className="retrieved-full-text">{text}</p>
-                ) : (
-                  <p className="retrieved-empty-text">
-                    Nội dung chunk không được backend gửi về.
-                  </p>
-                )}
-              </div>
-            </details>
-          );
-        })}
-      </div>
-    </section>
+              {text ? (
+                <p className="retrieved-full-text">{text}</p>
+              ) : (
+                <p className="retrieved-empty-text">Nội dung chi tiết không có trong message đã lưu.</p>
+              )}
+            </div>
+          </details>
+        );
+      })}
+    </div>
   );
 }
 

@@ -1,152 +1,138 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  BookOpenText,
+  Landmark,
+  Moon,
+  PanelRightClose,
+  PanelRightOpen,
+  Paperclip,
+  ScrollText,
+  Sun,
+  Swords,
+  Trash2,
+  X,
+} from "lucide-react";
+import AttachmentTray from "./components/AttachmentTray";
 import ChatInput from "./components/ChatInput";
 import ChatMessage from "./components/ChatMessage";
+import ChatSidebar, { SidebarOpenButton } from "./components/ChatSidebar";
+import LogoMark from "./components/LogoMark";
 import RetrievedChunks from "./components/RetrievedChunks";
 import StatusIndicator from "./components/StatusIndicator";
-import { streamChat } from "./services/api";
+import {
+  createConversation,
+  deleteAttachment,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  streamChat,
+  updateConversation,
+  uploadAttachment,
+} from "./services/api";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "vn-history-theme";
+const ACTIVE_STATUSES = new Set(["processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming"]);
+const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
+const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_FILES_PER_UPLOAD = 5;
+
+const SUGGESTIONS = [
+  {
+    icon: Landmark,
+    label: "Một bước ngoặt lịch sử",
+    question: "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+  },
+  {
+    icon: ScrollText,
+    label: "Một triều đại",
+    question: "Nguyên nhân nào dẫn đến sự suy yếu của nhà Trần?",
+  },
+  {
+    icon: Swords,
+    label: "So sánh sự kiện",
+    question: "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+  },
+];
 
 function getInitialTheme() {
-  if (typeof window === "undefined") {
-    return "light";
-  }
-
   const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-
-  if (savedTheme === "dark" || savedTheme === "light") {
-    return savedTheme;
-  }
-
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  if (["dark", "light"].includes(savedTheme)) return savedTheme;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function LogoMark({ className = "" }) {
-  return (
-    <svg
-      className={`logo-mark ${className}`}
-      viewBox="0 0 64 64"
-      role="img"
-      aria-label="Logo Su Viet AI"
-    >
-      <defs>
-        <linearGradient id="logo-gradient" x1="10" x2="54" y1="8" y2="56">
-          <stop offset="0%" stopColor="#ef4444" />
-          <stop offset="48%" stopColor="#d97706" />
-          <stop offset="100%" stopColor="#0f766e" />
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="16" fill="url(#logo-gradient)" />
-      <path
-        d="M14 28.5 32 15l18 13.5"
-        fill="none"
-        stroke="white"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="4.2"
-      />
-      <path
-        d="M20 30h24M23 35h18M26 40h12"
-        fill="none"
-        stroke="white"
-        strokeLinecap="round"
-        strokeWidth="3.4"
-      />
-      <path
-        d="M43.5 15.5 45.8 20l5 .7-3.6 3.5.9 5-4.6-2.4-4.5 2.4.8-5-3.6-3.5 5-.7 2.3-4.5Z"
-        fill="#fef3c7"
-      />
-    </svg>
-  );
+function createLocalId(prefix) {
+  const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${id}`;
 }
 
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M20.2 14.8A8.6 8.6 0 0 1 9.2 3.8 8.8 8.8 0 1 0 20.2 14.8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
+function normalizeConversationList(payload) {
+  if (Array.isArray(payload)) return payload;
+  return payload?.items ?? payload?.conversations ?? [];
 }
 
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5 5l-1.4-1.4M20.4 20.4 19 19M19 5l1.4-1.4M3.6 20.4 5 19"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-      <circle
-        cx="12"
-        cy="12"
-        r="4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function getDeltaText(data) {
-  if (typeof data === "string") {
-    return data;
-  }
-
-  return data?.delta ?? data?.text ?? data?.content ?? "";
-}
-
-function getStatusText(event, data) {
-  if (typeof data === "string") {
-    return data;
-  }
-
-  return data?.status ?? data?.stage ?? data?.message ?? event;
+function normalizeConversationDetail(payload) {
+  const conversation = payload?.conversation ?? payload ?? {};
+  return {
+    conversation,
+    messages: payload?.messages ?? conversation.messages ?? [],
+    attachments: payload?.attachments ?? conversation.attachments ?? [],
+  };
 }
 
 function getSources(data) {
-  if (Array.isArray(data)) {
-    return data;
-  }
+  if (Array.isArray(data)) return data;
+  return data?.items ?? data?.sources ?? data?.final_context ?? data?.retrieval?.final_context ?? [];
+}
 
-  return (
-    data?.items ??
-    data?.sources ??
-    data?.chunks ??
-    data?.contexts ??
-    data?.final_context ??
-    data?.retrieval?.final_context ??
-    []
-  );
+function getLatestSources(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.sources?.length) return message.sources;
+  }
+  return [];
+}
+
+function normalizeUploadFile(file) {
+  if (ALLOWED_MIME_TYPES.has(file.type)) return file;
+
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const inferredType = MIME_BY_EXTENSION[extension];
+  if (!inferredType) return file;
+
+  return new File([file], file.name, { type: inferredType, lastModified: file.lastModified });
 }
 
 function App() {
-  const [question, setQuestion] = useState("");
-  const [submittedQuestion, setSubmittedQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
+  const [theme, setTheme] = useState(getInitialTheme);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 840);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [conversations, setConversations] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [attachments, setAttachments] = useState([]);
+  const [pendingUploads, setPendingUploads] = useState([]);
   const [sources, setSources] = useState([]);
   const [debugData, setDebugData] = useState(null);
+  const [question, setQuestion] = useState("");
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
-  const [theme, setTheme] = useState(getInitialTheme);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(true);
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState(null);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   const abortControllerRef = useRef(null);
   const bottomRef = useRef(null);
+  const isRunning = ACTIVE_STATUSES.has(status);
+  const isUploading = pendingUploads.length > 0;
 
-  const isRunning = !["idle", "done", "error", "cancelled"].includes(status);
-  const isDarkTheme = theme === "dark";
+  const activeConversation = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeConversationId),
+    [activeConversationId, conversations],
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -154,286 +140,553 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [answer, status]);
+    bottomRef.current?.scrollIntoView({ behavior: status === "streaming" ? "auto" : "smooth" });
+  }, [messages, status]);
 
-  const toggleTheme = () => {
-    setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function bootstrap() {
+      try {
+        const payload = await listConversations({ signal: controller.signal });
+        const items = normalizeConversationList(payload);
+        setConversations(items);
+
+        if (items.length > 0) {
+          const detailPayload = await getConversation(items[0].id, { signal: controller.signal });
+          const detail = normalizeConversationDetail(detailPayload);
+          setActiveConversationId(items[0].id);
+          setMessages(detail.messages);
+          setAttachments(detail.attachments);
+          setSources(getLatestSources(detail.messages));
+        }
+      } catch (requestError) {
+        if (requestError.name !== "AbortError") {
+          console.error(requestError);
+          setError(requestError.message || "Không thể kết nối tới backend.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingConversations(false);
+      }
+    }
+
+    bootstrap();
+    return () => controller.abort();
+  }, []);
+
+  const updateMessage = (messageId, updater) => {
+    setMessages((current) => current.map((message) => {
+      if (message.id !== messageId) return message;
+      return typeof updater === "function" ? updater(message) : { ...message, ...updater };
+    }));
+  };
+
+  const refreshConversations = async () => {
+    const payload = await listConversations();
+    const items = normalizeConversationList(payload);
+    setConversations(items);
+    return items;
+  };
+
+  const loadConversation = async (conversationId) => {
+    setIsLoadingConversation(true);
+    setError("");
+
+    try {
+      const payload = await getConversation(conversationId);
+      const detail = normalizeConversationDetail(payload);
+      setActiveConversationId(conversationId);
+      setMessages(detail.messages);
+      setAttachments(detail.attachments);
+      setSources(getLatestSources(detail.messages));
+      setDebugData(null);
+      setStatus("idle");
+      return detail;
+    } finally {
+      setIsLoadingConversation(false);
+    }
+  };
+
+  const createNewConversation = async () => {
+    if (isRunning) return null;
+
+    const payload = await createConversation({ title: null });
+    const conversation = payload?.conversation ?? payload;
+    if (!conversation?.id) throw new Error("Backend không trả về conversation ID.");
+
+    setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+    setActiveConversationId(conversation.id);
+    setMessages([]);
+    setAttachments([]);
+    setSources([]);
+    setDebugData(null);
+    setQuestion("");
+    setStatus("idle");
+    return conversation;
+  };
+
+  const ensureActiveConversation = async () => {
+    if (activeConversationId) return activeConversationId;
+    const conversation = await createNewConversation();
+    return conversation.id;
+  };
+
+  const handleSelectConversation = async (conversationId) => {
+    if (isRunning || conversationId === activeConversationId) return;
+
+    try {
+      await loadConversation(conversationId);
+      if (window.matchMedia("(max-width: 839px)").matches) setSidebarOpen(false);
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError.message || "Không thể tải cuộc trò chuyện.");
+    }
+  };
+
+  const handleNewConversation = async () => {
+    try {
+      await createNewConversation();
+      if (window.matchMedia("(max-width: 839px)").matches) setSidebarOpen(false);
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError.message || "Không thể tạo cuộc trò chuyện mới.");
+    }
+  };
+
+  const handleRenameConversation = async (conversation, title) => {
+    try {
+      const updated = await updateConversation(conversation.id, { title });
+      setConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, ...updated } : item));
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError.message || "Không thể đổi tên cuộc trò chuyện.");
+    }
+  };
+
+  const confirmDeleteConversation = async () => {
+    if (!conversationToDelete || isRunning) return;
+
+    setIsDeletingConversation(true);
+    setError("");
+
+    try {
+      await deleteConversation(conversationToDelete.id);
+      const remaining = conversations.filter((item) => item.id !== conversationToDelete.id);
+      setConversations(remaining);
+
+      if (activeConversationId === conversationToDelete.id) {
+        if (remaining.length > 0) {
+          await loadConversation(remaining[0].id);
+        } else {
+          setActiveConversationId(null);
+          setMessages([]);
+          setAttachments([]);
+          setSources([]);
+        }
+      }
+
+      setConversationToDelete(null);
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError.message || "Không thể xóa cuộc trò chuyện.");
+    } finally {
+      setIsDeletingConversation(false);
+    }
   };
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
-
     const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || isRunning) return;
 
-    if (!trimmedQuestion || isRunning) {
+    setQuestion("");
+    setError("");
+    setDebugData(null);
+    setStatus("processing");
+
+    let conversationId;
+
+    try {
+      conversationId = await ensureActiveConversation();
+    } catch (requestError) {
+      setError(requestError.message || "Không thể tạo cuộc trò chuyện.");
+      setStatus("error");
       return;
     }
 
-    setSubmittedQuestion(trimmedQuestion);
-    setQuestion("");
-    setAnswer("");
-    setSources([]);
-    setDebugData(null);
-    setError("");
-    setStatus("processing");
+    const userMessage = {
+      id: createLocalId("user"),
+      role: "user",
+      content: trimmedQuestion,
+      sources: [],
+      status: "done",
+      created_at: new Date().toISOString(),
+    };
+    const assistantMessageId = createLocalId("assistant");
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+      sources: [],
+      status: "processing",
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((current) => [...current, userMessage, assistantMessage]);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    let streamFailed = false;
 
     try {
       await streamChat({
+        conversationId,
         question: trimmedQuestion,
         finalK: 6,
-        debug: true,
+        debug: import.meta.env.DEV,
         signal: controller.signal,
         onEvent: ({ event: eventName, data }) => {
-          console.log("SSE:", eventName, data);
+          if (eventName === "status") {
+            const nextStatus = typeof data === "string" ? data : data?.stage ?? "processing";
+            setStatus(nextStatus);
+            updateMessage(assistantMessageId, { status: nextStatus });
+            return;
+          }
 
-          switch (eventName) {
-            case "status":
-            case "retrieval_started":
-            case "reranking":
-            case "generating":
-            case "validating":
-            case "validated":
-              setStatus(getStatusText(eventName, data));
-              break;
+          if (eventName === "answer_delta") {
+            const delta = typeof data === "string" ? data : data?.delta ?? "";
+            setStatus("streaming");
+            updateMessage(assistantMessageId, (message) => ({
+              ...message,
+              content: message.content + delta,
+              status: "streaming",
+            }));
+            return;
+          }
 
-            case "answer_delta":
-              setAnswer((current) => current + getDeltaText(data));
-              setStatus("streaming");
-              break;
+          if (eventName === "sources") {
+            const nextSources = getSources(data);
+            setSources(nextSources);
+            updateMessage(assistantMessageId, { sources: nextSources });
+            return;
+          }
 
-            case "sources": {
-              const retrievedSources = getSources(data);
+          if (eventName === "debug") {
+            setDebugData(data);
+            return;
+          }
 
-              if (retrievedSources.length > 0) {
-                setSources(retrievedSources);
-              }
+          if (eventName === "error") {
+            const message = typeof data === "string" ? data : data?.message ?? "Backend không thể hoàn tất yêu cầu.";
+            streamFailed = true;
+            setError(message);
+            setStatus("error");
+            updateMessage(assistantMessageId, (current) => ({
+              ...current,
+              content: current.content || "Không thể hoàn tất câu trả lời.",
+              status: "error",
+            }));
+            return;
+          }
 
-              break;
-            }
-
-            case "debug": {
-              setDebugData(data);
-
-              const retrievedSources = getSources(data);
-
-              if (retrievedSources.length > 0) {
-                setSources(retrievedSources);
-              }
-
-              break;
-            }
-
-            case "error":
-              setError(
-                typeof data === "string"
-                  ? data
-                  : data?.message ?? "Backend returned an unknown error.",
-              );
-              setStatus("error");
-              break;
-
-            case "done":
-              setStatus("done");
-              break;
-
-            default:
-              break;
+          if (eventName === "done") {
+            setStatus(streamFailed ? "error" : "done");
+            updateMessage(assistantMessageId, { status: streamFailed ? "error" : "done" });
           }
         },
       });
 
-      setStatus((current) => {
-        if (current === "error" || current === "cancelled") {
-          return current;
-        }
-
-        return "done";
-      });
-    } catch (err) {
-      if (err.name === "AbortError") {
+      if (!streamFailed) {
+        setStatus("done");
+        const [conversationPayload, detailPayload] = await Promise.all([
+          listConversations(),
+          getConversation(conversationId),
+        ]);
+        const detail = normalizeConversationDetail(detailPayload);
+        setConversations(normalizeConversationList(conversationPayload));
+        setMessages(detail.messages);
+        setAttachments(detail.attachments);
+        setSources(getLatestSources(detail.messages));
+      }
+    } catch (requestError) {
+      if (requestError.name === "AbortError") {
         setStatus("cancelled");
+        updateMessage(assistantMessageId, (message) => ({
+          ...message,
+          content: message.content || "Đã dừng tạo câu trả lời.",
+          status: "cancelled",
+        }));
       } else {
-        console.error(err);
-        setError(err.message || "Unable to connect to the backend.");
+        console.error(requestError);
         setStatus("error");
+        setError(requestError.message || "Không thể kết nối tới backend.");
+        updateMessage(assistantMessageId, (message) => ({
+          ...message,
+          content: message.content || "Không thể hoàn tất câu trả lời.",
+          status: "error",
+        }));
       }
     } finally {
       abortControllerRef.current = null;
     }
   };
 
-  const handleStop = () => {
-    abortControllerRef.current?.abort();
+  const handleFilesSelected = async (selectedFiles) => {
+    const files = selectedFiles.slice(0, MAX_FILES_PER_UPLOAD).map(normalizeUploadFile);
+    const invalidFile = files.find((file) => !ALLOWED_MIME_TYPES.has(file.type));
+    const oversizedFile = files.find((file) => file.size > MAX_FILE_SIZE);
+
+    if (selectedFiles.length > MAX_FILES_PER_UPLOAD) {
+      setError(`Mỗi lần chỉ có thể tải tối đa ${MAX_FILES_PER_UPLOAD} file.`);
+      return;
+    }
+    if (invalidFile) {
+      setError(`Không hỗ trợ định dạng của ${invalidFile.name}. Chỉ nhận PDF, PNG, JPEG và WebP.`);
+      return;
+    }
+    if (oversizedFile) {
+      setError(`${oversizedFile.name} vượt quá giới hạn 20 MB.`);
+      return;
+    }
+
+    setError("");
+
+    let conversationId;
+    try {
+      conversationId = await ensureActiveConversation();
+    } catch (requestError) {
+      setError(requestError.message || "Không thể tạo cuộc trò chuyện.");
+      return;
+    }
+
+    const queuedFiles = files.map((file) => ({
+      id: createLocalId("upload"),
+      name: file.name,
+      type: file.type,
+      size_bytes: file.size,
+      status: "queued",
+      file,
+    }));
+    setPendingUploads((current) => [...current, ...queuedFiles]);
+
+    for (const queuedFile of queuedFiles) {
+      setPendingUploads((current) => current.map((item) =>
+        item.id === queuedFile.id ? { ...item, status: "processing" } : item,
+      ));
+
+      try {
+        const payload = await uploadAttachment(conversationId, queuedFile.file);
+        const attachment = payload?.attachment ?? payload;
+        setAttachments((current) => [
+          ...current.filter((item) => item.id !== attachment.id),
+          attachment,
+        ]);
+      } catch (requestError) {
+        console.error(requestError);
+        setError(requestError.message || `Không thể xử lý ${queuedFile.name}.`);
+      } finally {
+        setPendingUploads((current) => current.filter((item) => item.id !== queuedFile.id));
+      }
+    }
+
+    try {
+      const [conversationPayload, detailPayload] = await Promise.all([
+        listConversations(),
+        getConversation(conversationId),
+      ]);
+      const detail = normalizeConversationDetail(detailPayload);
+      setConversations(normalizeConversationList(conversationPayload));
+      setAttachments(detail.attachments);
+    } catch (refreshError) {
+      console.warn("Could not refresh attachments", refreshError);
+    }
   };
+
+  const handleDeleteAttachment = async (attachmentId) => {
+    if (!activeConversationId || isRunning) return;
+
+    try {
+      await deleteAttachment(activeConversationId, attachmentId);
+      setAttachments((current) => current.filter((item) => item.id !== attachmentId));
+      await refreshConversations();
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError.message || "Không thể xóa tài liệu.");
+    }
+  };
+
+  const showMessageSources = (message) => {
+    if (!message.sources?.length) return;
+    setSources(message.sources);
+    setSourcesOpen(true);
+  };
+
+  const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <LogoMark />
+      <ChatSidebar
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        isOpen={sidebarOpen}
+        isLoading={isLoadingConversations}
+        isRunning={isRunning}
+        theme={theme}
+        onClose={() => setSidebarOpen(false)}
+        onNewConversation={handleNewConversation}
+        onSelectConversation={handleSelectConversation}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={setConversationToDelete}
+        onToggleTheme={toggleTheme}
+      />
 
-          <div className="brand-copy">
-            <h1>Sử Việt AI</h1>
-            <p>Trợ lý hỏi đáp lịch sử Việt Nam</p>
+      {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Đóng thanh bên" />}
+
+      <section className="chat-workspace">
+        <header className="chat-header">
+          <div className="chat-header-main">
+            {!sidebarOpen && <SidebarOpenButton onClick={() => setSidebarOpen(true)} />}
+            <div className="chat-title">
+              <h1>{activeConversation?.title || "Cuộc trò chuyện mới"}</h1>
+              <span>
+                {attachments.length > 0 ? (
+                  <><Paperclip /> {attachments.length} tài liệu</>
+                ) : (
+                  "Vietnamese History RAG"
+                )}
+              </span>
+            </div>
           </div>
-        </div>
 
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label={
-              isDarkTheme ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"
-            }
-            aria-pressed={isDarkTheme}
-            title={
-              isDarkTheme ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"
-            }
-          >
-            {isDarkTheme ? <SunIcon /> : <MoonIcon />}
-            <span className="sr-only">
-              {isDarkTheme ? "Light mode" : "Dark mode"}
-            </span>
-          </button>
-
-          <div className="system-badge">
-            <span className="system-dot" />
-            RAG Online
+          <div className="chat-header-actions">
+            <button type="button" className="icon-button" onClick={toggleTheme} title="Đổi giao diện">
+              {theme === "dark" ? <Sun /> : <Moon />}
+            </button>
+            <button
+              type="button"
+              className={`source-toggle ${sourcesOpen ? "is-active" : ""}`}
+              onClick={() => setSourcesOpen((current) => !current)}
+              title="Nguồn tham khảo"
+            >
+              {sourcesOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              <span>Nguồn</span>
+              {sources.length > 0 && <b>{sources.length}</b>}
+            </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main className="workspace">
-        <section className="conversation-panel">
-          <div className="conversation-scroll">
-            {!submittedQuestion && (
-              <section className="welcome">
+        <main className="thread-scroll">
+          <div className="thread-content">
+            {isLoadingConversation && <div className="thread-loading"><i /><i /><i /></div>}
+
+            {!isLoadingConversation && messages.length === 0 && (
+              <section className="welcome-state">
                 <LogoMark className="welcome-logo" />
+                <h2>Hỏi chuyện sử Việt</h2>
+                <p>Bạn muốn tìm hiểu nhân vật, sự kiện hay giai đoạn nào?</p>
 
-                <h2>Khám phá lịch sử Việt Nam</h2>
-
-                <p>
-                  Những câu chuyện, triều đại và bước ngoặt lịch sử được đặt
-                  trong một không gian trò chuyện rõ ràng, có dẫn chứng.
-                </p>
-
-                <div className="example-grid">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQuestion(
-                        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
-                      )
-                    }
-                  >
-                    Ý nghĩa chiến thắng Bạch Đằng năm 938
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQuestion(
-                        "Nguyên nhân nào dẫn đến sự suy yếu của nhà Trần?",
-                      )
-                    }
-                  >
-                    Vì sao nhà Trần suy yếu?
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setQuestion(
-                        "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
-                      )
-                    }
-                  >
-                    So sánh hai sự kiện lịch sử
-                  </button>
+                <div className="suggestion-grid">
+                  {SUGGESTIONS.map(({ icon: Icon, label, question: suggestion }) => (
+                    <button type="button" key={label} onClick={() => setQuestion(suggestion)}>
+                      <Icon />
+                      <span>{label}</span>
+                      <small>{suggestion}</small>
+                    </button>
+                  ))}
                 </div>
               </section>
             )}
 
-            {submittedQuestion && (
-              <>
-                <ChatMessage role="user">{submittedQuestion}</ChatMessage>
+            {!isLoadingConversation && messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                message={message}
+                isStreaming={message.role === "assistant" && message.status === "streaming"}
+                onShowSources={() => showMessageSources(message)}
+              />
+            ))}
 
-                {(answer || isRunning) && (
-                  <ChatMessage
-                    role="assistant"
-                    isStreaming={status === "streaming"}
-                  >
-                    {answer || "Đang chuẩn bị câu trả lời..."}
-                  </ChatMessage>
-                )}
-
-                <StatusIndicator status={status} />
-
-                {error && (
-                  <div className="error-box">
-                    <strong>Không thể hoàn tất yêu cầu</strong>
-                    <p>{error}</p>
-                  </div>
-                )}
-
-                {debugData && (
-                  <details className="debug-panel">
-                    <summary>Debug information</summary>
-                    <pre>{JSON.stringify(debugData, null, 2)}</pre>
-                  </details>
-                )}
-              </>
-            )}
-
+            <StatusIndicator status={status} />
             <div ref={bottomRef} />
           </div>
+        </main>
 
-          <div className="input-area">
+        {error && (
+          <div className="error-toast" role="alert">
+            <AlertCircle />
+            <span>{error}</span>
+            <button type="button" onClick={() => setError("")} aria-label="Đóng thông báo"><X /></button>
+          </div>
+        )}
+
+        <footer className="composer-shell">
+          <div className="composer-content">
+            <AttachmentTray
+              attachments={attachments}
+              pendingUploads={pendingUploads}
+              onDelete={handleDeleteAttachment}
+              disabled={isRunning}
+            />
             <ChatInput
               question={question}
               onQuestionChange={setQuestion}
               onSubmit={handleSubmit}
-              onStop={handleStop}
+              onStop={() => abortControllerRef.current?.abort()}
+              onFilesSelected={handleFilesSelected}
               isRunning={isRunning}
+              isUploading={isUploading}
             />
-
-            <p className="input-note">
-              Câu trả lời được tạo dựa trên các tài liệu được hệ thống truy xuất.
-            </p>
+            <p className="composer-disclaimer">Sử Việt AI có thể mắc lỗi. Hãy đối chiếu phần nguồn khi cần độ chính xác cao.</p>
           </div>
-        </section>
+        </footer>
+      </section>
 
-        <aside className="evidence-panel">
-          <div className="evidence-panel-header">
-            <div>
-              <span className="eyebrow">RAG TRACE</span>
-              <h2>Retrieved Evidence</h2>
-            </div>
-
-            {sources.length > 0 && (
-              <span className="chunk-count">{sources.length}</span>
-            )}
+      <aside className={`source-drawer ${sourcesOpen ? "is-open" : ""}`} aria-label="Nguồn tham khảo">
+        <div className="source-drawer-header">
+          <div>
+            <span>Bằng chứng RAG</span>
+            <h2>Nguồn tham khảo</h2>
           </div>
+          <button type="button" className="icon-button" onClick={() => setSourcesOpen(false)} title="Đóng nguồn"><X /></button>
+        </div>
 
+        <div className="source-drawer-body">
           {sources.length > 0 ? (
             <RetrievedChunks sources={sources} />
           ) : (
-            <div className="empty-evidence">
-              <LogoMark className="empty-evidence-logo" />
-              <h3>Chưa có tài liệu</h3>
-              <p>
-                Các chunk được Hybrid RAG lựa chọn sẽ xuất hiện tại đây sau khi
-                bạn gửi câu hỏi.
-              </p>
+            <div className="source-empty">
+              <BookOpenText />
+              <strong>Chưa có nguồn được chọn</strong>
+              <span>Nguồn của câu trả lời sẽ xuất hiện tại đây.</span>
             </div>
           )}
-        </aside>
-      </main>
+
+          {import.meta.env.DEV && debugData && (
+            <details className="debug-panel">
+              <summary>Retrieval trace</summary>
+              <pre>{JSON.stringify(debugData, null, 2)}</pre>
+            </details>
+          )}
+        </div>
+      </aside>
+
+      {sourcesOpen && <button className="source-backdrop" onClick={() => setSourcesOpen(false)} aria-label="Đóng nguồn" />}
+
+      {conversationToDelete && (
+        <div className="dialog-backdrop" role="presentation">
+          <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+            <span className="dialog-icon"><Trash2 /></span>
+            <h2 id="delete-title">Xóa cuộc trò chuyện?</h2>
+            <p>“{conversationToDelete.title || "Cuộc trò chuyện mới"}” cùng tài liệu tạm thời sẽ bị xóa.</p>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setConversationToDelete(null)} disabled={isDeletingConversation}>Hủy</button>
+              <button type="button" className="danger-button" onClick={confirmDeleteConversation} disabled={isDeletingConversation}>
+                {isDeletingConversation ? "Đang xóa..." : "Xóa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,106 +1,80 @@
 :root,
 html[data-theme="light"] {
   color-scheme: light;
-
-  --background: #f6f8f7;
-  --background-alt: #eef2f1;
+  --canvas: #f7f8fa;
+  --sidebar: #f0f2f4;
   --surface: #ffffff;
-  --surface-muted: #f2f5f3;
   --surface-raised: #ffffff;
-  --surface-inset: #f8faf8;
-  --text-primary: #17211d;
-  --text-secondary: #64736b;
-  --text-tertiary: #8a958d;
-  --border: #dde5df;
-  --border-strong: #c8d3cb;
-  --accent: #c7352b;
-  --accent-strong: #9f261f;
-  --accent-soft: #fff1ed;
-  --gold: #d97706;
-  --gold-soft: #fef3c7;
-  --teal: #0f766e;
-  --teal-soft: #dff7f1;
-  --success-bg: #e8fff7;
-  --success-border: #b8ead7;
-  --success-text: #047857;
-  --warning-bg: #fff7e6;
-  --warning-text: #92400e;
-  --error-bg: #fff1f0;
-  --error-border: #fecaca;
-  --error-text: #991b1b;
-  --topbar-bg: rgba(255, 255, 255, 0.88);
-  --input-bg: #ffffff;
-  --assistant-bg: #fffdfa;
-  --user-gradient: linear-gradient(135deg, #c7352b, #9f261f);
-  --shadow-sm: 0 8px 24px rgba(23, 33, 29, 0.08);
-  --shadow-md: 0 20px 50px rgba(23, 33, 29, 0.12);
-  --selection-bg: #fee2e2;
-  --selection-text: #7f1d1d;
+  --surface-hover: #e9ecef;
+  --surface-active: #e2e7e5;
+  --text: #191b1d;
+  --text-soft: #4f565d;
+  --text-muted: #7a828a;
+  --border: #dfe3e6;
+  --border-strong: #c9cfd4;
+  --accent: #c93c3c;
+  --accent-hover: #ad3030;
+  --accent-soft: #fbe9e7;
+  --teal: #147d73;
+  --teal-soft: #e0f3ef;
+  --gold: #b7791f;
+  --gold-soft: #fff4d8;
+  --success: #177653;
+  --success-soft: #e1f4eb;
+  --danger: #bb3030;
+  --danger-soft: #fce8e7;
+  --shadow-sm: 0 1px 2px rgba(20, 24, 28, 0.06), 0 4px 14px rgba(20, 24, 28, 0.05);
+  --shadow-md: 0 14px 36px rgba(20, 24, 28, 0.14);
+  --overlay: rgba(18, 22, 25, 0.42);
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
-
-  --background: #11130f;
-  --background-alt: #151810;
-  --surface: #171a15;
-  --surface-muted: #1f241d;
-  --surface-raised: #20251e;
-  --surface-inset: #141611;
-  --text-primary: #f5f2e9;
-  --text-secondary: #b3bdae;
-  --text-tertiary: #899484;
-  --border: #2e372d;
-  --border-strong: #465242;
-  --accent: #f87171;
-  --accent-strong: #f59e0b;
-  --accent-soft: #321b18;
-  --gold: #facc15;
-  --gold-soft: #3a2c13;
-  --teal: #5eead4;
-  --teal-soft: #123630;
-  --success-bg: #0f2f27;
-  --success-border: #1f6656;
-  --success-text: #7dd3bc;
-  --warning-bg: #33270f;
-  --warning-text: #fbbf24;
-  --error-bg: #351716;
-  --error-border: #6f2d2d;
-  --error-text: #fca5a5;
-  --topbar-bg: rgba(23, 26, 21, 0.9);
-  --input-bg: #191d17;
-  --assistant-bg: #181b16;
-  --user-gradient: linear-gradient(135deg, #dc3f37, #b45309);
-  --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 24px 60px rgba(0, 0, 0, 0.36);
-  --selection-bg: #5d251f;
-  --selection-text: #fff7ed;
+  --canvas: #181a1b;
+  --sidebar: #101213;
+  --surface: #202224;
+  --surface-raised: #272a2c;
+  --surface-hover: #2d3033;
+  --surface-active: #34383a;
+  --text: #f2f3f3;
+  --text-soft: #b8bec2;
+  --text-muted: #858d93;
+  --border: #34383b;
+  --border-strong: #484e52;
+  --accent: #ef6862;
+  --accent-hover: #f17b75;
+  --accent-soft: #3a2323;
+  --teal: #58c6b8;
+  --teal-soft: #193c37;
+  --gold: #e9b85b;
+  --gold-soft: #3b311e;
+  --success: #67c99e;
+  --success-soft: #193a2e;
+  --danger: #ff7770;
+  --danger-soft: #432322;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 5px 18px rgba(0, 0, 0, 0.16);
+  --shadow-md: 0 18px 46px rgba(0, 0, 0, 0.36);
+  --overlay: rgba(0, 0, 0, 0.62);
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
 html,
 body,
 #root {
+  width: 100%;
   min-width: 320px;
-  min-height: 100%;
+  height: 100%;
   margin: 0;
 }
 
 body {
-  min-height: 100vh;
-  overflow-x: hidden;
-  background: var(--background);
-  color: var(--text-primary);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  overflow: hidden;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -123,8 +97,8 @@ svg {
 }
 
 ::selection {
-  background: var(--selection-bg);
-  color: var(--selection-text);
+  background: var(--accent-soft);
+  color: var(--text);
 }
 
 ::-webkit-scrollbar {
@@ -144,6 +118,6 @@ svg {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+  background: var(--text-muted);
   background-clip: padding-box;
 }

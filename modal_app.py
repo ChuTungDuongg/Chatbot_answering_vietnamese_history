@@ -13,6 +13,11 @@ hf_cache = modal.Volume.from_name(
     create_if_missing=False,
 )
 
+chat_data = modal.Volume.from_name(
+    "vn-history-chat-data",
+    create_if_missing=True,
+)
+
 image = modal.Image.from_dockerfile(
     "Dockerfile",
     context_dir=".",
@@ -22,7 +27,9 @@ image = modal.Image.from_dockerfile(
         "APP_MODE": "full",
         "DEVICE": "cuda",
         "ARTIFACT_ROOT": "/artifacts/vn_history_deployment",
+        "CHAT_DATABASE_PATH": "/data/chat.sqlite3",
         "HF_HOME": "/hf-cache",
+        "CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
     }
 )
 
@@ -40,6 +47,7 @@ image = modal.Image.from_dockerfile(
     volumes={
         "/artifacts": artifacts,
         "/hf-cache": hf_cache,
+        "/data": chat_data,
     },
 )
 @modal.asgi_app()

@@ -1,92 +1,120 @@
-function SendIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="m5 12 14-7-4.5 14-2.6-5.1L5 12Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="2"
-      />
-      <path
-        d="m11.9 13.9 3.2-5"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, LoaderCircle, Paperclip, Square } from "lucide-react";
 
-function StopIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect
-        x="7"
-        y="7"
-        width="10"
-        height="10"
-        rx="2"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
+const ACCEPTED_FILES = ".pdf,image/png,image/jpeg,image/webp";
 
 function ChatInput({
   question,
   onQuestionChange,
   onSubmit,
   onStop,
+  onFilesSelected,
   isRunning,
+  isUploading,
 }) {
-  const handleKeyDown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
+  const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-      if (!isRunning && question.trim()) {
-        onSubmit(event);
-      }
-    }
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  }, [question]);
+
+  const handleKeyDown = (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+
+    event.preventDefault();
+    if (!isRunning && question.trim()) onSubmit(event);
+  };
+
+  const handleFileInput = (event) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length > 0) onFilesSelected(files);
+  };
+
+  const handleDragOver = (event) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDragging(true);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setIsDragging(false);
+
+    if (isRunning || isUploading) return;
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length > 0) onFilesSelected(files);
   };
 
   return (
-    <form className="chat-form" onSubmit={onSubmit}>
+    <form
+      className={`chat-composer ${isDragging ? "is-dragging" : ""}`}
+      onSubmit={onSubmit}
+      onDragEnter={handleDragOver}
+      onDragOver={handleDragOver}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={fileInputRef}
+        className="sr-only"
+        type="file"
+        accept={ACCEPTED_FILES}
+        multiple
+        onChange={handleFileInput}
+      />
+
+      <button
+        type="button"
+        className="icon-button composer-attach"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={isRunning || isUploading}
+        aria-label="Tải PDF hoặc hình ảnh"
+        title="Tải PDF hoặc hình ảnh"
+      >
+        {isUploading ? <LoaderCircle className="spin" /> : <Paperclip />}
+      </button>
+
       <textarea
+        ref={textareaRef}
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Hỏi về một sự kiện, nhân vật hoặc triều đại..."
-        rows={3}
-        disabled={isRunning}
+        placeholder="Hỏi về lịch sử Việt Nam hoặc tài liệu đã tải lên"
+        aria-label="Nội dung câu hỏi"
+        rows={1}
       />
 
-      <div className="form-actions">
-        {isRunning ? (
-          <button
-            type="button"
-            className="composer-button stop-button"
-            onClick={onStop}
-            aria-label="Dừng tạo câu trả lời"
-            title="Dừng"
-          >
-            <StopIcon />
-            <span className="sr-only">Dừng</span>
-          </button>
-        ) : (
-          <button
-            type="submit"
-            className="composer-button send-button"
-            disabled={!question.trim()}
-            aria-label="Gửi câu hỏi"
-            title="Gửi"
-          >
-            <SendIcon />
-            <span className="sr-only">Gửi</span>
-          </button>
-        )}
-      </div>
+      {isRunning ? (
+        <button
+          type="button"
+          className="icon-button composer-submit stop-button"
+          onClick={onStop}
+          aria-label="Dừng tạo câu trả lời"
+          title="Dừng tạo câu trả lời"
+        >
+          <Square fill="currentColor" />
+        </button>
+      ) : (
+        <button
+          type="submit"
+          className="icon-button composer-submit send-button"
+          disabled={!question.trim()}
+          aria-label="Gửi câu hỏi"
+          title="Gửi câu hỏi"
+        >
+          <ArrowUp />
+        </button>
+      )}
+
+      {isDragging && <div className="composer-drop-label">Thả tài liệu để OCR</div>}
     </form>
   );
 }

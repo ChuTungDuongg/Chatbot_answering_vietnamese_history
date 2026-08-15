@@ -1,30 +1,26 @@
+import { LoaderCircle } from "lucide-react";
+
 const STATUS_LABELS = {
-  idle: "",
-  processing: "Đang xử lý...",
-  retrieval_started: "Đang truy xuất tài liệu...",
-  reranking: "Đang xếp hạng bằng chứng...",
-  generating: "Đang tạo câu trả lời...",
-  validating: "Đang kiểm tra câu trả lời...",
-  validated: "Đã kiểm tra câu trả lời.",
-  streaming: "Đang trả lời...",
-  done: "",
-  cancelled: "Đã dừng.",
-  error: "Đã xảy ra lỗi.",
+  processing: "Đang tìm bằng chứng phù hợp",
+  retrieval_started: "Đang truy xuất kho sử liệu",
+  reranking: "Đang xếp hạng bằng chứng",
+  generating: "Đang soạn câu trả lời",
+  validating: "Đang kiểm tra độ chính xác",
+  validated: "Đã kiểm tra câu trả lời",
+  streaming: "Đang trả lời",
+  cancelled: "Đã dừng tạo câu trả lời",
+  error: "Không thể hoàn tất câu trả lời",
 };
 
 function StatusIndicator({ status }) {
-  if (!status || status === "idle" || status === "done") {
-    return null;
-  }
+  if (!status || ["idle", "done"].includes(status)) return null;
 
-  const label = STATUS_LABELS[status] ?? status;
+  const isActive = !["error", "cancelled"].includes(status);
 
   return (
-    <div className={`status-indicator status-${status}`}>
-      {status !== "error" && status !== "cancelled" && (
-        <span className="status-dot" />
-      )}
-      <span>{label}</span>
+    <div className={`status-indicator status-${status}`} role="status">
+      {isActive && <LoaderCircle className="spin" />}
+      <span>{STATUS_LABELS[status] ?? "Đang xử lý"}</span>
     </div>
   );
 }
