@@ -1,116 +1,181 @@
-# Backend application
+# Backend FastAPI
 
 [Về README gốc](../README.md)
 
-Thư mục `app/` chứa toàn bộ FastAPI runtime: cấu hình, schema API, conversation memory, xử lý tài liệu, Hybrid RAG, generation và guardrails. Không đặt notebook huấn luyện hoặc artifact model vào đây.
+Thư mục `app/` chứa toàn bộ runtime của ứng dụng: API, conversation memory, temporary
+document corpus, Hybrid RAG, generation và guardrails. Notebook huấn luyện nằm trong
+[`Training/`](../Training/README.md); model, corpus và index triển khai tuân theo contract tại
+[`artifacts/`](../artifacts/README.md).
 
-## Điểm bắt đầu
+## Khởi động
 
-`main.py` tạo FastAPI app và quản lý lifecycle theo thứ tự:
+Luồng development chuẩn chạy từ repository root:
 
-```text
-Settings
-  -> ConversationStore.initialize()
-  -> RAGService.load()
-  -> HybridRetriever + attachment services (retrieval-only/full)
-  -> RAGGenerator (full)
-  -> gắn dependencies vào app.state
-  -> mount conversation và RAG routers
+```powershell
+npm run dev
 ```
 
-Chạy toàn bộ dự án từ root bằng `npm run dev`. Khi cần kiểm tra API local độc lập:
+Lệnh trên khởi động đồng thời Vite và `modal serve modal_app.py`. Chỉ dùng lệnh dưới đây
+khi cần chạy FastAPI local độc lập:
 
 ```powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Mode mặc định khi chạy trực tiếp là `api-only`. Đặt `APP_MODE=retrieval-only` hoặc `APP_MODE=full` và chuẩn bị artifact tương ứng nếu cần retrieval/generation.
+Mode local mặc định là `api-only`. `retrieval-only` và `full` cần deployment bundle hợp lệ.
 
 ## Bản đồ module
 
-| File | Trách nhiệm | Bắt đầu ở đây khi |
+| File | Trách nhiệm | Sửa khi |
 |---|---|---|
-| [`main.py`](main.py) | Lifespan, CORS, health/readiness và router wiring | Thêm dependency cấp ứng dụng hoặc endpoint hệ thống |
-| [`config.py`](config.py) | Đọc `.env`, runtime mode và đường dẫn artifact/SQLite | Thêm cấu hình hoặc thay layout artifact |
+| [`main.py`](main.py) | Lifespan, CORS, health/readiness, dependency wiring | Thay startup hoặc endpoint hệ thống |
+| [`config.py`](config.py) | Settings, runtime mode, artifact path, SQLite path | Thêm biến môi trường hoặc đổi layout |
 | [`schemas.py`](schemas.py) | Pydantic request/response models | Thay API contract |
+| [`api/conversations.py`](api/conversations.py) | CRUD conversation, upload/delete attachment | Thay ownership hoặc document API |
 | [`api/routes.py`](api/routes.py) | Retrieve, chat và validated SSE | Thay request flow hoặc SSE events |
-| [`api/conversations.py`](api/conversations.py) | CRUD conversation và upload/delete attachment | Thay ownership hoặc document endpoints |
-| [`chat/store.py`](chat/store.py) | SQLite conversations, messages, attachments và temporary chunks | Thay persistence/memory |
-| [`chat/attachments.py`](chat/attachments.py) | PDF extraction, OCR, chunking, embedding và temporary retrieval | Thay document ingestion |
-| [`services/rag_service.py`](services/rag_service.py) | Validate/load corpus, FAISS, BM25S, embedder, reranker và model | Thay startup hoặc artifact loading |
-| [`rag/retrieval.py`](rag/retrieval.py) | Query analysis, E5/FAISS, BM25S, RRF, rerank và diversity | Thay retrieval quality |
-| [`rag/prompting.py`](rag/prompting.py) | History formatting, prompt budget, output parsing và repair prompt | Thay prompt/output format |
-| [`rag/generation.py`](rag/generation.py) | Contextual retrieval, global/temp merge, generation và repair orchestration | Thay end-to-end answer behavior |
+| [`chat/store.py`](chat/store.py) | SQLite conversations, messages, attachments, chunks | Thay persistence hoặc memory |
+| [`chat/attachments.py`](chat/attachments.py) | PDF/image extraction, OCR, chunking, embedding | Thay temporary corpus ingestion |
+| [`services/rag_service.py`](services/rag_service.py) | Validate và load corpus/index/model | Thay startup hoặc artifact loader |
+| [`rag/retrieval.py`](rag/retrieval.py) | E5, FAISS, BM25S, RRF, rerank, diversity | Thay retrieval quality |
+| [`rag/prompting.py`](rag/prompting.py) | History, prompt budget, output parser, repair prompt | Thay cấu trúc prompt/answer |
+| [`rag/generation.py`](rag/generation.py) | Contextual retrieval, temp/global merge, generation, repair | Thay answer pipeline |
 | [`rag/guards.py`](rag/guards.py) | Source/year/format/completeness validation | Thay hallucination safeguards |
 
 ## Runtime modes
 
-| `APP_MODE` | SQLite/CRUD | Global retrieval | Upload + temp corpus | Generation |
+| `APP_MODE` | Conversation CRUD | Global retrieval | Upload/temp corpus | LLM generation |
 |---|---:|---:|---:|---:|
 | `api-only` | Có | Không | Không | Không |
 | `retrieval-only` | Có | Có | Có | Không |
 | `full` | Có | Có | Có | Có |
 
-`RAGService` chỉ load những thành phần cần cho mode hiện tại. `/ready` là nguồn chính xác để biết runtime nào đã sẵn sàng.
+`GET /ready` phản ánh các thành phần thực sự đã load; `GET /health` chỉ xác nhận tiến trình
+API còn sống.
 
-## Luồng dữ liệu chính
+## Lifecycle
 
-### Conversation và memory
+```text
+Settings
+  -> ConversationStore.initialize()
+  -> RAGService.load()
+  -> HybridRetriever + TemporaryDocumentService
+  -> RAGGenerator (chỉ trong full mode)
+  -> gắn dependencies vào app.state
+  -> mount system, conversation và RAG routers
+```
+
+## Conversation memory
 
 ```text
 X-Client-ID + conversation_id
-  -> kiểm tra ownership
+  -> kiểm tra conversation thuộc client
   -> đọc messages gần nhất từ SQLite
-  -> history phục vụ contextual retrieval và prompt
-  -> lưu user/assistant messages cùng cited sources
+  -> dùng history để contextualize retrieval và tạo prompt
+  -> lưu user message, assistant answer và cited sources
 ```
 
-History chỉ là ngữ cảnh hội thoại, không được xem là evidence. Các khẳng định lịch sử vẫn phải dựa trên global hoặc temporary chunks đã retrieval.
+SQLite là persistence layer, không phải model memory. Backend chủ động đọc lịch sử và truyền
+vào pipeline ở mỗi lượt chat. Toàn bộ message được lưu, nhưng prompt chỉ lấy phần gần nhất theo
+giới hạn số message và token/character budget.
 
-### Attachment
+Các bảng chính:
+
+| Bảng | Nội dung |
+|---|---|
+| `conversations` | Cửa sổ chat và anonymous owner |
+| `messages` | User/assistant messages cùng source JSON |
+| `attachments` | Metadata và trạng thái file |
+| `temporary_chunks` | Text, page, source ID và embedding của file |
+
+Xóa attachment sẽ xóa temporary chunks liên quan; xóa conversation sẽ cascade messages,
+attachments và temporary corpus. File bytes gốc không được lưu trong SQLite.
+
+## Upload và temporary corpus
 
 ```text
-UploadFile
-  -> kiểm tra MIME/dung lượng
-  -> PyMuPDF đọc text PDF
-  -> OCR trang scan hoặc ảnh bằng Tesseract vie+eng
+PDF / PNG / JPEG / WebP
+  -> validate định dạng và dung lượng
+  -> PDF: PyMuPDF trích text từng trang
+  -> trang scan/ít text hoặc ảnh: Tesseract OCR vie+eng
   -> chunk 220 từ, overlap 40 từ
   -> multilingual E5 embedding
-  -> lưu text/chunk/embedding vào SQLite theo conversation
+  -> lưu vào SQLite, cô lập theo conversation
 ```
 
-Giới hạn hiện tại: 20 MB/file, 100 trang/PDF và 400 chunks/file. File gốc không được lưu.
+Giới hạn hiện tại:
 
-### Validated chat
+- 20 MB mỗi file;
+- tối đa 100 trang mỗi PDF;
+- tối đa 400 chunks mỗi file;
+- trang PDF có dưới 80 ký tự extracted text được render ở tỉ lệ 2x để OCR.
+
+Upload endpoint chờ extraction/OCR/chunking/embedding hoàn tất rồi mới trả response. Trạng thái
+`processing` không có nghĩa ingestion đang chạy qua background queue. OCR chỉ chuyển hình
+thành text; hệ thống chưa hiểu layout phức tạp, bản đồ, biểu đồ hoặc chữ viết tay như VLM.
+
+## Chat và validated SSE
 
 ```text
 question + history
-  -> global retrieval
+  -> global Hybrid RAG
   -> temporary retrieval trong conversation
-  -> rerank/merge
+  -> rerank và merge contexts
   -> generation
   -> source/year/quality guards
-  -> repair tối đa một lần
+  -> evidence-only repair tối đa một lần
   -> persist answer
-  -> SSE answer đã được duyệt
+  -> phát SSE
 ```
 
-## Invariants cần giữ
+SSE không stream token thô từ model. Backend hoàn tất generation, validation và repair trước,
+sau đó chia answer cuối thành các `answer_delta`. Thứ tự event:
 
-- Mọi conversation endpoint phải kiểm tra `X-Client-ID` và ownership.
-- Không dùng `X-Client-ID` như authentication khi public API.
-- Source ID phải thuộc đúng context đã đưa vào prompt, kể cả temporary source.
-- Không stream token thô trước khi guards/repair hoàn tất.
-- Không đưa file bytes vào SQLite; chỉ lưu metadata, extracted text, chunks và embeddings.
-- Không thay schema SQLite mà bỏ qua migration/compatibility cho database hiện có.
-- SQLite deployment hiện dùng một Modal container; scale ngang cần external database.
+1. `status: processing`
+2. `ping` khoảng mỗi 8 giây nếu tác vụ còn chạy
+3. `status: validated`
+4. một hoặc nhiều `answer_delta`
+5. `sources`
+6. `debug` khi request bật debug
+7. `done`, hoặc `error` nếu thất bại
+
+## Cấu hình generation
+
+Runtime đọc `config/inference_config.json` trong deployment bundle khi khởi động. Contract và
+cách cập nhật file được mô tả tại [`artifacts/README.md`](../artifacts/README.md). Hai phần quan
+trọng khi muốn answer dài và có bố cục:
+
+- `generation.max_new_tokens`: ngân sách token model được phép sinh;
+- `prompt.default_system`: yêu cầu nội dung và các heading như câu trả lời, bằng chứng,
+  alternatives và kết luận.
+
+Frontend đã render Markdown/GFM, nên không cần thay component chỉ để hiển thị heading. Prompt
+chỉ hướng dẫn cấu trúc; guards hiện kiểm tra grounding/source/year/quality chứ không bảo đảm
+tuyệt đối model luôn sinh đủ mọi heading.
+
+Sau khi thay config trên Modal Volume, phải restart `modal serve`/`modal deploy` hoặc container
+đang chạy vì `RAGService` chỉ load config một lần trong startup. Xem lệnh cập nhật tại
+[`artifacts/README.md`](../artifacts/README.md).
+
+## Invariants
+
+- Mọi conversation/attachment/chat request phải kiểm tra `X-Client-ID` và ownership.
+- `X-Client-ID` chỉ là anonymous demo identity, không phải authentication.
+- History là ngữ cảnh hội thoại, không được dùng như evidence lịch sử.
+- Source ID phải thuộc context thật sự đã đưa vào prompt, gồm cả global và temporary sources.
+- Không phát answer ra client trước khi guards/repair hoàn tất.
+- Không lưu file bytes vào SQLite.
+- Không đổi SQLite schema mà bỏ qua compatibility/migration.
+- Deployment SQLite hiện giữ `max_containers=1`; scale ngang cần external database.
 
 ## Kiểm tra sau khi sửa
 
 ```powershell
 python -m compileall app
-curl http://localhost:8000/health
-curl http://localhost:8000/ready
+npm run frontend:lint
+npm run frontend:build
+modal run modal_runtime_sanity.py
+modal run full_modal_runtime_sanity.py
 ```
 
-Với thay đổi retrieval/model, chạy thêm smoke tests ở root: `modal_runtime_sanity.py` hoặc `full_modal_runtime_sanity.py`.
+Hai Modal runtime sanity scripts kiểm tra retrieval/full generation cơ bản. Chúng chưa phải test
+suite cho conversation persistence, upload/OCR hoặc toàn bộ SSE contract.

@@ -1,18 +1,21 @@
-# React frontend
+# React Frontend
 
 [Về README gốc](../README.md)
 
-Thư mục `frontend/` chứa giao diện chatbot React 19 + Vite 8. UI hỗ trợ nhiều conversation, memory được lưu ở backend, upload PDF/hình ảnh, validated SSE, Markdown/GFM, evidence drawer và dark/light mode.
+`frontend/` là giao diện React 19 + Vite 8 cho chatbot. UI có nhiều cửa sổ chat, persisted
+memory ở backend, upload PDF/hình ảnh, validated SSE, Markdown/GFM, evidence drawer, responsive
+sidebar và dark/light mode.
 
-## Chạy ứng dụng
+## Chạy development
 
-Luồng development chuẩn là chạy một lệnh tại repository root:
+Luồng chuẩn chỉ cần một lệnh tại repository root:
 
 ```powershell
 npm run dev
 ```
 
-Lệnh root khởi động đồng thời Vite và `modal serve modal_app.py`. Không cần mở terminal backend riêng.
+Root script dùng `concurrently` để chạy Vite và `modal serve modal_app.py`. Không cần
+`cd frontend` hoặc mở terminal backend riêng.
 
 Chỉ chạy frontend khi backend đã hoạt động sẵn:
 
@@ -20,85 +23,140 @@ Chỉ chạy frontend khi backend đã hoạt động sẵn:
 npm run frontend
 ```
 
-## Cấu hình API
+## Cấu hình backend URL
 
-Tạo `frontend/.env` từ file mẫu và đặt URL backend không có dấu `/` cuối:
+Tạo `frontend/.env` từ file mẫu:
+
+```powershell
+Copy-Item frontend/.env.example frontend/.env
+```
 
 ```dotenv
 VITE_API_BASE_URL=https://your-modal-api.modal.run
 ```
 
-Vite đọc biến này khi khởi động/build. Sau khi sửa `.env`, cần restart Vite.
+Không thêm dấu `/` ở cuối URL. Vite đọc biến này khi process khởi động và nhúng nó vào
+production build, vì vậy phải restart Vite sau khi thay `.env`.
 
-## Bản đồ file
+Ở lần chạy đầu, có thể chạy `npm run dev`, lấy URL `https://...modal.run` từ log
+`[BACKEND]`, cập nhật `frontend/.env`, rồi chạy lại `npm run dev`.
 
-| File | Trách nhiệm | Bắt đầu ở đây khi |
+## Bản đồ source
+
+| File | Trách nhiệm | Sửa khi |
 |---|---|---|
-| [`src/App.jsx`](src/App.jsx) | Conversation state, active chat, uploads, SSE orchestration và theme | Thay workflow chính |
-| [`src/services/api.js`](src/services/api.js) | API base URL, `X-Client-ID`, CRUD, upload và SSE parser | Backend contract thay đổi |
-| [`src/components/ChatSidebar.jsx`](src/components/ChatSidebar.jsx) | Danh sách/search/rename/delete conversation và mobile sidebar | Thay navigation |
-| [`src/components/ChatInput.jsx`](src/components/ChatInput.jsx) | Composer, submit/stop, file picker và drag/drop | Thay input behavior |
-| [`src/components/AttachmentTray.jsx`](src/components/AttachmentTray.jsx) | Upload progress, attachment state và delete | Thay document UI |
-| [`src/components/ChatMessage.jsx`](src/components/ChatMessage.jsx) | User/assistant bubbles, Markdown/GFM, copy và source action | Thay message rendering |
-| [`src/components/RetrievedChunks.jsx`](src/components/RetrievedChunks.jsx) | Evidence drawer cho global/temp sources | Thay evidence display |
-| [`src/components/StatusIndicator.jsx`](src/components/StatusIndicator.jsx) | Ánh xạ SSE processing state sang label | Backend thêm status mới |
-| [`src/components/LogoMark.jsx`](src/components/LogoMark.jsx) | Logo Sử Việt AI dùng tại header/sidebar/messages | Thay brand mark |
-| [`src/App.css`](src/App.css) | Layout và component styles responsive | Thay bố cục/UI |
-| [`src/index.css`](src/index.css) | Reset, font và dark/light design tokens | Thay palette/theme |
-| [`src/main.jsx`](src/main.jsx) | React entry point | Thay bootstrap cấp ứng dụng |
+| [`src/App.jsx`](src/App.jsx) | Bootstrap, active conversation, message/upload/SSE state, theme | Thay workflow chính |
+| [`src/services/api.js`](src/services/api.js) | Base URL, client header, REST calls, SSE parser | Backend contract thay đổi |
+| [`src/components/ChatSidebar.jsx`](src/components/ChatSidebar.jsx) | List/search/create/rename/delete và mobile navigation | Thay quản lý cửa sổ chat |
+| [`src/components/ChatInput.jsx`](src/components/ChatInput.jsx) | Composer, submit/stop, picker, drag/drop | Thay input/upload interaction |
+| [`src/components/AttachmentTray.jsx`](src/components/AttachmentTray.jsx) | Attachment queue/status/delete | Thay document status UI |
+| [`src/components/ChatMessage.jsx`](src/components/ChatMessage.jsx) | Markdown message, copy và source action | Thay answer rendering |
+| [`src/components/RetrievedChunks.jsx`](src/components/RetrievedChunks.jsx) | Drawer hiển thị global/temp evidence | Thay source inspection |
+| [`src/components/StatusIndicator.jsx`](src/components/StatusIndicator.jsx) | Chuyển SSE state thành nhãn UI | Backend thêm trạng thái |
+| [`src/components/LogoMark.jsx`](src/components/LogoMark.jsx) | Logo Sử Việt AI | Thay brand mark |
+| [`src/App.css`](src/App.css) | Layout và component styles responsive | Thay bố cục |
+| [`src/index.css`](src/index.css) | Reset, font, light/dark design tokens | Thay theme |
+| [`src/main.jsx`](src/main.jsx) | React entry point | Thay bootstrap |
 
-## State và ownership
+## Identity và state
 
-Frontend lưu hai giá trị trong `localStorage`:
+Frontend lưu đúng hai giá trị vào `localStorage`:
 
-| Key | Vai trò |
+| Key | Giá trị |
 |---|---|
-| `vn-history-client-id` | UUID gửi qua `X-Client-ID` để backend phân vùng conversation |
+| `vn-history-client-id` | UUID gửi bằng header `X-Client-ID` |
 | `vn-history-theme` | `light` hoặc `dark` |
 
-`X-Client-ID` là anonymous demo identity, không phải authentication. Nếu local storage bị xóa, trình duyệt nhận ID mới và không còn liệt kê các chat thuộc ID cũ.
+Messages, sources, attachments và temporary chunks nằm trong backend SQLite; frontend không
+lưu lịch sử chat trong trình duyệt. Khi xóa browser storage, client nhận UUID mới và không còn
+liệt kê các conversation thuộc UUID cũ.
 
-Messages, attachments và temporary corpus nằm ở backend SQLite. Frontend không lưu bản sao lịch sử chat trong local storage.
+`X-Client-ID` chỉ phân vùng dữ liệu cho anonymous demo. Nó không phải đăng nhập hoặc cơ chế
+bảo vệ dữ liệu production.
 
-## Luồng chat
+## Conversation flow
 
 ```text
-App chọn/tạo conversation
-  -> streamChat(conversation_id, question)
-  -> status/ping events cập nhật processing UI
-  -> answer_delta ghép answer đã validated
-  -> sources cập nhật evidence drawer
-  -> done đồng bộ message IDs và trạng thái cuối
-  -> reload conversation từ backend khi cần
+App bootstrap
+  -> lấy/tạo X-Client-ID
+  -> list conversations
+  -> chọn hoặc tạo conversation
+  -> load messages + attachments
+  -> chat, rename, delete hoặc upload
 ```
 
-Đây là validated streaming: backend hoàn tất generation, guards và repair trước khi phát `answer_delta`. UI không nên giả định đây là token stream trực tiếp từ model.
+Backend tự đổi title mặc định theo câu hỏi user đầu tiên. UI đồng bộ lại conversation sau các
+thao tác làm thay đổi dữ liệu server.
 
-## Luồng upload
+## Validated SSE
 
-- Định dạng: PDF, PNG, JPEG và WebP.
-- Tối đa 20 MB/file và 5 file trong một lượt chọn.
-- Upload luôn gắn với active conversation.
-- `processing`, `ready` và `failed` là attachment states từ backend.
-- Chỉ gửi file sau khi conversation đã được tạo thành công.
+```text
+streamChat(conversation_id, question)
+  -> status/ping cập nhật processing UI
+  -> answer_delta ghép answer cuối
+  -> sources cập nhật evidence drawer
+  -> debug khi được yêu cầu
+  -> done đồng bộ message IDs và trạng thái
+```
 
-MIME, số trang, OCR, chunking và embedding vẫn phải được backend xác thực; kiểm tra phía frontend chỉ nhằm phản hồi sớm cho người dùng.
+`answer_delta` không phải token stream trực tiếp từ model. Backend chỉ phát answer sau khi
+generation, guards và repair đã hoàn tất, rồi chia kết quả theo từng đoạn từ để tạo hiệu ứng
+streaming an toàn.
 
-## Styling
+Nút stop dùng `AbortController` để hủy request phía client. UI phải luôn xử lý được cả
+`done`, `error`, network abort và conversation reload.
 
-- Dark/light colors nằm trong CSS variables ở `src/index.css`.
-- Layout desktop/mobile và component selectors nằm trong `src/App.css`.
-- Dùng Lucide cho icon thao tác và `LogoMark` cho nhận diện riêng.
-- Message content được render bằng `react-markdown` + `remark-gfm`; không render HTML thô từ model.
-- Giữ trạng thái động không làm toolbar, composer hoặc sidebar thay đổi kích thước ngoài ý muốn.
+## Upload document
 
-## Kiểm tra sau khi sửa
+- Hỗ trợ PDF, PNG, JPEG và WebP.
+- Giới hạn phía API là 20 MB mỗi file.
+- File picker nhận tối đa 5 file trong một lần chọn.
+- Frontend xử lý queue tuần tự, không upload cả 5 file song song.
+- File luôn gắn với active conversation.
+- Chỉ upload sau khi conversation đã được tạo ở backend.
 
-Chạy tại root:
+Backend chịu trách nhiệm validate MIME/magic bytes, giới hạn trang, text extraction, OCR,
+chunking và embedding. UI validation chỉ giúp báo lỗi sớm.
+
+PDF có text được đọc bằng PyMuPDF. Trang scan/ít text và ảnh được OCR bằng Tesseract
+`vie+eng`. Temporary corpus chỉ được retrieval trong conversation chứa file đó.
+
+## Render answer và source
+
+- Answer dùng `react-markdown` và `remark-gfm`.
+- HTML thô từ model không được render.
+- Heading, list, bảng và code block Markdown được hiển thị trực tiếp.
+- Source drawer phân biệt history corpus và attachment corpus, đồng thời hiển thị page khi có.
+- Structured answer như “Câu trả lời”, “Lý do và bằng chứng”, “Góc nhìn khác”, “Kết luận” chỉ
+  cần backend prompt sinh Markdown đúng; không cần sửa frontend renderer.
+
+## Theme và responsive layout
+
+- Theme khởi tạo theo system preference nếu chưa có lựa chọn lưu.
+- Light/dark tokens nằm trong `src/index.css`.
+- Application layout và breakpoint nằm trong `src/App.css`.
+- Sidebar chuyển sang mobile layout ở khoảng 840 px.
+- Lucide được dùng cho icon thao tác; `LogoMark` là SVG nhận diện riêng.
+
+Khi chỉnh UI, kiểm tra text dài, source title, tên file và conversation title không làm tràn
+toolbar, composer, drawer hoặc sidebar.
+
+## Kiểm tra
+
+Chạy tại repository root:
 
 ```powershell
 npm run frontend:lint
 npm run frontend:build
 ```
 
-Sau đó kiểm tra thủ công desktop/mobile, cả hai theme, conversation CRUD, refresh memory, upload text PDF, upload scanned PDF/image, cancel stream và evidence drawer.
+Repository hiện chưa có frontend automated test suite. Sau thay đổi workflow, cần smoke test:
+
+- create/select/search/rename/delete conversation;
+- refresh trang và xác nhận memory còn trong SQLite;
+- chat liên tiếp có câu hỏi phụ thuộc ngữ cảnh;
+- upload text PDF, scanned PDF và image;
+- xóa attachment rồi xác nhận source tạm không còn;
+- stop stream và xử lý lỗi mạng;
+- source drawer trên desktop/mobile;
+- cả light và dark mode.

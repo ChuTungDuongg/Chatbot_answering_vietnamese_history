@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🇻🇳✨ Chatbot Hỏi Đáp Lịch Sử Việt Nam ✨🇻🇳
+# Vietnamese History RAG Chatbot
 
-### Qwen2.5 · Hybrid RAG · Conversation Memory · PDF/OCR · FastAPI · React
+**Qwen2.5 · Hybrid RAG · Conversation Memory · PDF/OCR · FastAPI · React**
 
 <p>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
-  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white">
   <img alt="Qwen2.5 3B" src="https://img.shields.io/badge/Qwen2.5-3B--Instruct-7C3AED">
   <img alt="Hybrid RAG" src="https://img.shields.io/badge/RAG-Hybrid-FFB000">
   <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1220">
@@ -17,32 +17,31 @@
   <img alt="PDF OCR" src="https://img.shields.io/badge/Documents-PDF%20%2B%20OCR-D97706">
 </p>
 
-Chatbot hỏi đáp lịch sử Việt Nam với nhiều cửa sổ hội thoại có memory, temporary corpus từ PDF/hình ảnh, truy xuất bằng chứng, kiểm tra nguồn và niên đại, từ chối câu hỏi ngoài phạm vi, cùng phản hồi streaming qua SSE.
+Hệ thống hỏi đáp lịch sử Việt Nam end-to-end, kết hợp QLoRA, Hybrid RAG, grounded
+generation, nhiều cửa sổ hội thoại có memory và temporary corpus từ PDF/hình ảnh. Backend
+kiểm tra nguồn, niên đại và mức độ đầy đủ trước khi phát answer qua validated SSE.
 
-[🚀 Chạy ứng dụng](#-chạy-nhanh) · [🧠 Kiến trúc](#-kiến-trúc-hệ-thống) · [📊 Benchmark Phase-9](#-benchmark-phase-9--100-câu--4-cấu-hình) · [🧪 Metrics Phase-6](#-toàn-bộ-metrics-phase-6) · [🔌 API](#-api-reference)
+[Chạy ứng dụng](#chạy-nhanh) · [Kiến trúc](#kiến-trúc-hệ-thống) · [API](#api-reference) · [Benchmark Phase 9](#benchmark-phase-9--100-câu--4-cấu-hình) · [Metrics Phase 6](#toàn-bộ-metrics-phase-6)
 
 </div>
 
 > [!IMPORTANT]
 > Git hiện chỉ chứa khung <code>artifacts/vn_history_deployment/</code>; model, corpus 58.603 dòng, FAISS và BM25S đầy đủ không được commit. Chế độ <code>api-only</code> chạy ngay; <code>retrieval-only</code> và <code>full</code> cần bộ artifact do Phase 10 export.
 
-## 🌟 Điểm nổi bật
+## Điểm nổi bật
 
-- 🧠 Mô hình sinh: <code>Qwen/Qwen2.5-3B-Instruct</code>, merge tuần tự LoRA Phase 1 và Phase 6.
-- 🔎 Hybrid retrieval: multilingual E5 + FAISS và BM25S, hợp nhất bằng weighted Reciprocal Rank Fusion.
-- 🎯 Reranking: <code>BAAI/bge-reranker-v2-m3</code>, metadata soft boost và chọn context đa dạng.
-- 🛡️ Guardrails: phát hiện off-topic, kiểm tra <code>chunk_id</code>, chặn niên đại không có trong evidence, từ chối khi thiếu bằng chứng.
-- 🩹 Grounded repair: tự sửa tối đa một lần nếu câu trả lời thiếu ý hoặc vi phạm guard.
-- ⚡ FastAPI: REST cho retrieval/chat và SSE streaming chỉ phát câu trả lời sau khi validation hoàn tất.
-- 💬 Conversation memory: nhiều cửa sổ chat, lưu message/source bằng SQLite và đưa lịch sử gần nhất vào prompt lẫn retrieval query khi cần.
-- 📄 Temporary document RAG: đọc text trực tiếp từ PDF, OCR trang scan/hình ảnh bằng Tesseract <code>vie+eng</code>, chunk + embedding và cô lập corpus theo từng conversation.
-- 💻 Giao diện React kiểu ChatGPT: sidebar hội thoại, Markdown, kéo-thả/multi-file upload, attachment status, evidence drawer và responsive trên desktop/mobile.
-- 🌓 Dark/light mode: tự nhận theme hệ thống, ghi nhớ lựa chọn trong trình duyệt và dùng chung design tokens.
-- 🇻🇳 Nhận diện Sử Việt AI: logo SVG riêng đặt cạnh tên chatbot, hiển thị sắc nét ở mọi kích thước.
-- 📊 Đánh giá đầy đủ: 100 câu × 4 cấu hình = 400 lượt benchmark Phase 9.
-- 🧪 RAG-SFT có theo dõi loss, throughput, source metrics, ROUGE-L, format, abstention và composite score ở Phase 6.
+- **Two-stage fine-tuning:** Qwen2.5-3B-Instruct với instruction SFT và RAG-grounded SFT bằng 4-bit QLoRA/PEFT.
+- **Data pipeline:** xử lý 1,29 triệu tài liệu Wikipedia tiếng Việt thành corpus lịch sử 58.603 chunks và 1.000 RAG-SFT samples.
+- **Hybrid retrieval:** multilingual E5/FAISS + BM25S, weighted RRF, BGE cross-encoder reranking, metadata boost và context diversity.
+- **Grounded generation:** source/year/format/completeness guards, OOD rejection và evidence-only repair tối đa một lần.
+- **Conversation memory:** nhiều cửa sổ chat, lưu messages/sources bằng SQLite và đưa history gần nhất vào retrieval/prompt.
+- **Temporary document RAG:** đọc text PDF bằng PyMuPDF, OCR trang scan/hình ảnh bằng Tesseract `vie+eng`, chunk/embed và cô lập theo conversation.
+- **Validated SSE:** chỉ stream answer cuối sau khi generation, guards và repair hoàn tất.
+- **React application:** sidebar kiểu ChatGPT, Markdown/GFM, drag/drop multi-file upload, source drawer, responsive layout và dark/light mode.
+- **Branded interface:** logo SVG Sử Việt AI hiển thị cạnh tên chatbot ở sidebar, header và message surface.
+- **Measured impact:** 400 evaluation runs ở Phase 9 cùng đầy đủ training/evaluation metrics ở Phase 6.
 
-## 🧠 Kiến trúc hệ thống
+## Kiến trúc hệ thống
 
 ~~~mermaid
 flowchart TD
@@ -126,7 +125,7 @@ X-Client-ID + conversation_id
 
 SQLite là persistence layer, không tự biến model thành chatbot có memory. Route chat chủ động đọc history từ database rồi truyền qua generation/prompting. Toàn bộ lịch sử vẫn được lưu, nhưng prompt chỉ nhận phần gần nhất theo token budget.
 
-## 🗂️ Sơ đồ thư mục
+## Sơ đồ thư mục
 
 ~~~text
 Chatbot_answering_vietnamese_history/
@@ -215,7 +214,12 @@ Các thư mục `.git`, `.conda`, `node_modules`, `__pycache__` và `.agents` l�
 > [!NOTE]
 > File PDF/hình ảnh gốc không được giữ trong SQLite. Hệ thống chỉ lưu metadata attachment, text đã trích xuất, chunks và embeddings; dữ liệu này tồn tại trong phạm vi conversation cho tới khi attachment hoặc conversation bị xóa.
 
-## 🧭 Hành trình từ Phase 1 đến Phase 10
+> [!WARNING]
+> `Dataset/merged_jsonl/all_messages.jsonl` có 1.000 records nhưng chỉ 40 giá trị `id` khác
+> nhau vì ID được tái sử dụng theo từng pack. Không dùng riêng `id` làm khóa duy nhất; xem
+> [`Dataset/README.md`](Dataset/README.md) trước khi merge, deduplicate hoặc split dữ liệu.
+
+## Hành trình từ Phase 1 đến Phase 10
 
 | Phase | Vai trò |
 |---|---|
@@ -232,7 +236,7 @@ Các thư mục `.git`, `.conda`, `node_modules`, `__pycache__` và `.agents` l�
 
 Hai notebook tiện ích dùng để khảo sát dataset và đọc/audit JSON corpus nằm trong <code>Training/InvestigatingDataset.zip</code>. Mười notebook Phase 1-10 nằm trong <code>Training/Training/Training.zip</code>.
 
-## 🚀 Chạy nhanh
+## Chạy nhanh
 
 Ứng dụng được khởi động từ **thư mục gốc** bằng một lệnh duy nhất. Script root dùng <code>concurrently</code> để chạy song song:
 
@@ -369,7 +373,7 @@ docker run --rm -p 8000:8000 -v vn-history-chat-data:/data vn-history-rag-api
 
 Image mặc định dùng <code>APP_MODE=api-only</code>, <code>DEVICE=cpu</code>, <code>CHAT_DATABASE_PATH=/data/chat.sqlite3</code> và đã có Tesseract OCR Việt/Anh. Conversation CRUD hoạt động trong mode này, nhưng retrieval/chat/upload cần runtime tương ứng: attachment ingestion cần ít nhất <code>retrieval-only</code>, còn generation cần <code>full</code>. Endpoint kiểm tra container là <code>http://localhost:8000/health</code> và <code>http://localhost:8000/ready</code>.
 
-## 📦 Chuẩn bị artifact
+## Chuẩn bị artifact
 
 Cấu trúc Phase 10 mà runtime mong đợi:
 
@@ -418,7 +422,55 @@ Runtime kiểm tra chặt:
 - BM25 manifest count khớp corpus;
 - model tồn tại khi chạy <code>full</code>.
 
-## 🔌 API reference
+### Cấu hình câu trả lời dài và có bố cục
+
+Độ dài và cấu trúc answer được điều khiển bởi
+<code>config/inference_config.json</code> trong deployment bundle, không phải frontend. Frontend
+đã render Markdown/GFM nên các heading, list và bảng sẽ hiển thị trực tiếp.
+
+Các field cần thay đồng thời:
+
+- <code>generation.max_new_tokens</code>: giới hạn token thực tế truyền vào model generation;
+- <code>prompt.max_new_tokens</code>: phần ngân sách prompt dành trước cho answer;
+- <code>prompt.default_system</code>: hướng dẫn model viết các phần như <code>## Câu trả lời</code>,
+  <code>## Lý do và bằng chứng</code>, <code>## Góc nhìn khác</code> và
+  <code>## Kết luận</code>.
+
+Ví dụ các giá trị cốt lõi:
+
+~~~json
+{
+  "prompt": {
+    "max_new_tokens": 800,
+    "default_system": "Bạn là trợ lý AI chuyên về lịch sử Việt Nam..."
+  },
+  "generation": {
+    "max_new_tokens": 800
+  }
+}
+~~~
+
+System prompt bổ sung bố cục nhưng vẫn phải giữ nguyên grounded-answer contract: chỉ dùng
+evidence của lượt hiện tại, không tự tạo source ID và không thêm niên đại ngoài tài liệu. Parser
+backend vẫn yêu cầu hai dòng bao ngoài <code>Nguồn được dùng: [...]</code> và
+<code>Trả lời: ...</code>; Markdown có cấu trúc nằm trong phần trả lời.
+
+Nếu config mới nằm tại <code>inference_config_long.json</code> ở máy local, sao lưu và ghi đè file
+trên Modal Volume bằng:
+
+~~~powershell
+modal volume get --force vn-history-artifacts vn_history_deployment/config/inference_config.json inference_config.backup.json
+modal volume put --force vn-history-artifacts inference_config_long.json vn_history_deployment/config/inference_config.json
+modal volume ls vn-history-artifacts vn_history_deployment/config
+~~~
+
+Sau đó dừng/chạy lại <code>npm run dev</code> hoặc chạy <code>modal deploy modal_app.py</code>.
+Container đang warm không tự reload config vì <code>RAGService</code> chỉ đọc file khi startup.
+Tăng token sẽ tăng latency và có thể tăng VRAM usage, vì vậy cần chạy full runtime sanity và thử
+vài câu hỏi dài trước khi deploy chính thức. Hướng dẫn chi tiết hơn nằm tại
+<a href="artifacts/README.md">artifacts/README.md</a>.
+
+## API reference
 
 ### Endpoint hệ thống
 
@@ -529,7 +581,7 @@ Event thực tế:
 > [!TIP]
 > Đây là validated streaming: hệ thống không phát token thô từ model. Chỉ answer cuối đã qua guards/repair mới được chia nhỏ để stream cho giao diện.
 
-## 📊 Benchmark Phase 9 — 100 câu × 4 cấu hình
+## Benchmark Phase 9 — 100 câu × 4 cấu hình
 
 Nguồn số liệu: output cuối của notebook <code>Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb</code> trong <code>Training/Training/Training.zip</code> và deployment export <code>benchmark_results_v3_unique_batched.jsonl</code> / <code>benchmark_summary_v3_unique_batched.csv</code>. Model, corpus deployment và retrieval indexes lớn không được commit trong repository này.
 
@@ -559,6 +611,11 @@ Bốn cấu hình:
 | stage1 | 100 | 0,8301 | 0,2030 | 0,1559 | 0,1948 | 0,7800 | 0,0000 | 0,8667 | 0,9000 | 0,0000 | N/A | 0,5768 |
 | stage12_weights | 100 | 0,8579 | 0,3429 | 0,2797 | 0,5533 | 0,8200 | 0,2000 | 0,8889 | 0,5667 | 0,4000 | 1,0000 | 0,3732 |
 | stage12_full_rag | 100 | **0,8741** | **0,4332** | **0,3706** | **0,6294** | **0,8600** | **1,0000** | 0,8444 | 0,9000 | 0,0111 | 1,0000 | 1,8036 |
+
+So với Qwen2.5 vanilla, Full RAG tăng **Token F1 khoảng 44%** (0,2999 → 0,4332) và
+**ROUGE-L F1 khoảng 75%** (0,2116 → 0,3706), đồng thời nâng off-topic refusal từ 0% lên
+**100%**. Đổi lại, average benchmark latency tăng từ 0,5792 giây lên 1,8036 giây do có thêm
+retrieval, reranking, validation và repair.
 
 ### Grounding và retrieval của Full RAG
 
@@ -704,7 +761,7 @@ Diagnostic notebook ghi nhận 14 lỗi behavior, 9 câu lịch sử không qua 
 
 </details>
 
-## 🧪 Toàn bộ metrics Phase 6
+## Toàn bộ metrics Phase 6
 
 Nguồn: output đã lưu từ notebook <code>Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb</code> trong <code>Training/Training/Training.zip</code>. Các số dưới đây là kết quả đo thật đã ghi lại, không phải mục tiêu dự kiến.
 
@@ -869,7 +926,7 @@ Best adapter theo generation metric nằm ở step 150, khác best checkpoint th
 
 Điểm đáng chú ý: training loss tiếp tục giảm nhưng validation loss tăng sau step 100; generation composite đạt đỉnh ở step 150. Vì vậy export ưu tiên adapter tốt nhất theo generation metric thay vì checkpoint cuối.
 
-## ☁️ Kiểm tra với Modal
+## Kiểm tra với Modal
 
 Các script Modal không nằm trong <code>requirements.txt</code>. Cài riêng:
 
@@ -889,7 +946,7 @@ modal run modal_runtime_sanity.py
 modal run full_modal_runtime_sanity.py
 ~~~
 
-<code>modal_artifact_sanity.py</code> kiểm tra 58.603 corpus rows, unique IDs, model shards, FAISS, BM25S, manifest và success marker. <code>modal_runtime_sanity.py</code> kiểm tra retrieval-only; <code>full_modal_runtime_sanity.py</code> nạp cả model trên GPU và chạy luồng chat đầy đủ.
+<code>modal_artifact_sanity.py</code> kiểm tra 58.603 corpus rows, unique IDs, model shards, FAISS, BM25S, manifest và success marker. <code>modal_runtime_sanity.py</code> kiểm tra retrieval-only; <code>full_modal_runtime_sanity.py</code> nạp model trên GPU và chạy generation pipeline cơ bản. Các script này chưa kiểm tra đầy đủ conversation persistence, upload/OCR, multi-turn memory hoặc SSE contract.
 
 Triển khai API bằng image từ <code>Dockerfile</code>:
 
@@ -910,7 +967,7 @@ Cấu hình mặc định dùng GPU L4, <code>APP_MODE=full</code> và lưu data
 
 Image từ <code>Dockerfile</code> đã cài Tesseract với language pack <code>vie</code>/<code>eng</code> và có healthcheck tại <code>/health</code>. Khi deploy frontend ở domain riêng, cập nhật <code>CORS_ORIGINS</code> trong <code>modal_app.py</code>. Script <code>modal_fix.py</code> có thay đổi file model trên Volume; chỉ chạy khi kiểm tra artifact báo sai tên shard.
 
-## 🔐 Bảo mật và vận hành
+## Bảo mật và vận hành
 
 - Không commit token, API key, credentials hoặc nội dung bí mật trong <code>.env</code>.
 - Model đang dùng <code>trust_remote_code=True</code>; chỉ load artifact/model từ nguồn tin cậy.
@@ -923,7 +980,7 @@ Image từ <code>Dockerfile</code> đã cài Tesseract với language pack <code
 - Chỉ nhận traffic khi <code>/ready</code> trả <code>ready=true</code>.
 - Không xem benchmark notebook là SLA production; cần benchmark tải riêng trên hạ tầng deploy thật.
 
-## ⚠️ Hạn chế hiện tại
+## Hạn chế hiện tại
 
 - Artifact lớn không có trong Git; manifest trong repo chỉ là placeholder.
 - Đã có Dockerfile và các smoke test Modal, nhưng chưa có CI hoặc test suite tự động chuẩn hóa.
@@ -935,23 +992,23 @@ Image từ <code>Dockerfile</code> đã cài Tesseract với language pack <code
 - Source F1 Full RAG còn thấp hơn các metric answer similarity; retrieval/final-context recall vẫn là hướng tối ưu chính.
 - Repository chưa có file <code>LICENSE</code>.
 
-## 🛣️ Hướng phát triển
+## Hướng phát triển
 
-- 📈 Thêm benchmark retrieval độc lập và error analysis theo từng giai đoạn lịch sử.
-- ⚙️ Đo p50/p95/p99, throughput, cold start, RAM/VRAM và concurrency.
-- 🧪 Bổ sung unit/integration tests cho conversation store, upload/OCR, temporary retrieval, OOD, guards và SSE.
-- 🔐 Thêm authentication, quota lưu trữ, rate limiting và chính sách xóa dữ liệu người dùng.
-- 🗄️ Chuyển SQLite sang PostgreSQL/pgvector hoặc dịch vụ tương đương khi cần nhiều replica.
-- 📄 Đưa OCR/chunking sang background job và bổ sung VLM/document-layout parser cho tài liệu nhiều hình ảnh.
-- 🐳 Bổ sung CI và kiểm tra tự động health/readiness trong pipeline triển khai.
-- 🚀 Chuyển generation sang vLLM hoặc engine batching khi cần tải đồng thời cao.
-- 🔍 Tối ưu recall sau reranker và source selection.
-- 📜 Bổ sung giấy phép sử dụng dữ liệu, model và mã nguồn.
+- Thêm benchmark retrieval độc lập và error analysis theo từng giai đoạn lịch sử.
+- Đo p50/p95/p99, throughput, cold start, RAM/VRAM và concurrency.
+- Bổ sung unit/integration tests cho conversation store, upload/OCR, temporary retrieval, OOD, guards và SSE.
+- Thêm authentication, quota lưu trữ, rate limiting và chính sách xóa dữ liệu người dùng.
+- Chuyển SQLite sang PostgreSQL/pgvector hoặc dịch vụ tương đương khi cần nhiều replica.
+- Đưa OCR/chunking sang background job và bổ sung VLM/document-layout parser cho tài liệu nhiều hình ảnh.
+- Bổ sung CI và kiểm tra tự động health/readiness trong pipeline triển khai.
+- Chuyển generation sang vLLM hoặc engine batching khi cần tải đồng thời cao.
+- Tối ưu recall sau reranker và source selection.
+- Bổ sung giấy phép sử dụng dữ liệu, model và mã nguồn.
 
 ---
 
 <div align="center">
 
-Made with 🇻🇳, 📚, ⚡ and a slightly unreasonable amount of RAG ✨
+Built for evidence-grounded Vietnamese history question answering.
 
 </div>
