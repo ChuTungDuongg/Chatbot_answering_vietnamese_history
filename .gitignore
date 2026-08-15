@@ -1,27 +1,43 @@
 # =========================
-# Python / Notebook
+# Python
 # =========================
 __pycache__/
 *.py[cod]
-.ipynb_checkpoints/
+*.pyo
+*.pyd
+*.egg-info/
+
+.conda/
 .venv/
 venv/
 env/
-*.egg-info/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
 
 # =========================
 # OS / Editor
 # =========================
 .DS_Store
 Thumbs.db
+
 .vscode/
 .idea/
 
 # =========================
-# Secrets / Env
+# Environment / Secrets
 # =========================
 .env
 .env.*
+!.env.example
+!frontend/.env.example
+
 *.key
 *.pem
 secrets/
@@ -33,24 +49,34 @@ token.json
 # =========================
 logs/
 *.log
+
 wandb/
 runs/
 mlruns/
 tensorboard/
 
 # =========================
-# Model checkpoints / LoRA / weights
+# Hugging Face / Cache
+# =========================
+.cache/
+.huggingface/
+hf_cache/
+transformers_cache/
+dataset_cache/
+
+# =========================
+# Model checkpoints / weights
 # =========================
 checkpoints/
 outputs/
 output/
+
 models/
 model/
 adapters/
 adapter/
 merged_model/
-hf_cache/
-.cache/
+
 *.safetensors
 *.bin
 *.pt
@@ -59,32 +85,28 @@ hf_cache/
 *.onnx
 
 # =========================
-# Hugging Face / training cache
-# =========================
-.huggingface/
-datasets/
-dataset_cache/
-transformers_cache/
-
-# =========================
 # RAG artifacts
 # =========================
+artifacts/
+
 vector_db/
 faiss_index/
 chroma/
 chroma_db/
 qdrant_storage/
+
 *.faiss
 *.index
 *.pkl
 *.pickle
 
 # =========================
-# Generated dataset files
+# Generated datasets
 # =========================
 *_rag_sft_*.jsonl
 *_rag_sft_*.csv
 *_rag_sft_*.json
+
 *_full_with_context.csv
 *_preview.csv
 *_structured.jsonl
@@ -96,8 +118,10 @@ qdrant_storage/
 # =========================
 rag_dataset_prep/chunk_batches/
 rag_dataset_prep/dataset_templates/
+
 chunk_batches/
 dataset_templates/
+
 pack_*.md
 
 # =========================
@@ -105,22 +129,39 @@ pack_*.md
 # =========================
 data/raw/
 data/processed/
+
 processed/
 raw/
+
 *.parquet
 *.arrow
 *.sqlite
 *.db
 
 # =========================
-# Keep examples if needed
+# React / Vite
+# =========================
+frontend/node_modules/
+frontend/dist/
+
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+frontend/.vite/
+frontend/coverage/
+
+# =========================
+# npm
+# =========================
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Keep examples
 # =========================
 !examples/
 !examples/*.jsonl
 !examples/*.md
-
-
-.conda/
-.env
-__pycache__/
-*.pyc
