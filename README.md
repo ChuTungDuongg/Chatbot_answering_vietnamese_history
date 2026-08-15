@@ -445,7 +445,11 @@ Ví dụ các giá trị cốt lõi:
     "default_system": "Bạn là trợ lý AI chuyên về lịch sử Việt Nam..."
   },
   "generation": {
-    "max_new_tokens": 800
+    "max_new_tokens": 800,
+    "repair_min_new_tokens": 220,
+    "repair_min_multi_part_new_tokens": 300,
+    "enable_structured_expansion": true,
+    "section_max_new_tokens": 300
   }
 }
 ~~~
@@ -453,7 +457,17 @@ Ví dụ các giá trị cốt lõi:
 System prompt bổ sung bố cục nhưng vẫn phải giữ nguyên grounded-answer contract: chỉ dùng
 evidence của lượt hiện tại, không tự tạo source ID và không thêm niên đại ngoài tài liệu. Parser
 backend vẫn yêu cầu hai dòng bao ngoài <code>Nguồn được dùng: [...]</code> và
-<code>Trả lời: ...</code>; Markdown có cấu trúc nằm trong phần trả lời.
+<code>Trả lời: ...</code>; Markdown có cấu trúc nằm trong phần trả lời. Với factual answer,
+quality critic yêu cầu đủ bốn heading đúng thứ tự và độ dài tối thiểu 140 từ, hoặc 180 từ cho câu
+nhiều ý. Câu ngắn/thiếu section kích hoạt structured expansion; vi phạm source/year/quality khác
+kích hoạt evidence-only repair. Refusal do OOD/thiếu evidence vẫn được phép trả lời ngắn. Hai
+mức <code>repair_min_*_new_tokens</code> chỉ áp dụng cho repair của factual answer, không ép
+refusal phải dài.
+
+Vì merged RAG-SFT model được huấn luyện mạnh theo outer format ngắn, pipeline có thêm structured
+section expansion: giữ câu trả lời trực tiếp đã validated, sinh riêng ba phần lý do/bằng chứng,
+góc nhìn khác và kết luận bằng chính các source đã cite, sau đó ghép Markdown và validate lại.
+Cách này tăng latency generation nhưng tránh để các section phụ kéo thêm context không liên quan.
 
 Nếu config mới nằm tại <code>inference_config_long.json</code> ở máy local, sao lưu và ghi đè file
 trên Modal Volume bằng:

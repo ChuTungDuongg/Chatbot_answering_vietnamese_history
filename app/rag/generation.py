@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 from typing import Any
@@ -17,6 +18,24 @@ from app.rag.retrieval import (
     match_norm,
 )
 from app.services.rag_service import RAGService
+
+
+STRUCTURED_SECTION_SPECS = (
+    (
+        "Lý do và bằng chứng",
+        "Giải thích 2-4 căn cứ quan trọng trong khoảng 80-120 từ. Ưu tiên bullet ngắn và nêu "
+        "rõ điểm giống, điểm khác hoặc quan hệ nguyên nhân-kết quả mà evidence hỗ trợ.",
+    ),
+    (
+        "Góc nhìn khác",
+        "Viết khoảng 50-90 từ về một cách so sánh, giới hạn diễn giải hoặc trường hợp ngoại lệ "
+        "được evidence hỗ trợ. Nếu không có, nói rõ tài liệu chưa hỗ trợ góc nhìn thay thế.",
+    ),
+    (
+        "Kết luận",
+        "Tổng hợp đáp án trong 1-2 câu, khoảng 30-50 từ, không thêm claim mới.",
+    ),
+)
 
 
 class RAGGenerator:
@@ -74,6 +93,22 @@ class RAGGenerator:
                 300,
             )
         )
+
+    @property
+    def repair_min_new_tokens(self) -> int:
+        return max(0, int(self._cfg("repair_min_new_tokens", 220)))
+
+    @property
+    def repair_min_multi_part_new_tokens(self) -> int:
+        return max(0, int(self._cfg("repair_min_multi_part_new_tokens", 300)))
+
+    @property
+    def enable_structured_expansion(self) -> bool:
+        return bool(self._cfg("enable_structured_expansion", True))
+
+    @property
+    def section_max_new_tokens(self) -> int:
+        return max(64, int(self._cfg("section_max_new_tokens", 300)))
 
     @property
     def temperature(self) -> float:
@@ -387,6 +422,7 @@ class RAGGenerator:
         self,
         prompt: str,
         max_new_tokens: int | None = None,
+        min_new_tokens: int = 0,
     ) -> str:
         self._ensure_ready()
 
@@ -422,16 +458,14 @@ class RAGGenerator:
 
         temperature = self.temperature
 
+        effective_max_new_tokens = max_new_tokens if max_new_tokens is not None else self.max_new_tokens
+
         generation_kwargs: dict[
             str,
             Any,
         ] = {
             **inputs,
-            "max_new_tokens": (
-                max_new_tokens
-                if max_new_tokens is not None
-                else self.max_new_tokens
-            ),
+            "max_new_tokens": effective_max_new_tokens,
             "do_sample": temperature > 0,
             "repetition_penalty": (
                 self.repetition_penalty
@@ -441,6 +475,9 @@ class RAGGenerator:
             ),
             "use_cache": True,
         }
+
+        if min_new_tokens > 0:
+            generation_kwargs["min_new_tokens"] = min(min_new_tokens, effective_max_new_tokens)
 
         if eos_ids:
             generation_kwargs[
@@ -560,6 +597,11 @@ class RAGGenerator:
         raw = self.generate_raw(
             prompt,
             max_new_tokens=self.max_new_tokens,
+            min_new_tokens=(
+                self.repair_min_multi_part_new_tokens
+                if analysis.get("is_multi_part")
+                else self.repair_min_new_tokens
+            ),
         )
 
         parsed = (
@@ -592,6 +634,115 @@ class RAGGenerator:
             "parsed": parsed,
             "validated": validated,
             "critique": critique,
+        }
+
+    def run_section_pass(
+        self,
+        question: str,
+        contexts: list[dict[str, Any]],
+        chars_per_chunk: int,
+        section_name: str,
+        instruction: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        prompt = self.prompt_builder.build_section_prompt(
+            question=question,
+            contexts=contexts,
+            chars_per_chunk=chars_per_chunk,
+            section_name=section_name,
+            instruction=instruction,
+            history=history,
+        )
+        raw = self.generate_raw(prompt, max_new_tokens=self.section_max_new_tokens)
+        parsed = self.prompt_builder.parse_rag_output(raw)
+        validated = self.guards.validate_parsed_answer(parsed, contexts)
+        return {"prompt": prompt, "raw": raw, "parsed": parsed, "validated": validated}
+
+    def run_structured_expansion_pass(
+        self,
+        question: str,
+        contexts: list[dict[str, Any]],
+        draft: str,
+        base_source_ids: list[str],
+        analysis: dict[str, Any],
+        budget: dict[str, int],
+        history: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        section_results: dict[str, dict[str, Any]] = {}
+        source_ids = list(base_source_ids)
+        source_id_set = set(base_source_ids)
+        section_contexts = [
+            context for context in contexts if str(context.get("chunk_id", "")).strip() in source_id_set
+        ]
+        if not section_contexts:
+            section_contexts = contexts
+        chars_per_chunk = max(
+            int(budget.get("chars_per_chunk", self.prompt_builder.max_chars_per_chunk)),
+            self.prompt_builder.max_chars_per_chunk,
+        )
+
+        for section_name, instruction in STRUCTURED_SECTION_SPECS:
+            result = self.run_section_pass(
+                question=question,
+                contexts=section_contexts,
+                chars_per_chunk=chars_per_chunk,
+                section_name=section_name,
+                instruction=instruction,
+                history=history,
+            )
+            section_results[section_name] = result
+            if not result["validated"]["guard_issues"]:
+                source_ids.extend(result["validated"]["valid_ids"])
+
+        source_ids = list(dict.fromkeys(source_ids))
+        direct_answer = clean_text(draft)
+        sentences = [part for part in re.split(r"(?<=[.!?])\s+", direct_answer) if clean_text(part)]
+        first_sentence = sentences[0] if sentences else direct_answer
+        reason_fallback = "\n".join(
+            f"- Căn cứ {index}: {sentence}" for index, sentence in enumerate(sentences, start=1)
+        ) or direct_answer
+        conclusion_fallback = f"Tóm lại, {first_sentence[:1].lower()}{first_sentence[1:]}"
+        used_section_texts = {match_norm(direct_answer)}
+
+        def section_answer(name: str, fallback: str) -> str:
+            validated = section_results[name]["validated"]
+            answer = clean_text(validated["answer"])
+            normalized = match_norm(answer)
+            if answer and not validated["guard_issues"] and normalized not in used_section_texts:
+                used_section_texts.add(normalized)
+                return answer
+            used_section_texts.add(match_norm(fallback))
+            return fallback
+
+        reasons = section_answer("Lý do và bằng chứng", reason_fallback)
+        alternatives = section_answer(
+            "Góc nhìn khác",
+            "Các tài liệu truy xuất chưa hỗ trợ một góc nhìn thay thế đủ rõ.",
+        )
+        conclusion = section_answer("Kết luận", conclusion_fallback)
+        answer = (
+            f"## Câu trả lời\n{direct_answer}\n\n"
+            f"## Lý do và bằng chứng\n{reasons}\n\n"
+            f"## Góc nhìn khác\n{alternatives}\n\n"
+            f"## Kết luận\n{conclusion}"
+        )
+        parsed = {
+            "raw_output": answer,
+            "source_ids": source_ids,
+            "answer": answer,
+            "format_ok": True,
+        }
+        validated = self.guards.validate_parsed_answer(parsed, section_contexts)
+        critique = self.guards.critique_answer(question, validated["answer"], analysis)
+        return {
+            "prompt": "\n\n".join(result["prompt"] for result in section_results.values()),
+            "budget": budget,
+            "used_context": section_contexts,
+            "raw": "\n\n".join(result["raw"] for result in section_results.values()),
+            "parsed": parsed,
+            "validated": validated,
+            "critique": critique,
+            "section_results": section_results,
         }
 
     # ========================================================
@@ -741,26 +892,71 @@ class RAGGenerator:
         chosen = first
         rewrite_used = False
         repair_attempted = False
+        repair_diagnostics: dict[str, Any] | None = None
+        structured_expansion_attempted = False
+        structured_expansion_used = False
 
         # ----------------------------------------------------
-        # Evidence-only repair
+        # Structured expansion or evidence-only repair
         # ----------------------------------------------------
 
+        first_quality_issues = set(first_critique.get("issues", []))
+        expansion_triggers = {
+            "missing_required_sections",
+            "answer_too_short",
+            "multi_part_answer_too_short",
+        }
+        should_expand = (
+            self.enable_structured_expansion
+            and not first_valid["guard_issues"]
+            and bool(first_quality_issues & expansion_triggers)
+            and not self.guards.is_refusal(first_valid["answer"])
+        )
         should_repair = (
-            self.guards
-            .enable_completeness_rewrite
+            not should_expand
+            and self.guards.enable_completeness_rewrite
             and bool(reasons)
-            and (
-                self.guards
-                .max_rewrite_attempts
-                > 0
-            )
-            and not self.guards.is_refusal(
-                first_valid["answer"]
-            )
+            and self.guards.max_rewrite_attempts > 0
+            and not self.guards.is_refusal(first_valid["answer"])
         )
 
-        if should_repair:
+        if should_expand:
+            repair_attempted = True
+            structured_expansion_attempted = True
+            expanded = self.run_structured_expansion_pass(
+                question=question,
+                contexts=first["used_context"],
+                draft=first_valid["answer"],
+                base_source_ids=first_valid["valid_ids"],
+                analysis=analysis,
+                budget=first["budget"],
+                history=normalized_history,
+            )
+            expanded_valid = expanded["validated"]
+            expanded_critique = expanded["critique"]
+            expanded_quality_issues = set(expanded_critique.get("issues", []))
+
+            repair_diagnostics = {
+                "answer_word_count": len(re.findall(r"[0-9A-Za-zÀ-ỹĐđ]+", expanded_valid["answer"])),
+                "source_ids": expanded_valid["valid_ids"],
+                "guard_issues": expanded_valid["guard_issues"],
+                "quality_issues": sorted(expanded_quality_issues),
+                "format_ok": expanded["parsed"].get("format_ok", False),
+                "mode": "structured_section_expansion",
+            }
+
+            if (
+                not expanded_valid["guard_issues"]
+                and not {
+                    "missing_required_sections",
+                    "repeated_answer_sections",
+                } & expanded_quality_issues
+            ):
+                chosen = expanded
+                rewrite_used = True
+                structured_expansion_used = True
+
+        elif should_repair:
             repair_attempted = True
 
             repaired = self.run_repair_pass(
@@ -782,34 +978,42 @@ class RAGGenerator:
                 repaired["critique"]
             )
 
+            repaired_quality_issues = set(repaired_critique.get("issues", []))
+
+            repair_diagnostics = {
+                "answer_word_count": len(re.findall(r"[0-9A-Za-zÀ-ỹĐđ]+", repaired_valid["answer"])),
+                "source_ids": repaired_valid["valid_ids"],
+                "guard_issues": repaired_valid["guard_issues"],
+                "quality_issues": sorted(repaired_quality_issues),
+                "format_ok": repaired["parsed"].get("format_ok", False),
+                "mode": "evidence_only_repair",
+            }
+
             structurally_better = not (
                 repaired_valid[
                     "guard_issues"
                 ]
             )
 
-            quality_better = (
-                len(
-                    repaired_critique.get(
-                        "issues",
-                        [],
-                    )
-                )
-                < len(
-                    first_critique.get(
-                        "issues",
-                        [],
-                    )
-                )
+            structured_format_fixed = (
+                "missing_required_sections" in first_quality_issues
+                and "missing_required_sections" not in repaired_quality_issues
             )
 
-            if structurally_better and (
-                quality_better
-                or bool(
-                    first_valid[
-                        "guard_issues"
-                    ]
-                )
+            structured_format_valid = (
+                not self.guards.require_structured_answer
+                or not {
+                    "missing_required_sections",
+                    "repeated_answer_sections",
+                } & repaired_quality_issues
+            )
+
+            quality_better = (
+                len(repaired_quality_issues) < len(first_quality_issues)
+            )
+
+            if structurally_better and structured_format_valid and (
+                structured_format_fixed or quality_better or bool(first_valid["guard_issues"])
             ):
                 chosen = repaired
                 rewrite_used = True
@@ -903,10 +1107,13 @@ class RAGGenerator:
                 "conversation_memory"
             )
 
-        if repair_attempted:
+        if repair_attempted and not structured_expansion_attempted:
             tool_trace.append(
                 "evidence_only_repair"
             )
+
+        if structured_expansion_attempted:
+            tool_trace.append("structured_answer_expansion")
 
         if rewrite_used:
             tool_trace.append(
@@ -965,6 +1172,8 @@ class RAGGenerator:
             "repair_attempted": (
                 repair_attempted
             ),
+            "repair_diagnostics": repair_diagnostics,
+            "structured_expansion_used": structured_expansion_used,
             "initial_quality_issues": (
                 first_critique.get(
                     "issues",

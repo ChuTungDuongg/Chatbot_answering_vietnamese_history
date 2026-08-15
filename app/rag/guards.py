@@ -32,6 +32,13 @@ REFUSAL_PATTERNS = [
     ),
 ]
 
+REQUIRED_ANSWER_SECTIONS = (
+    "Câu trả lời",
+    "Lý do và bằng chứng",
+    "Góc nhìn khác",
+    "Kết luận",
+)
+
 
 ISSUE_INSTRUCTIONS = {
     "empty_answer": (
@@ -72,6 +79,19 @@ ISSUE_INSTRUCTIONS = {
     "multi_part_answer_too_short": (
         "Câu hỏi có nhiều ý; phải trả lời "
         "đủ từng ý."
+    ),
+    "answer_too_short": (
+        "Mở rộng câu trả lời bằng các lý do và bằng chứng "
+        "được tài liệu hỗ trợ; không thêm thông tin ngoài evidence."
+    ),
+    "missing_required_sections": (
+        "Viết lại câu trả lời với đúng bốn heading Markdown theo thứ tự: "
+        "## Câu trả lời, ## Lý do và bằng chứng, ## Góc nhìn khác, ## Kết luận. "
+        "Mỗi phần phải có nội dung."
+    ),
+    "repeated_answer_sections": (
+        "Các phần đang lặp lại cùng một nội dung. Viết mỗi phần đúng chức năng và không sao "
+        "chép nguyên văn giữa các heading."
     ),
     "invalid_source_id": (
         "Chỉ dùng chunk_id có trong evidence "
@@ -146,6 +166,18 @@ class AnswerGuards:
         )
 
     @property
+    def require_structured_answer(self) -> bool:
+        return bool(self.guard_config.get("require_structured_answer", True))
+
+    @property
+    def min_answer_words(self) -> int:
+        return max(0, int(self.guard_config.get("min_answer_words", 140)))
+
+    @property
+    def min_multi_part_answer_words(self) -> int:
+        return max(0, int(self.guard_config.get("min_multi_part_answer_words", 180)))
+
+    @property
     def safe_ood_answer(self) -> str:
         return self.guard_config.get(
             "safe_ood_answer",
@@ -185,6 +217,34 @@ class AnswerGuards:
             )
             for pattern in REFUSAL_PATTERNS
         )
+
+    @staticmethod
+    def extract_required_answer_sections(text: str) -> list[str] | None:
+        text = clean_text(text)
+        matches: list[re.Match[str]] = []
+
+        for section in REQUIRED_ANSWER_SECTIONS:
+            match = re.search(rf"(?im)^##\s+{re.escape(section)}\s*$", text)
+            if match is None:
+                return None
+            matches.append(match)
+
+        if any(current.start() >= following.start() for current, following in zip(matches, matches[1:])):
+            return None
+
+        sections: list[str] = []
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            content = clean_text(text[match.end():end])
+            if not content:
+                return None
+            sections.append(content)
+
+        return sections
+
+    @classmethod
+    def has_required_answer_structure(cls, text: str) -> bool:
+        return cls.extract_required_answer_sections(text) is not None
 
     # ========================================================
     # Year extraction
@@ -364,6 +424,15 @@ class AnswerGuards:
                 "facets": facets,
             }
 
+        if self.require_structured_answer and not self.has_required_answer_structure(answer):
+            issues.append("missing_required_sections")
+
+        sections = self.extract_required_answer_sections(answer)
+        if sections:
+            normalized_sections = [match_norm(section) for section in sections]
+            if len(set(normalized_sections)) < len(normalized_sections):
+                issues.append("repeated_answer_sections")
+
         if re.match(
             r"\s*(theo|dua tren|can cu).*tai lieu",
             normalized_answer,
@@ -515,13 +584,11 @@ class AnswerGuards:
             )
         )
 
-        if (
-            analysis.get("is_multi_part")
-            and word_count < 35
-        ):
-            issues.append(
-                "multi_part_answer_too_short"
-            )
+        if analysis.get("is_multi_part"):
+            if word_count < self.min_multi_part_answer_words:
+                issues.append("multi_part_answer_too_short")
+        elif word_count < self.min_answer_words:
+            issues.append("answer_too_short")
 
         issues = list(
             dict.fromkeys(issues)

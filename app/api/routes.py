@@ -134,6 +134,8 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
         "quality_warnings": result.get("quality_warnings", []),
         "initial_quality_issues": result.get("initial_quality_issues", []),
         "repair_attempted": result.get("repair_attempted", False),
+        "repair_diagnostics": result.get("repair_diagnostics"),
+        "structured_expansion_used": result.get("structured_expansion_used", False),
         "model_source_ids": result.get("model_source_ids", []),
         "invalid_source_ids": result.get("invalid_source_ids", []),
         "unsupported_years": result.get("unsupported_years", []),

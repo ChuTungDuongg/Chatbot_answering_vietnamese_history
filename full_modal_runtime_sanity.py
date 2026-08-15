@@ -27,6 +27,9 @@ image = (
         "fastapi",
         "pydantic",
         "pydantic-settings",
+        "PyMuPDF",
+        "Pillow",
+        "pytesseract",
     )
     .env(
         {
@@ -153,7 +156,7 @@ def full_runtime_sanity():
         print("PASS  HybridRetriever initialized")
         print("PASS  RAGGenerator initialized")
 
-        history_question = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?"
+        history_question = "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ."
 
         print("\n[4] FULL HISTORY CHAT")
         print("Question:", history_question)
@@ -169,6 +172,7 @@ def full_runtime_sanity():
 
         print("\nStatus          :", result.get("status"))
         print("Rewrite used    :", result.get("rewrite_used"))
+        print("Expansion used  :", result.get("structured_expansion_used"))
         print("Source IDs      :", result.get("source_ids"))
         print("Model source IDs:", result.get("model_source_ids"))
         print("Invalid sources :", result.get("invalid_source_ids"))
@@ -176,6 +180,7 @@ def full_runtime_sanity():
         print("Format OK       :", result.get("format_ok"))
         print("Support score   :", result.get("support_score"))
         print("Quality warnings:", result.get("quality_warnings"))
+        print("Repair candidate:", result.get("repair_diagnostics"))
         print("Latency         :", round(generation_seconds, 2), "s")
 
         print("\nFINAL ANSWER")
@@ -185,6 +190,22 @@ def full_runtime_sanity():
 
         if not result.get("answer"):
             raise RuntimeError("Full pipeline returned an empty answer.")
+
+        if not generator.guards.has_required_answer_structure(result["answer"]):
+            raise RuntimeError("History answer did not contain the required Markdown sections.")
+
+        blocking_quality_issues = {
+            "missing_required_sections",
+            "repeated_answer_sections",
+            "answer_too_short",
+            "multi_part_answer_too_short",
+        }
+        remaining_quality_issues = set(result.get("quality_warnings", []))
+        if blocking_quality_issues & remaining_quality_issues:
+            raise RuntimeError(
+                "Structured answer quality checks failed: "
+                + ", ".join(sorted(blocking_quality_issues & remaining_quality_issues))
+            )
 
         if result.get("status") in {
             "blocked_invalid_source",

@@ -122,7 +122,7 @@ question + history
   -> rerank và merge contexts
   -> generation
   -> source/year/quality guards
-  -> evidence-only repair tối đa một lần
+  -> structured section expansion hoặc evidence-only repair
   -> persist answer
   -> phát SSE
 ```
@@ -145,12 +145,20 @@ cách cập nhật file được mô tả tại [`artifacts/README.md`](../artif
 trọng khi muốn answer dài và có bố cục:
 
 - `generation.max_new_tokens`: ngân sách token model được phép sinh;
+- `generation.repair_min_new_tokens`: minimum generation cho repair câu thường;
+- `generation.repair_min_multi_part_new_tokens`: minimum generation cho repair câu nhiều ý;
+- `generation.enable_structured_expansion`: sinh riêng ba section phụ khi model trả lời ngắn;
+- `generation.section_max_new_tokens`: trần token cho mỗi section pass;
 - `prompt.default_system`: yêu cầu nội dung và các heading như câu trả lời, bằng chứng,
   alternatives và kết luận.
 
-Frontend đã render Markdown/GFM, nên không cần thay component chỉ để hiển thị heading. Prompt
-chỉ hướng dẫn cấu trúc; guards hiện kiểm tra grounding/source/year/quality chứ không bảo đảm
-tuyệt đối model luôn sinh đủ mọi heading.
+Frontend đã render Markdown/GFM, nên không cần thay component chỉ để hiển thị heading. Với câu
+trả lời factual, quality critic kiểm tra đủ bốn heading đúng thứ tự, section không rỗng và độ dài
+tối thiểu 140 từ (180 từ cho câu nhiều ý). Câu ngắn/thiếu section sẽ dùng structured expansion;
+vi phạm source/year/quality khác dùng evidence-only repair. Câu từ chối do OOD/thiếu evidence
+được miễn cấu trúc này. Có thể override bằng các key
+`guards.require_structured_answer`, `guards.min_answer_words` và
+`guards.min_multi_part_answer_words` trong inference config.
 
 Sau khi thay config trên Modal Volume, phải restart `modal serve`/`modal deploy` hoặc container
 đang chạy vì `RAGService` chỉ load config một lần trong startup. Xem lệnh cập nhật tại

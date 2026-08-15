@@ -35,6 +35,10 @@
   },
   "generation": {
     "max_new_tokens": 800,
+    "repair_min_new_tokens": 220,
+    "repair_min_multi_part_new_tokens": 300,
+    "enable_structured_expansion": true,
+    "section_max_new_tokens": 300,
     "temperature": 0.0,
     "top_p": 1.0,
     "repetition_penalty": 1.05,
@@ -48,6 +52,9 @@
     "strict_unsupported_year_guard": true,
     "enable_completeness_rewrite": true,
     "max_rewrite_attempts": 1,
+    "require_structured_answer": true,
+    "min_answer_words": 140,
+    "min_multi_part_answer_words": 180,
     "safe_ood_answer": "Câu hỏi này nằm ngoài phạm vi hệ thống lịch sử Việt Nam, nên tôi không trả lời bằng corpus hiện tại.",
     "safe_insufficient_answer": "Không đủ bằng chứng trong các tài liệu truy xuất để trả lời chắc chắn câu hỏi này."
   },
