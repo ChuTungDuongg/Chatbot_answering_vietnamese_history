@@ -29,7 +29,7 @@ kiểm tra nguồn, niên đại và mức độ đầy đủ trước khi phát
 > Git hiện chỉ chứa khung <code>artifacts/vn_history_deployment/</code>; model, corpus 58.603 dòng, FAISS và BM25S đầy đủ không được commit. Chế độ <code>api-only</code> chạy ngay; <code>retrieval-only</code> và <code>full</code> cần bộ artifact do Phase 10 export.
 
 ## Điểm nổi bật
-
+![alt text](image.png)
 - **Two-stage fine-tuning:** Qwen2.5-3B-Instruct với instruction SFT và RAG-grounded SFT bằng 4-bit QLoRA/PEFT.
 - **Data pipeline:** xử lý 1,29 triệu tài liệu Wikipedia tiếng Việt thành corpus lịch sử 58.603 chunks và 1.000 RAG-SFT samples.
 - **Hybrid retrieval:** multilingual E5/FAISS + BM25S, weighted RRF, BGE cross-encoder reranking, metadata boost và context diversity.
