@@ -12,8 +12,7 @@ artifacts = modal.Volume.from_name(
 )
 
 MODEL_DIR = Path(
-    "/artifacts/vn_history_deployment/model/"
-    "qwen2_5_3b_vnhistory_stage12_merged"
+    "/artifacts/history_answerer/model"
 )
 
 

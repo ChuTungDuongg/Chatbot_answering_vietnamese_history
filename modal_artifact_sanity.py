@@ -11,7 +11,7 @@ volume = modal.Volume.from_name(
     create_if_missing=False,
 )
 
-ROOT = Path("/artifacts/vn_history_deployment")
+ROOT = Path("/artifacts")
 EXPECTED_CORPUS_COUNT = 58603
 
 
@@ -38,7 +38,9 @@ def sanity_check():
         "FAISS index": ROOT / "retrieval" / "faiss" / "chunks.index",
         "FAISS manifest": ROOT / "retrieval" / "faiss" / "manifest.json",
         "BM25 directory": ROOT / "retrieval" / "bm25s_index",
-        "model directory": ROOT / "model" / "qwen2_5_3b_vnhistory_stage12_merged",
+        "history model directory": ROOT / "history_answerer" / "model",
+        "research adapter directory": ROOT / "research_agent" / "adapter",
+        "evidence adapter directory": ROOT / "evidence_agent" / "adapter",
     }
 
     print("[1] REQUIRED PATHS")

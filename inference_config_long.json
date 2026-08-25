@@ -3,7 +3,7 @@
   "phase10_export_version": "phase10_fastapi_export_v1",
   "model": {
     "base_model_id": "Qwen/Qwen2.5-3B-Instruct",
-    "deployment_model_path": "model/qwen2_5_3b_vnhistory_stage12_merged",
+    "deployment_model_path": "history_answerer/model",
     "merged_stage1_stage2": true,
     "dtype_preference": "float16_or_bfloat16"
   },

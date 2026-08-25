@@ -36,7 +36,8 @@ image = (
             "APP_ENV": "production",
             "APP_MODE": "full",
             "DEVICE": "cuda",
-            "ARTIFACT_ROOT": "/artifacts/vn_history_deployment",
+            "ARTIFACT_ROOT": "/artifacts",
+            "HISTORY_MODEL_PATH": "/artifacts/history_answerer/model",
             "HF_HOME": "/hf-cache",
         }
     )

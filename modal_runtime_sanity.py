@@ -32,7 +32,7 @@ image = (
             "APP_ENV": "production",
             "APP_MODE": "retrieval-only",
             "DEVICE": "cpu",
-            "ARTIFACT_ROOT": "/artifacts/vn_history_deployment",
+            "ARTIFACT_ROOT": "/artifacts",
             "HF_HOME": "/hf-cache",
         }
     )

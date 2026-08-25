@@ -11,7 +11,6 @@ from fastapi.responses import StreamingResponse
 
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.chat.store import ConversationStore
-from app.rag.generation import RAGGenerator
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -104,11 +103,12 @@ def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
         yield "".join(pieces[index:index + words_per_chunk])
 
 
-def _get_generation_runtime(request: Request) -> tuple[Any, RAGGenerator]:
+def _get_generation_runtime(request: Request) -> tuple[Any, Any]:
     service = request.app.state.rag_service
     generator = getattr(request.app.state, "generator", None)
+    runtime = getattr(request.app.state, "orchestrator", None) or generator
 
-    if generator is None:
+    if runtime is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Generation runtime is not loaded. Use APP_MODE=full to enable chat.",
@@ -120,7 +120,7 @@ def _get_generation_runtime(request: Request) -> tuple[Any, RAGGenerator]:
             detail="Generation model is not ready.",
         )
 
-    return service, generator
+    return service, runtime
 
 
 def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
@@ -156,7 +156,7 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
 
 def _execute_chat(
     store: ConversationStore,
-    generator: RAGGenerator,
+    generator: Any,
     service: Any,
     owner_id: str,
     payload: ChatRequest,

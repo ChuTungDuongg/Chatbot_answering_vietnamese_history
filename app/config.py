@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,18 @@ class Settings(BaseSettings):
 
     artifact_root: Path = Path("./artifacts/vn_history_deployment")
     device: Literal["cpu", "cuda"] = "cpu"
+    dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
+    research_agent_model: str = "Qwen/Qwen3-4B-Instruct-2507"
+    research_agent_adapter_path: Path | None = None
+    evidence_agent_model: str = "Qwen/Qwen3-4B-Instruct-2507"
+    evidence_agent_adapter_path: Path | None = None
+    history_model_path: Path | None = None
+    max_agent_steps: int = 6
+    max_web_searches: int = 3
+    max_page_fetches: int = 5
+    web_search_provider: str = "local-only"
+    web_search_api_key: str | None = None
+    agent_controller: Literal["deterministic", "model"] = "deterministic"
 
     # ========================================================
     # Conversation storage
@@ -50,6 +62,16 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator(
+        "research_agent_adapter_path",
+        "evidence_agent_adapter_path",
+        "history_model_path",
+        mode="before",
+    )
+    @classmethod
+    def empty_path_is_none(cls, value):
+        return None if value in {None, ""} else value
 
     # ========================================================
     # Parsed configuration
@@ -95,6 +117,11 @@ class Settings(BaseSettings):
 
     @property
     def model_path(self) -> Path:
+        if self.history_model_path is not None:
+            return self.history_model_path
+        new_layout = self.artifact_root / "history_answerer" / "model"
+        if new_layout.exists():
+            return new_layout
         return self.artifact_root / "model" / "qwen2_5_3b_vnhistory_stage12_merged"
 
     @property
@@ -141,7 +168,13 @@ class Settings(BaseSettings):
         ]
 
     def required_full_paths(self) -> list[Path]:
-        return [*self.required_retrieval_paths(), self.model_path]
+        paths = [*self.required_retrieval_paths(), self.model_path]
+        if self.agent_controller == "model":
+            if self.research_agent_adapter_path is not None:
+                paths.append(self.research_agent_adapter_path)
+            if self.evidence_agent_adapter_path is not None:
+                paths.append(self.evidence_agent_adapter_path)
+        return paths
 
 
 settings = Settings()

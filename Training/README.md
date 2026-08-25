@@ -1,145 +1,152 @@
-# Training and Dataset Pipeline
+# 🧠 Training Pipelines
 
-[Về README gốc](../README.md)
+[🏠 README gốc](../README.md) · [🧭 History Answerer](history_answerer/README.md) · [🔎 Research Agent](research_agent/README.md) · [🧹 Evidence Agent](evidence_agent/README.md) · [🛠️ Data scripts](scripts/README.md)
 
-`Training/` lưu notebook archives, context packs cho RAG-SFT và dependency của pipeline nghiên
-cứu Phase 1-10. Runtime production không import code từ notebook; backend chỉ đọc deployment
-bundle đã export.
+Thư mục `training/` thay thế hoàn toàn workflow notebook Phase 1-10. Package viết thường có chủ đích để `python -m training...` chạy giống nhau trên Windows, Linux, Colab và Modal.
 
-## Cấu trúc hiện tại
+## 🗂️ Cấu trúc
 
 ```text
-Training/
-├── README.md
-├── InvestigatingDataset.zip
-├── requirement.txt
-├── Dataset/
-│   ├── Chunk_id/                  # 31 JSONL packs
-│   └── merged_jsonl/
-│       └── all_chunk_id.jsonl     # 520 records
-└── Training/
-    └── Training.zip               # 10 notebooks Phase 1-10
+training/
+├── common/
+│   ├── cli.py                 # shared CLI flags + validation
+│   ├── qlora.py               # NF4 4-bit và LoRA config
+│   ├── trainer.py             # TrainingArguments + JSONL/GPU logging
+│   ├── datasets.py            # load/split chat rows
+│   └── jsonl.py               # typed JSONL I/O
+├── history_answerer/          # Qwen2.5 instruction SFT + grounded RAG-SFT
+├── research_agent/            # Qwen3 tool policy
+├── evidence_agent/            # Qwen3 critic/compressor
+├── scripts/                   # corpus/index/merge/export/benchmark
+└── Dataset/                   # 520 context rows used by the migrated workflow
 ```
 
-`all_chunk_id.jsonl` hiện có 520 records và 511 `chunk_id` khác nhau. Đây là tập
-context/sample phục vụ RAG-SFT, không phải deployment corpus.
+## ⚙️ Cài dependency
 
-## Notebook audit
-
-`InvestigatingDataset.zip` chứa:
-
-| Notebook | Mục đích |
-|---|---|
-| `InvestigatingDataset.ipynb` | Khảo sát phân bố, schema và chất lượng dataset |
-| `ReadingJSONCorpus.ipynb` | Đọc, tìm kiếm và audit JSON/JSONL corpus |
-
-## Pipeline Phase 1-10
-
-`Training/Training/Training.zip` chứa đúng các notebook sau. Tên được giữ nguyên theo archive,
-kể cả chính tả hiện tại.
-
-| Phase | Notebook | Output chính |
-|---|---|---|
-| 1 | `Phase1_SFT.ipynb` | QLoRA adapter SFT nền |
-| 2 | `Phase2_CreatingCorpus.ipynb` | Corpus lịch sử đã lọc/làm sạch |
-| 3 | `Phase3_ChunkExporter.ipynb` | Chunk packs theo chủ đề |
-| 4 | `Phase4_ChunkExporter_extra_topics.ipynb` | Chunk packs cho chủ đề bổ sung |
-| 5 | `Phase5.ipynb` | Dữ liệu chunk/messages đã hợp nhất |
-| 6 | `Phase6_RAG_SFT_Qwen2_5_LoRA.ipynb` | RAG-grounded QLoRA adapter và evaluation |
-| 7 | `Phase7_InferneceTesting.ipynb` | Inference/FAISS sanity checks |
-| 8 | `Phase8_VN_History_Chunk_Metadata_Enrichment_v4.ipynb` | Corpus được làm giàu metadata |
-| 9 | `Phase9_VN_History_Hybrid_RAG_ToolUse_v2_Grounded_Direct.ipynb` | FAISS, BM25S, config và benchmark |
-| 10 | `Phase10_VN_History_FastAPI_Export_From_Phase9 (1).ipynb` | Merged model và deployment bundle |
-
-## Dòng dữ liệu và model
-
-```text
-1.29M Vietnamese Wikipedia documents
-  -> corpus cleaning/filtering
-  -> topic chunks và RAG-SFT samples
-  -> Phase 1 instruction QLoRA
-  -> Phase 6 RAG-grounded QLoRA
-  -> Phase 8 metadata enrichment
-  -> Phase 9 Hybrid RAG indexes + benchmark
-  -> Phase 10 merged model + deployment bundle
-```
-
-Adapter flow:
-
-```text
-Qwen2.5-3B-Instruct
-  + Phase 1 adapter
-  -> merged Stage 1 model
-  + Phase 6 adapter
-  -> merged Stage 1 + Stage 2 model
-```
-
-## Các bộ dữ liệu dễ nhầm
-
-| Dữ liệu | Quy mô hiện tại | Vai trò |
-|---|---:|---|
-| `Training/Dataset/merged_jsonl/all_chunk_id.jsonl` | 520 records, 511 unique `chunk_id` | Context/sample corpus cho RAG-SFT |
-| [`../Dataset/merged_jsonl/all_messages.jsonl`](../Dataset/README.md) | 1.000 messages | Chat-format training samples |
-| Deployment corpus Phase 8-10 | 58.603 chunks | Global corpus cho FastAPI Hybrid RAG |
-
-Không build production FAISS/BM25S từ nhầm tập 520 records. Deployment corpus, FAISS vectors và
-BM25S records phải cùng count và dùng cùng `chunk_id` contract.
-
-## Môi trường notebook
-
-Dùng environment riêng cho training:
-
-```powershell
-python -m venv .venv-training
-.\.venv-training\Scripts\Activate.ps1
+```bash
 python -m pip install --upgrade pip
-python -m pip install -r Training/requirement.txt
-python -m ipykernel install --user --name vn-history-training
+python -m pip install -r requirements-training.txt
 ```
 
-`requirement.txt` là environment nghiên cứu, không phải dependency lock production. Nó gồm
-Jupyter, Hugging Face training stack, PEFT/TRL, bitsandbytes, sentence-transformers và FAISS.
-QLoRA/bitsandbytes cần GPU, CUDA và PyTorch tương thích; notebook có thể yêu cầu package khác
-tùy Colab/Modal runtime.
+Không cài Jupyter. Chạy mọi lệnh tại repository root.
 
-Giải nén archive vào workspace tạm bên ngoài repository trước khi chạy:
+## ✅ Kiểm tra trước GPU
 
-```powershell
-Expand-Archive Training/InvestigatingDataset.zip -DestinationPath .work/investigation
-Expand-Archive Training/Training/Training.zip -DestinationPath .work/phases
+```bash
+python -m training.history_answerer.train --help
+python -m training.research_agent.train --help
+python -m training.evidence_agent.train --help
+
+python -m training.history_answerer.train \
+  --phase1-adapter placeholder \
+  --max-samples 10 \
+  --dry-run
 ```
 
-Không commit notebook checkpoints, cache, adapters, merged weights hoặc output lớn sau khi giải
-nén.
+Dry-run chỉ đọc/validate dataset và split, không tải model.
 
-## Output contract
+## 🎓 Thứ tự train đề xuất
 
-Phase 9 tạo:
+```text
+History instruction SFT
+  → merge Phase 1 vào Qwen2.5 base
+  → fresh History RAG-SFT adapter
 
-- enriched retrieval config;
-- multilingual E5/FAISS index;
-- BM25S index;
-- benchmark results/summary;
-- inference config dùng tiếp ở Phase 10.
+History trajectories → Research Agent QLoRA
+History evidence rows → Evidence Agent QLoRA
 
-Phase 10 tạo:
+Merge History adapter
+  → build corpus/index
+  → export bundle 3-model
+  → Modal Volume
+```
 
-- merged Qwen2.5 Stage 1 + Stage 2 model;
-- corpus và retrieval indexes;
-- `config/inference_config.json`;
-- evaluation outputs;
-- `manifest.json` và `EXPORT_SUCCESS.txt`.
+Ba pipeline dùng QLoRA 4-bit NF4, double quantization, PEFT LoRA và assistant-only weighted CE. Mọi hyperparameter quan trọng có thể override bằng CLI.
 
-Bundle cuối được mô tả tại [`../artifacts/README.md`](../artifacts/README.md). Toàn bộ số liệu
-Phase 6 và benchmark Phase 9 được ghi trong [README gốc](../README.md).
+## 📊 Training logs và checkpoint
 
-## Reproducibility checklist
+Mỗi output directory chứa `training_log.jsonl`. Callback ghi:
 
-- Ghi seed, base model revision, GPU, CUDA, package versions và dataset hash cho mỗi run.
-- Lưu train/eval split và kiểm tra leakage theo question/evidence.
-- Validate JSONL, role order, source IDs và evidence trước khi train.
-- Không coi sample `id` trong [`../Dataset/`](../Dataset/README.md) là unique toàn cục.
-- Không ghi đè checkpoint tốt nhất trước khi lưu metrics và config.
-- Lưu benchmark output cạnh đúng retrieval/generation config đã dùng.
-- So sánh corpus count, FAISS count, BM25S count và unique `chunk_id` trước khi export.
-- Khi artifact contract thay đổi, cập nhật Phase 10, backend loader, sanity scripts và docs.
+```json
+{"step":100,"epoch":0.4,"loss":1.2,"learning_rate":0.00008,"gpu_allocated_gb":8.1,"gpu_reserved_gb":9.0}
+```
+
+Trainer tạo `checkpoint-<step>/` gồm adapter/model state, tokenizer khi được save, optimizer, scheduler, RNG, trainer state và training args. Resume:
+
+```bash
+python -m training.evidence_agent.train \
+  --dataset datasets/evidence_agent/train.jsonl \
+  --output-dir outputs/evidence_agent \
+  --resume-from-checkpoint outputs/evidence_agent/checkpoint-500
+```
+
+Không đổi dataset, seed hoặc model ID giữa hai lần resume.
+
+## 🎛️ Shared CLI
+
+| Nhóm | Flags |
+|---|---|
+| Model/data | `--model-id`, `--dataset`, `--output-dir`, `--max-samples`, `--seed` |
+| Optimization | `--epochs`, `--batch-size`, `--eval-batch-size`, `--gradient-accumulation-steps`, `--learning-rate`, `--weight-decay`, `--warmup-ratio` |
+| Sequence/LoRA | `--max-length`, `--lora-r`, `--lora-alpha`, `--lora-dropout` |
+| Logging/save | `--logging-steps`, `--eval-steps`, `--save-steps`, `--resume-from-checkpoint` |
+| Precision | `--bf16`, `--no-bf16`, `--fp16`, `--no-fp16`, `--gradient-checkpointing` |
+| Optional | `--report-to wandb`, `--dry-run` |
+
+Alias `--lr` và `--grad-accum-steps` được giữ để tương thích lệnh cũ, nhưng tài liệu dùng tên đầy đủ.
+
+## 🧮 Effective batch size
+
+```text
+effective_batch_size = batch_size × gradient_accumulation_steps × GPU count
+```
+
+Ví dụ một GPU, batch 1 và accumulation 16 cho effective batch 16. Khi OOM, ưu tiên giảm max length và batch trước; không khẳng định cấu hình nào chắc chắn fit nếu chưa đo trên đúng GPU/model revision.
+
+## ☁️ Colab recipe
+
+```bash
+git clone <YOUR_REPOSITORY_URL>
+cd Chatbot_answering_vietnamese_history
+pip install -r requirements-training.txt
+```
+
+T4:
+
+```bash
+python -m training.research_agent.train \
+  --dataset datasets/research_agent/history_trajectories.jsonl \
+  --batch-size 1 \
+  --gradient-accumulation-steps 16 \
+  --max-length 2048 \
+  --no-bf16 --fp16 \
+  --output-dir /content/drive/MyDrive/vn-history/research_agent
+```
+
+L4/A100 thường dùng BF16 mặc định. Luôn lưu output lên Drive nếu cần chống mất checkpoint khi Colab disconnect.
+
+## 🧳 Migration Phase 1-10
+
+| Phase cũ | Đích Python | Behavior giữ lại |
+|---|---|---|
+| 1 | `history_answerer/train_instruction_sft.py` | Qwen2.5 QLoRA, assistant-only weighted loss |
+| 2 | `scripts/build_corpus.py` | Build corpus JSONL từ chunk packs |
+| 3 | `scripts/build_corpus.py` + JSONL utils | Chunk/export và dedup theo `chunk_id` |
+| 4 | cùng scripts Phase 3 | Extra-topic packs |
+| 5 | `common/jsonl.py`, dataset preparation | Merge/normalize JSONL |
+| 6 | `history_answerer/train.py`, `merge_phase1.py`, `loss.py`, `evaluate.py` | Merge Phase 1, fresh LoRA, source weight 1.6 |
+| 7 | evaluate/benchmark CLIs | Inference sanity và metrics |
+| 8 | `scripts/enrich_corpus.py` | Metadata/year enrichment |
+| 9 | `scripts/build_index.py`, `app/rag/retrieval.py` | FAISS + BM25S + hybrid runtime |
+| 10 | `scripts/merge_model.py`, `export_artifacts.py` | Merge/export deployment bundle |
+
+Không còn `.ipynb` trong source project. File `training/Training/Training.zip` cũ cũng không phải workflow và không còn tồn tại.
+
+## 🔍 Verification
+
+```bash
+python -m compileall training
+python -m pytest -q tests/test_training_cli.py tests/test_evidence_schema.py
+```
+
+Các test CLI chỉ gọi `--help`; chúng không tải Qwen hoặc Hugging Face dataset.

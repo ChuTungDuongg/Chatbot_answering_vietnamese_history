@@ -1,0 +1,44 @@
+# 🛠️ Corpus, Index and Export Scripts
+
+[⬅️ Training overview](../README.md) · [📦 Artifact contract](../../artifacts/README.md)
+
+| CLI | Vai trò |
+|---|---|
+| `training.scripts.build_corpus` | Gộp chunk packs và dedup theo `chunk_id`. |
+| `training.scripts.enrich_corpus` | Thêm year metadata, char length và history score mặc định. |
+| `training.scripts.build_index` | Build normalized E5 FAISS IP index và BM25S index. |
+| `training.scripts.merge_model` | Merge LoRA adapter vào đúng base model. |
+| `training.scripts.export_artifacts` | Xuất bundle ba model + retrieval cho runtime/Modal. |
+| `training.scripts.benchmark` | Gọi API retrieval trên bộ question JSONL và đo latency. |
+
+## 🔨 Build tuần tự
+
+```bash
+python -m training.scripts.build_corpus \
+  --input-dir training/Dataset/Chunk_id \
+  --output artifacts/corpus/vn_history_rag_chunks.jsonl
+
+python -m training.scripts.enrich_corpus \
+  --input artifacts/corpus/vn_history_rag_chunks.jsonl \
+  --output artifacts/corpus/vn_history_rag_chunks_enriched.jsonl
+
+python -m training.scripts.build_index \
+  --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
+  --output-dir artifacts/retrieval
+```
+
+Corpus và index count phải khớp. Không sửa manifest để né mismatch.
+
+## 📦 Export
+
+```bash
+python -m training.scripts.export_artifacts \
+  --model-dir outputs/history_answerer/merged \
+  --research-agent outputs/research_agent \
+  --evidence-agent outputs/evidence_agent \
+  --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
+  --retrieval-dir artifacts/retrieval \
+  --output-root artifacts/vn_history_deployment
+```
+
+Sau export, kiểm tra `manifest.json`, `EXPORT_SUCCESS.txt`, model/adapters và index trước khi upload Modal.

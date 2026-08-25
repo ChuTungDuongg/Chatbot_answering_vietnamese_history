@@ -1,4 +1,4 @@
-# RAG-SFT Message Dataset
+# 📚 RAG-SFT Message Dataset
 
 [Về README gốc](../README.md)
 
@@ -83,14 +83,14 @@ Cần so sánh question/context/answer nếu muốn phát hiện duplicate thự
 ## Quan hệ với pipeline
 
 ```text
-Training/Dataset/Chunk_id
+training/Dataset/Chunk_id
   -> Dataset/Samples/<Pack>
   -> Dataset/merged_jsonl/all_messages.jsonl
   -> Phase 6 RAG-SFT
   -> Phase 8-10 retrieval artifacts và merged model
 ```
 
-- [`../Training/Dataset`](../Training/README.md) giữ 520 context records có `chunk_id`.
+- [`../training/Dataset`](../training/README.md) giữ 520 context records có `chunk_id`.
 - `Samples/` giữ sample sinh từ các pack.
 - `merged_jsonl/all_messages.jsonl` là đầu vào chat-format cho training.
 - [`../artifacts/`](../artifacts/README.md) là output deployment, không đọc dataset này khi API

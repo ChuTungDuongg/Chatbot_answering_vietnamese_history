@@ -1,4 +1,4 @@
-# Modal Smoke Tests
+# ☁️ Modal Smoke Tests
 
 [Về README gốc](../README.md)
 

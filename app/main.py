@@ -5,6 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
+from app.agents.evidence_agent import EvidenceCriticAgent
+from app.agents.history_answerer import HistoryAnswererAgent
+from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.orchestrator import AgentOrchestrator
+from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
@@ -12,6 +17,11 @@ from app.rag.generation import RAGGenerator
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
 from app.services.rag_service import RAGService
+from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore
+from app.tools.local_search import SearchHistoryTool
+from app.tools.page_fetcher import FetchPageTool
+from app.tools.registry import ToolRegistry
+from app.tools.web_search import SearchWebTool, build_web_search_provider
 
 
 # ============================================================
@@ -25,6 +35,8 @@ async def lifespan(app: FastAPI):
 
     retriever = None
     generator = None
+    orchestrator = None
+    agent_model_runtime = None
     attachment_service = None
     temporary_retriever = None
 
@@ -54,15 +66,59 @@ async def lifespan(app: FastAPI):
                 temporary_retriever=temporary_retriever,
             )
 
+            if settings.agent_controller == "model":
+                if settings.research_agent_model != settings.evidence_agent_model:
+                    raise ValueError("Shared Qwen runtime requires matching Research/Evidence base model IDs.")
+                if settings.research_agent_adapter_path is None or settings.evidence_agent_adapter_path is None:
+                    raise ValueError("Model agent controller requires both Research and Evidence adapter paths.")
+                agent_model_runtime = SharedAgentModelRuntime(
+                    model_id=settings.research_agent_model,
+                    research_adapter=settings.research_agent_adapter_path,
+                    evidence_adapter=settings.evidence_agent_adapter_path,
+                    dtype=settings.dtype,
+                )
+
+            evidence_store = SessionEvidenceStore()
+            tool_registry = ToolRegistry()
+            tool_registry.register(SearchHistoryTool(retriever))
+            tool_registry.register(RetrieveEvidenceTool(evidence_store))
+            tool_registry.register(InspectEvidenceTool(evidence_store))
+            tool_registry.register(
+                SearchWebTool(
+                    build_web_search_provider(
+                        settings.web_search_provider,
+                        settings.web_search_api_key,
+                    )
+                )
+            )
+            tool_registry.register(FetchPageTool())
+
+            orchestrator = AgentOrchestrator(
+                research_agent=ResearchAgent(
+                    registry=tool_registry,
+                    evidence_store=evidence_store,
+                    generator=generator,
+                    model_runtime=agent_model_runtime,
+                    max_steps=settings.max_agent_steps,
+                    max_web_searches=settings.max_web_searches,
+                    max_page_fetches=settings.max_page_fetches,
+                ),
+                evidence_agent=EvidenceCriticAgent(model_runtime=agent_model_runtime),
+                answerer=HistoryAnswererAgent(generator),
+            )
+
         app.state.rag_service = service
         app.state.retriever = retriever
         app.state.generator = generator
+        app.state.orchestrator = orchestrator
+        app.state.agent_model_runtime = agent_model_runtime
         app.state.chat_store = chat_store
         app.state.attachment_service = attachment_service
         app.state.temporary_retriever = temporary_retriever
 
         yield
     finally:
+        app.state.agent_model_runtime = None
         service.shutdown()
 
 
@@ -106,6 +162,7 @@ async def root():
             "conversations": True,
             "conversation_memory": settings.should_load_model,
             "attachment_retrieval": settings.should_load_retrieval,
+            "agentic_rag": bool(getattr(app.state, "orchestrator", None)),
         },
     }
 

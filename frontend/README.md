@@ -1,4 +1,4 @@
-# React Frontend
+# 💬 React Frontend
 
 [Về README gốc](../README.md)
 
