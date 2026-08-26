@@ -137,6 +137,7 @@ raw/
 *.parquet
 *.arrow
 *.sqlite
+*.sqlite3
 *.db
 
 # =========================

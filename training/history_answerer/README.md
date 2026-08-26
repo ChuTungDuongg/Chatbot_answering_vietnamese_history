@@ -4,12 +4,27 @@
 
 History Answerer là LLM thứ ba. Nó nhận **text evidence đã được critic chọn**, không nhận embedding vector, rồi sinh answer tiếng Việt và source IDs.
 
-## 🧩 Mapping cũ
+## 🧩 Mapping và policy hiện tại
 
-- Old Phase 1 → `train_instruction_sft.py`.
-- Old Phase 6 → `merge_phase1.py` + `train.py` + `loss.py` + `evaluate.py`.
+- Old Phase 1 → `train_instruction_sft.py`, chỉ để tái hiện legacy.
+- Old Phase 6 → `train.py` + `loss.py` + `evaluate.py`, hiện train thẳng từ vanilla Qwen2.5.
 
-## 1️⃣ Instruction SFT
+## 1️⃣ Grounded RAG-SFT chính
+
+```bash
+python -m training.history_answerer.train \
+  --model-id Qwen/Qwen2.5-3B-Instruct \
+  --dataset-messages Dataset/merged_jsonl/all_messages.jsonl \
+  --dataset-chunks training/Dataset/merged_jsonl/all_chunk_id.jsonl \
+  --batch-size 1 \
+  --gradient-accumulation-steps 16 \
+  --epochs 5 \
+  --output-dir outputs/history_answerer/phase6
+```
+
+`train.py` load vanilla `Qwen/Qwen2.5-3B-Instruct` ở 4-bit, chuẩn bị k-bit training rồi gắn fresh LoRA. Nó không đọc, merge hoặc resume từ Phase 1 adapter.
+
+## 2️⃣ Instruction SFT Phase 1 legacy, tùy chọn
 
 ```bash
 python -m training.history_answerer.train_instruction_sft \
@@ -17,29 +32,10 @@ python -m training.history_answerer.train_instruction_sft \
   --model-id Qwen/Qwen2.5-3B-Instruct \
   --batch-size 1 \
   --gradient-accumulation-steps 16 \
-  --output-dir outputs/history_answerer/phase1
+  --output-dir outputs/history_answerer/phase1_legacy
 ```
 
-User tokens bị mask. Nếu target có `<analysis>` và `<final>`, analysis weight là 0.5 và final weight là 1.0. Hidden long-form reasoning không được đưa vào runtime response.
-
-## 2️⃣ Grounded RAG-SFT
-
-```bash
-python -m training.history_answerer.train \
-  --model-id Qwen/Qwen2.5-3B-Instruct \
-  --phase1-adapter outputs/history_answerer/phase1 \
-  --dataset-messages Dataset/merged_jsonl/all_messages.jsonl \
-  --dataset-chunks training/Dataset/merged_jsonl/all_chunk_id.jsonl \
-  --batch-size 1 \
-  --eval-batch-size 1 \
-  --gradient-accumulation-steps 16 \
-  --epochs 5 \
-  --learning-rate 1.5e-4 \
-  --max-length 4096 \
-  --output-dir outputs/history_answerer/phase6
-```
-
-`merge_phase1.py` load base model, gắn Phase 1 adapter, gọi `merge_and_unload()`, save intermediate base. `train.py` reload base đó ở 4-bit, gọi `prepare_model_for_kbit_training()`, tạo **LoRA mới** và mới bắt đầu Phase 6.
+User tokens bị mask. Nếu target có `<analysis>` và `<final>`, analysis weight là 0.5 và final weight là 1.0. Adapter này không đi vào flow Phase 6 mới.
 
 ## ⚖️ Weighted loss
 
@@ -56,12 +52,12 @@ python -m training.history_answerer.train \
 
 ```bash
 python -m training.scripts.merge_model \
-  --base-model outputs/history_answerer/phase6/phase1_merged_base \
+  --base-model Qwen/Qwen2.5-3B-Instruct \
   --adapter outputs/history_answerer/phase6/adapter \
   --output-dir outputs/history_answerer/merged
 ```
 
-Không dùng Qwen2.5 base nguyên thủy ở bước này; base phải là intermediate đã merge Phase 1.
+Merge chỉ để deploy: Phase 6 adapter được merge vào đúng vanilla base đã dùng khi train. `merge_phase1.py` còn lại như legacy compatibility CLI, không phải bước bắt buộc.
 
 ## 📏 Evaluation
 
@@ -80,9 +76,8 @@ Metrics: source exact/P/R/F1, format OK, answer non-empty, source ID tồn tại
 
 ```bash
 python -m training.history_answerer.train \
-  --phase1-adapter outputs/history_answerer/phase1 \
   --output-dir outputs/history_answerer/phase6 \
   --resume-from-checkpoint outputs/history_answerer/phase6/checkpoint-500
 ```
 
-Giữ nguyên `--merged-base-dir`/output và dataset để không merge sai nền model.
+Giữ nguyên `--model-id`, output, dataset và split seed. Resume checkpoint thuộc chính Phase 6, không dùng Phase 1 checkpoint.

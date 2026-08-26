@@ -38,7 +38,7 @@ class AgentOrchestrator:
         conversation_id: str | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
-        session_id = conversation_id or str(uuid.uuid4())
+        session_id = f"{conversation_id or 'anonymous'}:{uuid.uuid4()}"
         try:
             research = await self.research_agent.run(
                 question,

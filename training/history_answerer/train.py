@@ -12,7 +12,9 @@ from training.history_answerer.config import Phase6Config
 
 def build_parser() -> argparse.ArgumentParser:
     cfg = Phase6Config()
-    parser = argparse.ArgumentParser(description="Phase 6 RAG-SFT training for the history answerer.")
+    parser = argparse.ArgumentParser(
+        description="Grounded RAG-SFT for the History Answerer, starting from vanilla Qwen2.5."
+    )
     parser.add_argument(
         "--dataset-messages",
         "--dataset",
@@ -22,8 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-chunks", default="training/Dataset/merged_jsonl/all_chunk_id.jsonl")
     parser.add_argument("--output-dir", default="artifacts/training/history_answerer/phase6_rag_sft")
     parser.add_argument("--model-id", default=cfg.model_id)
-    parser.add_argument("--phase1-adapter", required=True, help="Phase 1 adapter to merge before Phase 6.")
-    parser.add_argument("--merged-base-dir", default=None, help="Existing Phase1-merged base. If absent, it is created.")
     add_training_arguments(parser, cfg)
     parser.add_argument("--dry-run", action="store_true", help="Validate dataset/splits without loading the model.")
     return parser
@@ -49,24 +49,14 @@ def main(argv: list[str] | None = None) -> int:
         build_rag_training_example,
         weighted_trainer_class,
     )
-    from training.history_answerer.merge_phase1 import merge_phase1_adapter
-
     output_dir = Path(args.output_dir)
-    merged_base_dir = Path(args.merged_base_dir or output_dir / "phase1_merged_base")
-    if not merged_base_dir.exists():
-        merge_phase1_adapter(
-            model_id=args.model_id,
-            phase1_adapter=args.phase1_adapter,
-            output_dir=merged_base_dir,
-        )
-
-    tokenizer = AutoTokenizer.from_pretrained(str(merged_base_dir), trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
-        str(merged_base_dir),
+        args.model_id,
         quantization_config=build_bnb_config(QLoRASettings()),
         device_map="auto",
         trust_remote_code=True,

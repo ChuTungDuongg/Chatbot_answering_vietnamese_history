@@ -184,26 +184,11 @@ Giao diện ở `http://localhost:5173`.
 
 Tất cả lệnh dưới đây chạy tại repository root. Luôn chạy `--help` và một dry-run trước khi dùng GPU.
 
-### 1. History Answerer: instruction SFT cũ Phase 1
-
-```bash
-python -m training.history_answerer.train_instruction_sft \
-  --dataset Dataset/merged_jsonl/all_messages.jsonl \
-  --model-id Qwen/Qwen2.5-3B-Instruct \
-  --batch-size 1 \
-  --gradient-accumulation-steps 16 \
-  --epochs 1 \
-  --output-dir outputs/history_answerer/phase1
-```
-
-Output là Phase 1 adapter. Nếu đã có adapter hợp lệ, có thể bỏ qua bước này.
-
-### 2. History Answerer: grounded RAG-SFT cũ Phase 6
+### 1. History Answerer: grounded RAG-SFT trực tiếp từ vanilla Qwen2.5
 
 ```bash
 python -m training.history_answerer.train \
   --model-id Qwen/Qwen2.5-3B-Instruct \
-  --phase1-adapter outputs/history_answerer/phase1 \
   --dataset-messages Dataset/merged_jsonl/all_messages.jsonl \
   --dataset-chunks training/Dataset/merged_jsonl/all_chunk_id.jsonl \
   --batch-size 1 \
@@ -212,19 +197,31 @@ python -m training.history_answerer.train \
   --output-dir outputs/history_answerer/phase6
 ```
 
-Flow được giữ nguyên:
+Flow mới:
 
 ```text
-Qwen2.5 base
-  → PeftModel.from_pretrained(Phase 1 adapter)
-  → merge_and_unload()
-  → save/reload intermediate base
+Qwen2.5-3B-Instruct vanilla
+  → load 4-bit NF4
   → prepare_model_for_kbit_training()
   → fresh LoRA
   → grounded RAG-SFT
 ```
 
-Không tiếp tục train chính adapter Phase 1. Loss chỉ train assistant tokens; dòng `Nguồn được dùng:` có weight 1.6 và answer body có weight 1.0.
+Phase 6 không còn phụ thuộc hoặc merge adapter Phase 1. Loss chỉ train assistant tokens; dòng `Nguồn được dùng:` có weight 1.6 và answer body có weight 1.0.
+
+### 2. Instruction SFT Phase 1 cũ, chỉ dùng khi cần tái hiện legacy
+
+```bash
+python -m training.history_answerer.train_instruction_sft \
+  --dataset Dataset/merged_jsonl/all_messages.jsonl \
+  --model-id Qwen/Qwen2.5-3B-Instruct \
+  --batch-size 1 \
+  --gradient-accumulation-steps 16 \
+  --epochs 1 \
+  --output-dir outputs/history_answerer/phase1_legacy
+```
+
+Output này không được `training.history_answerer.train` sử dụng trong flow hiện tại.
 
 ### 3. Research / Tool Agent
 
@@ -291,7 +288,7 @@ Ba lệnh train đều hỗ trợ:
 --resume-from-checkpoint --report-to {none,wandb}
 ```
 
-History RAG-SFT có thêm `--phase1-adapter`, `--dataset-messages`, `--dataset-chunks` và `--merged-base-dir`.
+History RAG-SFT có thêm `--dataset-messages` và `--dataset-chunks`; không còn cờ Phase 1 adapter.
 
 Effective batch size:
 
@@ -362,7 +359,7 @@ Merge Phase 6 adapter vào intermediate merged base:
 
 ```bash
 python -m training.scripts.merge_model \
-  --base-model outputs/history_answerer/phase6/phase1_merged_base \
+  --base-model Qwen/Qwen2.5-3B-Instruct \
   --adapter outputs/history_answerer/phase6/adapter \
   --output-dir outputs/history_answerer/merged
 ```
@@ -564,12 +561,12 @@ Kết quả kỳ vọng cho source project là rỗng.
 
 | Workflow cũ | Python hiện tại |
 |---|---|
-| Phase 1 | `training.history_answerer.train_instruction_sft` |
+| Phase 1 | `training.history_answerer.train_instruction_sft` (legacy optional) |
 | Phase 2 | `training.scripts.build_corpus` |
 | Phase 3 | corpus/chunk export trong `training.scripts` |
 | Phase 4 | corpus/chunk export trong `training.scripts` |
 | Phase 5 | JSONL utilities và dataset preparation |
-| Phase 6 | `training.history_answerer.train`, `loss`, `merge_phase1`, `evaluate` |
+| Phase 6 | `training.history_answerer.train`, `loss`, `merge_adapter`, `evaluate`; train thẳng vanilla base |
 | Phase 7 | evaluation và benchmark CLIs |
 | Phase 8 | `training.scripts.enrich_corpus` |
 | Phase 9 | `app.rag.retrieval`, `training.scripts.build_index`, `benchmark` |
@@ -584,7 +581,7 @@ Không notebook nào là workflow bắt buộc và repository source không còn
 | `No module named training` | Chạy ở repository root; package là `training` viết thường. |
 | CUDA OOM khi train | Batch/max length/LoRA rank giảm; gradient accumulation tăng. |
 | T4 lỗi BF16 | Dùng `--no-bf16 --fp16`. |
-| Phase 6 thiếu adapter | Train Phase 1 hoặc trỏ `--phase1-adapter` tới adapter hợp lệ. |
+| Phase 6 load nhầm checkpoint cũ | Bỏ mọi cờ/path Phase 1; `--model-id` phải trỏ vanilla Qwen2.5 base. |
 | `/ready` báo thiếu artifact | So layout bằng `artifacts/README.md` và chạy Modal sanity. |
 | Modal không thấy model | Kiểm tra `modal volume ls vn-history-artifacts`; upload vào root, không lồng thêm `vn_history_deployment/`. |
 | Agent controller model không start | Cả hai adapter path phải tồn tại và dùng cùng Qwen3 base ID. |

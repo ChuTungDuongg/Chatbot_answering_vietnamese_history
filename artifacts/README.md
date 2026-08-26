@@ -9,7 +9,7 @@ Git chỉ giữ tài liệu contract. Model weights, corpus và indexes thật b
 ```text
 artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
 ├── history_answerer/
-│   ├── model/                         # merged Qwen2.5 Phase 1 + Phase 6
+│   ├── model/                         # vanilla Qwen2.5 + merged Phase 6 adapter
 │   └── adapter/                       # optional, không cần nếu model đã merge
 ├── research_agent/
 │   └── adapter/                       # Qwen3 Research LoRA

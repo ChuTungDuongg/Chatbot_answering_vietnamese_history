@@ -14,11 +14,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from training.history_answerer.merge_phase1 import merge_phase1_adapter
+    from training.history_answerer.merge_adapter import merge_lora_adapter
 
-    merge_phase1_adapter(
+    merge_lora_adapter(
         model_id=args.base_model,
-        phase1_adapter=args.adapter,
+        adapter=args.adapter,
         output_dir=args.output_dir,
         dtype=args.dtype,
     )

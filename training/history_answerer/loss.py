@@ -29,6 +29,13 @@ def _apply_chat_template(tokenizer: Any, user_text: str, assistant_text: str) ->
     return f"<|user|>\n{user_text}\n<|assistant|>\n{assistant_text}"
 
 
+def _assistant_generation_prefix(tokenizer: Any, user_text: str) -> str:
+    messages = [{"role": "user", "content": user_text}]
+    if hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return f"<|user|>\n{user_text}\n<|assistant|>\n"
+
+
 def build_rag_training_example(
     tokenizer: Any,
     user_text: str,
@@ -40,14 +47,14 @@ def build_rag_training_example(
 ) -> dict[str, list[int] | list[float]]:
     source_text, answer_text = _assistant_parts(assistant_text)
     full_text = _apply_chat_template(tokenizer, user_text, source_text + answer_text)
-    user_only = _apply_chat_template(tokenizer, user_text, "")
-    user_ids = tokenizer(user_only, add_special_tokens=False)["input_ids"]
+    assistant_prefix = _assistant_generation_prefix(tokenizer, user_text)
+    prefix_ids = tokenizer(assistant_prefix, add_special_tokens=False)["input_ids"]
     encoded = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_length)
     input_ids = encoded["input_ids"]
     labels = [IGNORE_INDEX] * len(input_ids)
     loss_weights = [0.0] * len(input_ids)
 
-    assistant_start = min(len(user_ids), len(input_ids))
+    assistant_start = min(len(prefix_ids), len(input_ids))
     tail = input_ids[assistant_start:]
     source_ids = tokenizer(source_text, add_special_tokens=False)["input_ids"] if source_text else []
     source_end = assistant_start + min(len(source_ids), len(tail))
@@ -74,13 +81,13 @@ def build_instruction_training_example(
     final_weight: float = 1.0,
 ) -> dict[str, list[int] | list[float]]:
     full_text = _apply_chat_template(tokenizer, user_text, assistant_text)
-    user_only = _apply_chat_template(tokenizer, user_text, "")
-    user_ids = tokenizer(user_only, add_special_tokens=False)["input_ids"]
+    assistant_prefix = _assistant_generation_prefix(tokenizer, user_text)
+    prefix_ids = tokenizer(assistant_prefix, add_special_tokens=False)["input_ids"]
     encoded = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_length)
     input_ids = encoded["input_ids"]
     labels = [IGNORE_INDEX] * len(input_ids)
     loss_weights = [0.0] * len(input_ids)
-    assistant_start = min(len(user_ids), len(input_ids))
+    assistant_start = min(len(prefix_ids), len(input_ids))
 
     analysis_token = tokenizer("<analysis>", add_special_tokens=False)["input_ids"]
     final_token = tokenizer("<final>", add_special_tokens=False)["input_ids"]
@@ -165,4 +172,3 @@ def weighted_trainer_class():
             return (loss, outputs) if return_outputs else loss
 
     return WeightedCETrainer
-

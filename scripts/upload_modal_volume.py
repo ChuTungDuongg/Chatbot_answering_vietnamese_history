@@ -56,7 +56,15 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
         )
         if any(component_flags):
             raise ValueError("--local-dir cannot be combined with component upload flags.")
-        return [Upload(_validated(args.local_dir, label="local bundle", directory=True), args.remote_dir)]
+        bundle = _validated(args.local_dir, label="local bundle", directory=True)
+        remote_root = args.remote_dir.rstrip("/")
+        children = sorted(bundle.iterdir(), key=lambda path: path.name)
+        if not children:
+            raise ValueError(f"Local bundle is empty: {bundle}")
+        return [
+            Upload(child, f"{remote_root}/{child.name}" if remote_root else f"/{child.name}")
+            for child in children
+        ]
 
     required = {
         "--history-model": args.history_model,

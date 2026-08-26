@@ -37,10 +37,7 @@ python -m training.history_answerer.train --help
 python -m training.research_agent.train --help
 python -m training.evidence_agent.train --help
 
-python -m training.history_answerer.train \
-  --phase1-adapter placeholder \
-  --max-samples 10 \
-  --dry-run
+python -m training.history_answerer.train --max-samples 10 --dry-run
 ```
 
 Dry-run chỉ đọc/validate dataset và split, không tải model.
@@ -48,8 +45,7 @@ Dry-run chỉ đọc/validate dataset và split, không tải model.
 ## 🎓 Thứ tự train đề xuất
 
 ```text
-History instruction SFT
-  → merge Phase 1 vào Qwen2.5 base
+Vanilla Qwen2.5 base
   → fresh History RAG-SFT adapter
 
 History trajectories → Research Agent QLoRA
@@ -129,18 +125,18 @@ L4/A100 thường dùng BF16 mặc định. Luôn lưu output lên Drive nếu c
 
 | Phase cũ | Đích Python | Behavior giữ lại |
 |---|---|---|
-| 1 | `history_answerer/train_instruction_sft.py` | Qwen2.5 QLoRA, assistant-only weighted loss |
+| 1 | `history_answerer/train_instruction_sft.py` | Legacy optional; không còn là prerequisite của Phase 6 |
 | 2 | `scripts/build_corpus.py` | Build corpus JSONL từ chunk packs |
 | 3 | `scripts/build_corpus.py` + JSONL utils | Chunk/export và dedup theo `chunk_id` |
 | 4 | cùng scripts Phase 3 | Extra-topic packs |
 | 5 | `common/jsonl.py`, dataset preparation | Merge/normalize JSONL |
-| 6 | `history_answerer/train.py`, `merge_phase1.py`, `loss.py`, `evaluate.py` | Merge Phase 1, fresh LoRA, source weight 1.6 |
+| 6 | `history_answerer/train.py`, `merge_adapter.py`, `loss.py`, `evaluate.py` | Vanilla Qwen2.5 → fresh LoRA, source weight 1.6 |
 | 7 | evaluate/benchmark CLIs | Inference sanity và metrics |
 | 8 | `scripts/enrich_corpus.py` | Metadata/year enrichment |
 | 9 | `scripts/build_index.py`, `app/rag/retrieval.py` | FAISS + BM25S + hybrid runtime |
 | 10 | `scripts/merge_model.py`, `export_artifacts.py` | Merge/export deployment bundle |
 
-Không còn `.ipynb` trong source project. File `training/Training/Training.zip` cũ cũng không phải workflow và không còn tồn tại.
+Không còn `.ipynb` hoặc notebook archive trong source project; mọi workflow bắt buộc đều là Python CLI.
 
 ## 🔍 Verification
 
