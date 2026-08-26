@@ -8,7 +8,7 @@ from app.agents.model_runtime import SharedAgentModelRuntime
 from app.agents.schemas import ResearchResult
 from app.rag.generation import RAGGenerator
 from app.tools.evidence_tools import SessionEvidenceStore
-from app.tools.registry import ToolRegistry
+from app.tools.registry import ToolExecutionContext, ToolRegistry
 
 
 class ResearchAgent:
@@ -40,15 +40,25 @@ class ResearchAgent:
         final_k: int,
         history: list[dict[str, str]] | None = None,
         session_id: str = "default",
+        owner_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> ResearchResult:
         normalized_history = self.generator.normalize_history(history, current_question=question)
         retrieval_question, history_used = self.generator.build_retrieval_question(question, normalized_history)
+        tool_context = None
+        if owner_id and conversation_id:
+            tool_context = ToolExecutionContext(
+                owner_id=owner_id,
+                conversation_id=conversation_id,
+                session_id=session_id,
+            )
         if self.model_runtime is not None:
             chunks, tool_trace = await self._run_model_policy(
                 question=question,
                 retrieval_question=retrieval_question,
                 session_id=session_id,
                 final_k=final_k,
+                tool_context=tool_context,
             )
         else:
             chunks, tool_trace = await self._run_fallback(
@@ -56,6 +66,7 @@ class ResearchAgent:
                 retrieval_question=retrieval_question,
                 session_id=session_id,
                 final_k=final_k,
+                tool_context=tool_context,
             )
         retrieval = self.generator.retriever.retrieve(retrieval_question, final_k=final_k)
         analysis = self.generator.retriever.analyze_question(question)
@@ -80,21 +91,31 @@ class ResearchAgent:
         retrieval_question: str,
         session_id: str,
         final_k: int,
+        tool_context: ToolExecutionContext | None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
+        attachment_chunks, tool_trace = await self._collect_attachment_evidence(
+            question=question,
+            retrieval_question=retrieval_question,
+            session_id=session_id,
+            final_k=final_k,
+            tool_context=tool_context,
+        )
         chunks, record = await self.registry.call(
             "search_history",
             {"query": retrieval_question, "top_k": max(final_k, 6)},
         )
-        tool_trace = [f"{record.name}:{record.result_count}" if not record.error else f"{record.name}:error"]
+        tool_trace.append(
+            f"{record.name}:{record.result_count}" if not record.error else f"{record.name}:error"
+        )
         chunks = chunks or []
         self.evidence_store.add_documents(session_id, chunks)
-        if not chunks and self.max_steps > 1 and "search_web" in self.registry.names():
+        if not attachment_chunks and not chunks and self.max_steps > 1 and "search_web" in self.registry.names():
             web_rows, web_record = await self.registry.call("search_web", {"query": question, "top_k": 5})
             tool_trace.append(
                 f"{web_record.name}:{web_record.result_count}" if not web_record.error else f"{web_record.name}:error"
             )
             self.evidence_store.add_documents(session_id, web_rows or [])
-        return chunks, tool_trace
+        return [*attachment_chunks, *chunks], tool_trace
 
     async def _run_model_policy(
         self,
@@ -103,12 +124,32 @@ class ResearchAgent:
         retrieval_question: str,
         session_id: str,
         final_k: int,
+        tool_context: ToolExecutionContext | None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
+        attachment_chunks, trace = await self._collect_attachment_evidence(
+            question=question,
+            retrieval_question=retrieval_question,
+            session_id=session_id,
+            final_k=final_k,
+            tool_context=tool_context,
+        )
         observations: list[dict[str, Any]] = []
-        trace: list[str] = []
+        if trace:
+            observations.append(
+                {
+                    "tool": "search_uploaded_documents",
+                    "result_count": len(attachment_chunks),
+                    "evidence_ids": [row.get("chunk_id") for row in attachment_chunks[:10]],
+                }
+            )
         web_searches = 0
         page_fetches = 0
-        tools = self.registry.describe()
+        tools = [
+            tool
+            for tool in self.registry.describe()
+            if tool["name"] != "search_uploaded_documents" or tool_context is not None
+        ]
+        available_tools = {tool["name"] for tool in tools}
         for step in range(1, self.max_steps + 1):
             state = {
                 "question": question,
@@ -143,7 +184,7 @@ class ResearchAgent:
                 break
             tool_name = str(decision.get("tool_name", ""))
             arguments = dict(decision.get("arguments") or {})
-            if tool_name not in self.registry.names():
+            if tool_name not in available_tools:
                 observations.append({"tool": tool_name, "error": "unknown_tool"})
                 trace.append("agent:unknown_tool")
                 continue
@@ -159,12 +200,25 @@ class ResearchAgent:
                 page_fetches += 1
             if tool_name in {"retrieve_evidence", "inspect_evidence"}:
                 arguments["session_id"] = session_id
-            result, record = await self.registry.call(tool_name, arguments)
+            result, record = await self.registry.call(
+                tool_name,
+                arguments,
+                context=tool_context if tool_name == "search_uploaded_documents" else None,
+            )
             trace.append(f"{record.name}:{record.result_count}" if not record.error else f"{record.name}:error")
             if record.error:
                 observations.append({"tool": tool_name, "error": record.error})
                 continue
             rows = self._evidence_rows(tool_name, result)
+            if (
+                tool_name == "search_uploaded_documents"
+                and not self.generator.temporary_context_is_relevant(
+                    str(arguments.get("query") or question),
+                    rows,
+                )
+            ):
+                rows = []
+                trace.append("attachment_relevant:false")
             self.evidence_store.add_documents(session_id, rows)
             observations.append(
                 {
@@ -174,6 +228,37 @@ class ResearchAgent:
                 }
             )
         return self.evidence_store.all(session_id), trace
+
+    async def _collect_attachment_evidence(
+        self,
+        *,
+        question: str,
+        retrieval_question: str,
+        session_id: str,
+        final_k: int,
+        tool_context: ToolExecutionContext | None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        if tool_context is None or "search_uploaded_documents" not in self.registry.names():
+            return [], []
+
+        result, record = await self.registry.call(
+            "search_uploaded_documents",
+            {"query": retrieval_question, "top_k": max(final_k, 6)},
+            context=tool_context,
+        )
+        trace = [
+            f"{record.name}:{record.result_count}" if not record.error else f"{record.name}:error"
+        ]
+        if record.error:
+            return [], trace
+
+        rows = self._evidence_rows("search_uploaded_documents", result)
+        if not self.generator.temporary_context_is_relevant(question, rows):
+            trace.append("attachment_relevant:false")
+            return [], trace
+
+        self.evidence_store.add_documents(session_id, rows)
+        return rows, trace
 
     @staticmethod
     def _evidence_rows(tool_name: str, result: Any) -> list[dict[str, Any]]:
@@ -186,6 +271,10 @@ class ResearchAgent:
             if not item.get("chunk_id"):
                 identity = str(item.get("url") or item.get("text") or json.dumps(item, sort_keys=True))
                 item["chunk_id"] = f"web_{hashlib.sha1(identity.encode('utf-8')).hexdigest()[:12]}"
-            item.setdefault("source_kind", "web" if tool_name != "search_history" else "history")
+            source_kind = {
+                "search_history": "history",
+                "search_uploaded_documents": "attachment",
+            }.get(tool_name, "web")
+            item.setdefault("source_kind", source_kind)
             normalized.append(item)
         return normalized

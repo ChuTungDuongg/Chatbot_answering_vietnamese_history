@@ -22,7 +22,7 @@
 
 Hệ thống trả lời câu hỏi lịch sử Việt Nam bằng ba vai trò tách biệt:
 
-1. **Research / Tool Agent** dùng Qwen3 và tool registry để tìm local corpus, tìm web khi được cấu hình, đọc trang và truy vấn evidence trong session.
+1. **Research / Tool Agent** dùng Qwen3 và tool registry để tìm local corpus, tài liệu PDF/ảnh đã upload trong conversation, tìm web khi được cấu hình, đọc trang và truy vấn evidence trong session.
 2. **Evidence Critic / Compressor** dùng adapter Qwen3 riêng để lọc, phát hiện xung đột, nén evidence và chỉ được chọn ID đã tồn tại.
 3. **History Answerer** dùng model Qwen2.5 đã instruction-SFT và grounded RAG-SFT để sinh câu trả lời tiếng Việt có citation, sau đó chạy source/year/format guards.
 
@@ -35,10 +35,12 @@ flowchart TD
     U[User] --> R[LLM 1: Research Agent]
     R --> T{Tool Registry}
     T --> L[search_history]
+    T --> D[search_uploaded_documents]
     T --> W[search_web]
     T --> F[fetch_web_page]
     T --> S[retrieve/inspect evidence]
     L --> E[(Session Evidence Store)]
+    D --> E
     W --> E
     F --> E
     S --> E

@@ -11,7 +11,7 @@ app/
 ├── main.py                 # lifespan, service/model/tool/orchestrator cache
 ├── config.py               # Pydantic environment settings + artifact paths
 ├── agents/                 # Research, Evidence, History, shared Qwen3 runtime
-├── tools/                  # typed registry và 5 tools
+├── tools/                  # typed registry, request context và 6 tools
 ├── rag/
 │   ├── retrieval.py        # E5 + FAISS + BM25S + RRF + BGE reranker
 │   ├── prompting.py        # dynamic grounded prompts + token budget
@@ -33,6 +33,7 @@ app/
   → load recent conversation history
   → AgentOrchestrator
   → ResearchAgent tool loop
+  → search uploaded PDF/image chunks trong đúng conversation
   → session-scoped evidence
   → EvidenceCriticAgent
   → optional one research retry

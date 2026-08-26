@@ -11,6 +11,7 @@ python -m pytest -q
 |---|---|
 | `test_tool_registry.py` | Typed tool call và call record. |
 | `test_agent_loop.py` | Evidence selection path. |
+| `test_attachment_agent_flow.py` | Attachment tool schema, owner/conversation isolation và luồng orchestrator. |
 | `test_evidence_schema.py` | Pydantic ID invariants. |
 | `test_session_evidence_store.py` | Add/dedup/search session evidence. |
 | `test_history_answerer.py` | Selected text contexts tới History wrapper. |

@@ -16,6 +16,7 @@
 
 ```text
 Research run (max 6 steps)
+  → prefetch evidence từ PDF/ảnh của đúng conversation nếu có
   → Evidence critique
   → nếu insufficient và model controller đang bật: thêm tối đa 1 research round
   → Evidence critique lại
@@ -23,7 +24,7 @@ Research run (max 6 steps)
   → cleanup SessionEvidenceStore
 ```
 
-Research policy chỉ trả JSON action hoặc finish. Evidence policy chỉ trả structured JSON. Parser có tối đa một repair cho JSON không hợp lệ; Pydantic và candidate-ID validation chạy trước khi evidence tới History model.
+Research policy chỉ trả JSON action hoặc finish. Evidence policy chỉ trả structured JSON. Parser có tối đa một repair cho JSON không hợp lệ; Pydantic và candidate-ID validation chạy trước khi evidence tới History model. Attachment được prefetch bằng request scope nội bộ và cũng xuất hiện dưới dạng tool `search_uploaded_documents`; model không được nhìn thấy hoặc tự chọn owner/conversation ID.
 
 ## 🛟 Fallback
 

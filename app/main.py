@@ -17,6 +17,7 @@ from app.rag.generation import RAGGenerator
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
 from app.services.rag_service import RAGService
+from app.tools.attachment_search import SearchUploadedDocumentsTool
 from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore
 from app.tools.local_search import SearchHistoryTool
 from app.tools.page_fetcher import FetchPageTool
@@ -81,6 +82,8 @@ async def lifespan(app: FastAPI):
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
             tool_registry.register(SearchHistoryTool(retriever))
+            if temporary_retriever is not None:
+                tool_registry.register(SearchUploadedDocumentsTool(temporary_retriever))
             tool_registry.register(RetrieveEvidenceTool(evidence_store))
             tool_registry.register(InspectEvidenceTool(evidence_store))
             tool_registry.register(

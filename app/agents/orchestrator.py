@@ -45,6 +45,8 @@ class AgentOrchestrator:
                 final_k=final_k,
                 history=history,
                 session_id=session_id,
+                owner_id=owner_id,
+                conversation_id=conversation_id,
             )
             critique, contexts = self.evidence_agent.compress(question, research.evidence, final_k=final_k)
             tool_trace = (
@@ -59,6 +61,8 @@ class AgentOrchestrator:
                     final_k=final_k,
                     history=history,
                     session_id=session_id,
+                    owner_id=owner_id,
+                    conversation_id=conversation_id,
                 )
                 critique, contexts = self.evidence_agent.compress(
                     question,

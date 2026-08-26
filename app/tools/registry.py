@@ -29,6 +29,13 @@ class ToolCallRecord:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class ToolExecutionContext:
+    owner_id: str | None = None
+    conversation_id: str | None = None
+    session_id: str = "default"
+
+
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, AgentTool] = {}
@@ -57,12 +64,24 @@ class ToolRegistry:
             for tool in self._tools.values()
         ]
 
-    async def call(self, name: str, arguments: dict[str, Any]) -> tuple[Any, ToolCallRecord]:
+    async def call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> tuple[Any, ToolCallRecord]:
         tool = self.get(name)
         parsed = tool.input_schema.model_validate(arguments)
         started = time.perf_counter()
         try:
-            result = tool.run(parsed)
+            if context is None:
+                result = tool.run(parsed)
+            else:
+                run_with_context = getattr(tool, "run_with_context", None)
+                if not callable(run_with_context):
+                    raise TypeError(f"Tool does not accept execution context: {name}")
+                result = run_with_context(parsed, context)
             if inspect.isawaitable(result):
                 result = await result
             count = len(result) if hasattr(result, "__len__") else None
