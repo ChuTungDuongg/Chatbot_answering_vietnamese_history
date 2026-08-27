@@ -36,6 +36,11 @@ python -m training.evidence_agent.prepare_dataset \
 
 python -m training.evidence_agent.validate_dataset \
   --dataset datasets/evidence_agent/train.jsonl
+
+python -m training.evidence_agent.preflight \
+  --dataset datasets/evidence_agent/train.jsonl \
+  --tokenizer-id Qwen/Qwen3-4B-Instruct-2507 \
+  --max-length 4096
 ```
 
 Builder giữ clean sufficient examples và tạo các behavior có tỷ lệ cấu hình được: duplicate, controlled numeric conflict, partial evidence, relevant+distractor và insufficient. Conflict giả lập chỉ tồn tại trong training row với metadata `synthetic_conflict`; nó không được ghi vào history corpus. Claims/compression là extractive để validator có thể kiểm tra grounding.
@@ -47,6 +52,8 @@ Partial augmentation không còn được gán chỉ bằng regex/quota. Builder
 Source row legacy cite evidence ID không có trong chính input context sẽ bị loại thay vì tự remap hoặc bịa evidence. CLI báo rõ `dropped_source_rows`.
 
 Validator kiểm tra JSON/schema, ID/group uniqueness, selected ID tồn tại, grounded claims, non-empty compression, generic summary/missing-information, answer-component coverage, relevance shortcut, semantics duplicate/conflict/partial, class distribution và group overlap của split mô phỏng. Critical error trả exit code khác 0; các coverage case chỉ có heuristic confidence được báo warning riêng thay vì tự động relabel.
+
+Tokenization preflight chỉ tải tokenizer, không tải Qwen weights. Nó chạy đúng đường assistant-only tokenization của Trainer cho cả train/eval/test và fail nếu input/target rỗng, assistant target bị mất, hoặc sample có 0 supervised token. Báo cáo gồm độ dài sequence, số row overlength/capped, và min/mean/max của prompt, assistant, supervised token. Với Evidence JSON quá dài, pipeline giữ nguyên question, evidence ID, title/source metadata và mọi grounded target claim; nó cắt evidence text theo cấu trúc trước khi render JSON. Assistant target được giữ nguyên toàn bộ, prompt không bị token-slice thành JSON lỗi.
 
 ## Corrective fine-tune từ adapter hiện có
 
@@ -66,7 +73,7 @@ python -m training.evidence_agent.train \
 
 `--init-adapter` load learned PEFT weights ở chế độ trainable nhưng tạo optimizer/scheduler mới cho run v2. `--resume-from-checkpoint` phục hồi trainer/optimizer/scheduler của cùng một run. Hai mode không được dùng cùng nhau.
 
-Split luôn group theo `group_id`, vì vậy các row cùng `original_sample_id` không thể rơi vào train/eval/test khác nhau. Training dùng assistant-only SFT trên đầy đủ system/user/assistant messages.
+Split luôn group theo `group_id`, vì vậy các row cùng `original_sample_id` không thể rơi vào train/eval/test khác nhau. Trong ràng buộc đó, allocator tối đa hóa độ phủ `behavior` và độ gần phân phối toàn cục cho eval/test. Training dùng assistant-only SFT trên đầy đủ system/user/assistant messages; `--dry-run` cũng chạy tokenization preflight nhưng dừng trước khi tải model weights.
 
 ## Evaluate
 

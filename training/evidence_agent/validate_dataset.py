@@ -209,8 +209,10 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
 
     simulated_overlap = {"train_eval": 0, "train_test": 0, "eval_test": 0}
     split_group_counts = {"train": 0, "eval": 0, "test": 0}
+    split_behavior_distribution: dict[str, dict[str, int]] = {"train": {}, "eval": {}, "test": {}}
+    split_missing_behaviors: dict[str, list[str]] = {"train": [], "eval": [], "test": []}
     if rows and all(row.get("group_id") for row in rows):
-        splits = split_rows(rows, seed=42, group_key="group_id")
+        splits = split_rows(rows, seed=42, group_key="group_id", stratify_key="behavior")
         split_groups = {
             name: {str(row["group_id"]) for row in getattr(splits, name)}
             for name in ("train", "eval", "test")
@@ -223,6 +225,11 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         }
         if any(simulated_overlap.values()):
             errors.append(f"group leakage across simulated splits: {simulated_overlap}")
+        all_behaviors = set(behavior_distribution)
+        for name in ("train", "eval", "test"):
+            counts = Counter(str(row.get("behavior") or "unknown") for row in getattr(splits, name))
+            split_behavior_distribution[name] = dict(counts)
+            split_missing_behaviors[name] = sorted(all_behaviors - set(counts))
 
     mean_original = statistics.mean(original_lengths) if original_lengths else 0.0
     mean_compressed = statistics.mean(compressed_lengths) if compressed_lengths else 0.0
@@ -266,6 +273,8 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         "compression_ratio": mean_compressed / max(mean_original, 1.0),
         "split_group_counts": split_group_counts,
         "split_group_overlap": simulated_overlap,
+        "split_behavior_distribution": split_behavior_distribution,
+        "split_missing_behaviors": split_missing_behaviors,
         "grounding_metric": "extractive claim containment (heuristic)",
         "sufficient_rows": sufficient_rows,
         "partial_rows": partial_rows,
