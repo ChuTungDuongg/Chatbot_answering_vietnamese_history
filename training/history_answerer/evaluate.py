@@ -10,7 +10,7 @@ from training.common.jsonl import read_jsonl
 from training.common.datasets import first_user_assistant
 
 
-SOURCE_RE = re.compile(r"Nguồn được dùng\s*:\s*\[(.*?)\]", re.S)
+SOURCE_RE = re.compile(r"Nguồn được dùng\s*:\s*([^\r\n]*)", re.I)
 CONTEXT_ID_RE = re.compile(r"(?m)^\[([^\]]+)\]")
 
 
@@ -18,7 +18,7 @@ def parse_source_ids(text: str) -> list[str]:
     match = SOURCE_RE.search(text or "")
     if not match:
         return []
-    return [item.strip().strip("'\"") for item in match.group(1).split(",") if item.strip()]
+    return [item.strip() for item in re.findall(r"\[([^\]]+)\]", match.group(1)) if item.strip()]
 
 
 def rouge_l(pred: str, gold: str) -> float:

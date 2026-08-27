@@ -6,7 +6,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.model_runtime import SharedAgentModelRuntime
-from app.agents.schemas import EvidenceCritique, SelectedEvidence
+from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceModelOutput, SelectedEvidence
+
+
+class EvidenceModelContractError(ValueError):
+    """The Evidence adapter returned output that cannot satisfy the production contract."""
 
 
 class EvidenceCriticAgent:
@@ -15,17 +20,23 @@ class EvidenceCriticAgent:
         *,
         max_contexts: int = 8,
         model_runtime: SharedAgentModelRuntime | None = None,
+        allow_model_fallback: bool = False,
     ):
         self.max_contexts = max_contexts
         self.model_runtime = model_runtime
+        self.allow_model_fallback = allow_model_fallback
 
     def compress(self, question: str, evidence: list[dict[str, Any]], *, final_k: int) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
         if self.model_runtime is not None:
             try:
                 return self._model_compress(question, evidence, final_k=final_k)
-            except (ValueError, ValidationError, KeyError, TypeError):
+            except (ValueError, ValidationError, KeyError, TypeError) as exc:
+                if not self.allow_model_fallback:
+                    if isinstance(exc, EvidenceModelContractError):
+                        raise
+                    raise EvidenceModelContractError(f"Evidence model output failed canonical schema validation: {exc}") from exc
                 critique, contexts = self._deterministic_compress(evidence, final_k=final_k)
-                critique.warnings.append("model_output_invalid_fallback_used")
+                critique.warnings.append(f"model_output_invalid_debug_fallback_used:{type(exc).__name__}")
                 return critique, contexts
         return self._deterministic_compress(evidence, final_k=final_k)
 
@@ -84,7 +95,7 @@ class EvidenceCriticAgent:
         final_k: int,
     ) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
         available = {str(item.get("chunk_id")): item for item in evidence if item.get("chunk_id")}
-        payload = {
+        request = EvidenceAgentRequest.model_validate({
             "question": question,
             "max_selected": min(max(final_k, 1), self.max_contexts),
             "evidence": [
@@ -99,23 +110,28 @@ class EvidenceCriticAgent:
                 }
                 for chunk_id, item in available.items()
             ],
-        }
+        })
         output = self.model_runtime.generate_json(
             adapter="evidence",
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Select, verify, deduplicate and compress only the supplied evidence. Return JSON with "
-                        "status (sufficient|insufficient|conflicting), selected_evidence, conflicts, "
-                        "missing_information and summary. Never invent an evidence_id or external fact."
-                    ),
+                    "content": EVIDENCE_AGENT_SYSTEM,
                 },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "user", "content": json.dumps(request.model_dump(), ensure_ascii=False, sort_keys=True)},
             ],
             max_new_tokens=768,
         )
-        selected = [SelectedEvidence.model_validate(item) for item in output.get("selected_evidence", [])]
+        raw_selected = output.get("selected_evidence", []) if isinstance(output, dict) else []
+        if any(isinstance(item, str) for item in raw_selected):
+            raise EvidenceModelContractError(
+                "Evidence model returned legacy selected_evidence format list[str]. Retrain or migrate the Evidence Agent."
+            )
+        try:
+            model_output = EvidenceModelOutput.model_validate(output)
+        except ValidationError as exc:
+            raise EvidenceModelContractError(f"Evidence model returned invalid canonical output: {exc}") from exc
+        selected = model_output.selected_evidence
         selected_ids = [item.evidence_id for item in selected]
         unknown = [item for item in selected_ids if item not in available]
         if unknown:
@@ -125,15 +141,20 @@ class EvidenceCriticAgent:
             context = dict(available[item.evidence_id])
             context["text"] = item.compressed_text or str(context.get("text", ""))
             contexts.append(context)
+        selected = selected[: self.max_contexts]
+        selected_ids = [item.evidence_id for item in selected]
         critique = EvidenceCritique(
-            status=output.get("status", "insufficient"),
-            selected_evidence=selected[: self.max_contexts],
-            selected_ids=[item.evidence_id for item in selected[: self.max_contexts]],
+            status=model_output.status,
+            selected_evidence=selected,
+            selected_ids=selected_ids,
             rejected_ids=[chunk_id for chunk_id in available if chunk_id not in selected_ids],
-            compressed_context="\n\n".join(str(item.get("text", "")) for item in contexts),
-            conflicts=[str(item) for item in output.get("conflicts", [])],
-            sufficient=output.get("status") == "sufficient" and bool(contexts),
-            missing_information=[str(item) for item in output.get("missing_information", [])],
-            summary=str(output.get("summary", "")),
+            compressed_context="\n\n".join(
+                f"[{item.evidence_id}] {item.compressed_text}" for item in selected
+            ),
+            conflicts=model_output.conflicts,
+            sufficient=model_output.status == "sufficient" and bool(contexts),
+            warnings=[],
+            missing_information=model_output.missing_information,
+            summary=model_output.summary,
         )
         return critique, contexts

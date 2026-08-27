@@ -14,7 +14,26 @@ def test_evidence_schema_rejects_overlap():
 
 def test_training_schema_rejects_duplicate_selected_ids():
     with pytest.raises(ValidationError):
-        EvidenceCritiqueOutput(selected_ids=["c1", "c1"])
+        EvidenceCritiqueOutput(
+            status="sufficient",
+            selected_evidence=[
+                {
+                    "evidence_id": "c1",
+                    "relevance": 1.0,
+                    "claims": ["Một fact được evidence hỗ trợ."],
+                    "compressed_text": "Một fact được evidence hỗ trợ.",
+                },
+                {
+                    "evidence_id": "c1",
+                    "relevance": 1.0,
+                    "claims": ["Một fact được evidence hỗ trợ."],
+                    "compressed_text": "Một fact được evidence hỗ trợ.",
+                },
+            ],
+            conflicts=[],
+            missing_information=[],
+            summary="Evidence đủ.",
+        )
 
 
 

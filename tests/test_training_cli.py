@@ -21,6 +21,7 @@ def test_training_cli_help_smoke():
         "training.research_agent.validate_dataset",
         "training.research_agent.preflight",
         "training.evidence_agent.prepare_dataset",
+        "training.evidence_agent.validate_dataset",
         "training.evidence_agent.train",
         "training.evidence_agent.evaluate",
         "training.scripts.build_corpus",

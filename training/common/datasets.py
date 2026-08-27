@@ -99,7 +99,12 @@ def split_statistics(splits: DatasetSplits) -> dict[str, Any]:
         classes: dict[str, int] = {}
         sources: dict[str, int] = {}
         for row in rows:
-            cls = str(row.get("trajectory_class") or row.get("trajectory", {}).get("trajectory_class") or "unknown")
+            cls = str(
+                row.get("trajectory_class")
+                or row.get("behavior")
+                or row.get("trajectory", {}).get("trajectory_class")
+                or "unknown"
+            )
             source = str(row.get("source_dataset") or row.get("source") or "unknown")
             classes[cls] = classes.get(cls, 0) + 1
             sources[source] = sources.get(source, 0) + 1
