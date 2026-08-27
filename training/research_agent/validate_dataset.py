@@ -66,6 +66,8 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ids: set[str] = set()
     trajectory_steps: dict[str, list[int]] = defaultdict(list)
     trajectory_records: dict[str, list[tuple[int, ResearchPolicyState, Any]]] = defaultdict(list)
+    trajectory_identity: dict[str, tuple[str, str, str]] = {}
+    group_trajectories: dict[str, set[str]] = defaultdict(set)
     classes: Counter[str] = Counter()
     sources: Counter[str] = Counter()
 
@@ -76,7 +78,8 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             errors.append(f"{label}: missing id")
         elif row_id in ids:
             errors.append(f"{label}: duplicate id {row_id!r}")
-        ids.add(row_id)
+        if row_id:
+            ids.add(row_id)
         group_id = str(row.get("group_id") or "")
         trajectory_id = str(row.get("trajectory_id") or "")
         step = row.get("step")
@@ -132,6 +135,12 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
         if trajectory_id and isinstance(step, int):
             trajectory_records[trajectory_id].append((step, state, decision))
+            identity = (group_id, str(row.get("original_sample_id") or ""), state.question)
+            previous_identity = trajectory_identity.setdefault(trajectory_id, identity)
+            if previous_identity != identity:
+                errors.append(f"{label}: duplicate trajectory_id {trajectory_id!r} reused for distinct source trajectories")
+            if group_id:
+                group_trajectories[group_id].add(trajectory_id)
 
         classes[str(row.get("trajectory_class") or "unknown")] += 1
         sources[str(row.get("source_dataset") or row.get("source") or "unknown")] += 1
@@ -139,7 +148,7 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for trajectory_id, steps in trajectory_steps.items():
         ordered = sorted(steps)
         if len(ordered) != len(set(ordered)):
-            errors.append(f"trajectory {trajectory_id!r}: duplicate step")
+            errors.append(f"duplicate trajectory_id {trajectory_id!r}: one or more steps are repeated")
         if ordered and ordered != list(range(1, max(ordered) + 1)):
             errors.append(f"trajectory {trajectory_id!r}: non-contiguous ordering {ordered}")
     for trajectory_id, records in trajectory_records.items():
@@ -158,11 +167,16 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         errors.append("dataset is empty")
     if len(classes) < 2:
         warnings.append("dataset contains fewer than two trajectory classes")
+    unique_groups = len(group_trajectories)
+    unique_trajectories = len(trajectory_identity)
     return {
         "valid": not errors,
         "rows": len(rows),
         "unique_ids": len(ids),
-        "unique_groups": len({str(row.get('group_id')) for row in rows if row.get('group_id')}),
+        "unique_trajectory_ids": unique_trajectories,
+        "unique_groups": unique_groups,
+        "avg_rows_per_group": len(rows) / max(unique_groups, 1),
+        "avg_trajectories_per_group": unique_trajectories / max(unique_groups, 1),
         "class_distribution": dict(classes),
         "source_distribution": dict(sources),
         "errors": errors,

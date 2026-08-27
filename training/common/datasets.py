@@ -64,16 +64,14 @@ def split_rows(
     elif max_samples is not None:
         selected: list[str] = []
         selected_rows = 0
+        minimum_groups = min(3, len(group_ids))
         for group_id in group_ids:
             size = len(grouped[group_id])
-            if selected and selected_rows + size > max(0, max_samples):
-                continue
-            if not selected and max_samples > 0 and size > max_samples:
-                selected.append(group_id)
-                break
             selected.append(group_id)
             selected_rows += size
-            if selected_rows >= max(0, max_samples):
+            # Whole groups are indivisible. Permit a deterministic overshoot so a
+            # smoke split still has train/eval/test groups without leakage.
+            if selected_rows >= max_samples and len(selected) >= minimum_groups:
                 break
         group_ids = selected
 

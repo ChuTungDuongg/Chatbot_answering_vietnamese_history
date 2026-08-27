@@ -21,3 +21,15 @@ def test_max_samples_shuffles_groups_before_sampling():
     selected = [row["id"] for split in (first.train, first.eval, first.test) for row in split]
     assert selected == [row["id"] for split in (second.train, second.eval, second.test) for row in split]
     assert selected != [str(i) for i in range(5)]
+
+
+def test_grouped_max_samples_keeps_three_indivisible_groups_for_smoke_split():
+    rows = [
+        {"id": f"{group}-{index}", "group_id": group}
+        for group in ("a", "b", "c", "d")
+        for index in range(60)
+    ]
+    splits = split_rows(rows, seed=3, max_samples=100)
+    group_sets = [{row["group_id"] for row in getattr(splits, name)} for name in ("train", "eval", "test")]
+    assert all(group_sets)
+    assert not (group_sets[0] & group_sets[1] | group_sets[0] & group_sets[2] | group_sets[1] & group_sets[2])
