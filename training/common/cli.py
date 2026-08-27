@@ -7,7 +7,7 @@ from typing import Any
 from training.common.qlora import LoRASettings
 
 
-def add_training_arguments(parser: argparse.ArgumentParser, config: Any) -> None:
+def add_training_arguments(parser: argparse.ArgumentParser, config: Any, *, auto_precision: bool = False) -> None:
     """Add the shared, user-overridable QLoRA training flags."""
     parser.add_argument("--epochs", type=float, default=config.epochs)
     parser.add_argument("--batch-size", type=int, default=config.train_batch_size)
@@ -37,8 +37,23 @@ def add_training_arguments(parser: argparse.ArgumentParser, config: Any) -> None
     parser.add_argument("--logging-steps", type=int, default=config.logging_steps)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--bf16",
+        action=argparse.BooleanOptionalAction,
+        default=None if auto_precision else True,
+    )
+    parser.add_argument(
+        "--fp16",
+        action=argparse.BooleanOptionalAction,
+        default=None if auto_precision else False,
+    )
+    if auto_precision:
+        parser.add_argument(
+            "--bnb-compute-dtype",
+            choices=("auto", "float16", "bfloat16", "float32"),
+            default="auto",
+            help="4-bit compute dtype; auto follows trainer precision and GPU BF16 support.",
+        )
     parser.add_argument(
         "--gradient-checkpointing",
         action=argparse.BooleanOptionalAction,
@@ -59,5 +74,5 @@ def validate_training_arguments(args: argparse.Namespace) -> None:
         raise ValueError("--gradient-accumulation-steps must be at least 1.")
     if args.max_length < 64:
         raise ValueError("--max-length must be at least 64.")
-    if args.bf16 and args.fp16:
+    if args.bf16 is True and args.fp16 is True:
         raise ValueError("Choose only one of --bf16 or --fp16.")

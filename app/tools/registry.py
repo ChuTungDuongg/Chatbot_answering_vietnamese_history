@@ -71,10 +71,10 @@ class ToolRegistry:
         *,
         context: ToolExecutionContext | None = None,
     ) -> tuple[Any, ToolCallRecord]:
-        tool = self.get(name)
-        parsed = tool.input_schema.model_validate(arguments)
         started = time.perf_counter()
         try:
+            tool = self.get(name)
+            parsed = tool.input_schema.model_validate(arguments)
             if context is None:
                 result = tool.run(parsed)
             else:
@@ -95,4 +95,4 @@ class ToolRegistry:
                 "agent_tool_error",
                 extra={"tool_name": name, "latency_ms": (time.perf_counter() - started) * 1000},
             )
-            return None, ToolCallRecord(name=name, arguments=parsed.model_dump(), error=str(exc))
+            return None, ToolCallRecord(name=name, arguments=dict(arguments), error=str(exc))

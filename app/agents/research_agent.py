@@ -5,6 +5,14 @@ import json
 from typing import Any
 
 from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.policy_schema import (
+    RESEARCH_AGENT_SYSTEM,
+    FinishDecision,
+    ResearchPolicyState,
+    ToolDecision,
+    serialize_policy_state,
+    validate_runtime_decision,
+)
 from app.agents.schemas import ResearchResult
 from app.rag.generation import RAGGenerator
 from app.tools.evidence_tools import SessionEvidenceStore
@@ -53,35 +61,35 @@ class ResearchAgent:
                 session_id=session_id,
             )
         if self.model_runtime is not None:
-            chunks, tool_trace = await self._run_model_policy(
+            tool_trace = await self._run_model_policy(
                 question=question,
                 retrieval_question=retrieval_question,
                 session_id=session_id,
-                final_k=final_k,
                 tool_context=tool_context,
             )
         else:
-            chunks, tool_trace = await self._run_fallback(
+            tool_trace = await self._run_fallback(
                 question=question,
                 retrieval_question=retrieval_question,
                 session_id=session_id,
                 final_k=final_k,
                 tool_context=tool_context,
             )
-        retrieval = self.generator.retriever.retrieve(retrieval_question, final_k=final_k)
         analysis = self.generator.retriever.analyze_question(question)
-        retrieval["analysis"] = analysis
-        retrieval["question"] = question
-        retrieval["retrieval_question"] = retrieval_question
-        retrieval["history_used_for_retrieval"] = history_used
-        retrieval["tool_trace"] = tool_trace
+        classifier = getattr(self.generator.retriever, "classify_question", None)
+        classification = classifier(question) if callable(classifier) else {}
         return ResearchResult(
             question=question,
             evidence=self.evidence_store.all(session_id),
             tool_trace=tool_trace,
-            is_ood=bool(retrieval.get("is_ood")),
-            ood_reason=str(retrieval.get("ood_reason", "")),
-            analysis=analysis,
+            is_ood=bool(classification.get("is_ood")),
+            ood_reason=str(classification.get("ood_reason") or ""),
+            analysis={
+                **analysis,
+                "retrieval_question": retrieval_question,
+                "history_used_for_retrieval": history_used,
+                **({"intent": classification["intent"]} if classification.get("intent") else {}),
+            },
         )
 
     async def _run_fallback(
@@ -92,7 +100,7 @@ class ResearchAgent:
         session_id: str,
         final_k: int,
         tool_context: ToolExecutionContext | None,
-    ) -> tuple[list[dict[str, Any]], list[str]]:
+    ) -> list[str]:
         attachment_chunks, tool_trace = await self._collect_attachment_evidence(
             question=question,
             retrieval_question=retrieval_question,
@@ -115,7 +123,7 @@ class ResearchAgent:
                 f"{web_record.name}:{web_record.result_count}" if not web_record.error else f"{web_record.name}:error"
             )
             self.evidence_store.add_documents(session_id, web_rows or [])
-        return [*attachment_chunks, *chunks], tool_trace
+        return tool_trace
 
     async def _run_model_policy(
         self,
@@ -123,25 +131,10 @@ class ResearchAgent:
         question: str,
         retrieval_question: str,
         session_id: str,
-        final_k: int,
         tool_context: ToolExecutionContext | None,
-    ) -> tuple[list[dict[str, Any]], list[str]]:
-        attachment_chunks, trace = await self._collect_attachment_evidence(
-            question=question,
-            retrieval_question=retrieval_question,
-            session_id=session_id,
-            final_k=final_k,
-            tool_context=tool_context,
-        )
+    ) -> list[str]:
+        trace: list[str] = []
         observations: list[dict[str, Any]] = []
-        if trace:
-            observations.append(
-                {
-                    "tool": "search_uploaded_documents",
-                    "result_count": len(attachment_chunks),
-                    "evidence_ids": [row.get("chunk_id") for row in attachment_chunks[:10]],
-                }
-            )
         web_searches = 0
         page_fetches = 0
         tools = [
@@ -151,7 +144,7 @@ class ResearchAgent:
         ]
         available_tools = {tool["name"] for tool in tools}
         for step in range(1, self.max_steps + 1):
-            state = {
+            state = ResearchPolicyState.model_validate({
                 "question": question,
                 "retrieval_question": retrieval_question,
                 "step": step,
@@ -161,33 +154,37 @@ class ResearchAgent:
                     "page_fetches_left": self.max_page_fetches - page_fetches,
                 },
                 "tools": tools,
-                "observations": observations[-4:],
-                "evidence_ids": [row.get("chunk_id") for row in self.evidence_store.all(session_id)],
-            }
-            decision = self.model_runtime.generate_json(
+                "observations": observations,
+                "evidence_ids": list(dict.fromkeys(
+                    evidence_id
+                    for observation in observations
+                    for evidence_id in observation.get("evidence_ids", [])
+                    if evidence_id
+                )),
+            })
+            raw_decision = self.model_runtime.generate_json(
                 adapter="research",
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "You are a Vietnamese-history research tool policy. Do not answer the history question. "
-                            "Return JSON only: either action=tool with tool_name and arguments, or action=finish "
-                            "with sufficient and missing_information. Never reveal hidden reasoning."
-                        ),
+                        "content": RESEARCH_AGENT_SYSTEM,
                     },
-                    {"role": "user", "content": json.dumps(state, ensure_ascii=False)},
+                    {"role": "user", "content": serialize_policy_state(state)},
                 ],
                 max_new_tokens=384,
             )
-            if decision.get("action") == "finish":
+            try:
+                decision = validate_runtime_decision(raw_decision, tool_names=available_tools)
+            except (TypeError, ValueError) as exc:
+                observations.append({"tool": "policy", "error": f"invalid_decision: {exc}"})
+                trace.append("agent:invalid_decision")
+                continue
+            if isinstance(decision, FinishDecision):
                 trace.append(f"agent:finish:{step}")
                 break
-            tool_name = str(decision.get("tool_name", ""))
-            arguments = dict(decision.get("arguments") or {})
-            if tool_name not in available_tools:
-                observations.append({"tool": tool_name, "error": "unknown_tool"})
-                trace.append("agent:unknown_tool")
-                continue
+            assert isinstance(decision, ToolDecision)
+            tool_name = decision.tool_name
+            arguments = dict(decision.arguments)
             if tool_name == "search_web":
                 if web_searches >= self.max_web_searches:
                     observations.append({"tool": tool_name, "error": "web_search_budget_exhausted"})
@@ -227,7 +224,7 @@ class ResearchAgent:
                     "evidence_ids": [row.get("chunk_id") for row in rows[:10]],
                 }
             )
-        return self.evidence_store.all(session_id), trace
+        return trace
 
     async def _collect_attachment_evidence(
         self,

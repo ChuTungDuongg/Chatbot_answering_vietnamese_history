@@ -12,6 +12,7 @@ training/
 │   ├── cli.py                 # shared CLI flags + validation
 │   ├── qlora.py               # NF4 4-bit và LoRA config
 │   ├── trainer.py             # TrainingArguments + JSONL/GPU logging
+│   ├── sft.py                 # generic assistant-only CE for policy agents
 │   ├── datasets.py            # load/split chat rows
 │   └── jsonl.py               # typed JSONL I/O
 ├── history_answerer/          # Qwen2.5 instruction SFT + grounded RAG-SFT
@@ -35,6 +36,8 @@ Không cài Jupyter. Chạy mọi lệnh tại repository root.
 ```bash
 python -m training.history_answerer.train --help
 python -m training.research_agent.train --help
+python -m training.research_agent.validate_dataset --help
+python -m training.research_agent.preflight --help
 python -m training.evidence_agent.train --help
 
 python -m training.history_answerer.train --max-samples 10 --dry-run
@@ -57,7 +60,7 @@ Merge History adapter
   → Modal Volume
 ```
 
-Ba pipeline dùng QLoRA 4-bit NF4, double quantization, PEFT LoRA và assistant-only weighted CE. Mọi hyperparameter quan trọng có thể override bằng CLI.
+Ba pipeline dùng QLoRA 4-bit NF4, double quantization và PEFT LoRA. Research Agent dùng generic assistant-only CE; loss có trọng số theo format lịch sử chỉ thuộc History Answerer.
 
 ## 📊 Training logs và checkpoint
 
@@ -87,6 +90,7 @@ Không đổi dataset, seed hoặc model ID giữa hai lần resume.
 | Sequence/LoRA | `--max-length`, `--lora-r`, `--lora-alpha`, `--lora-dropout` |
 | Logging/save | `--logging-steps`, `--eval-steps`, `--save-steps`, `--resume-from-checkpoint` |
 | Precision | `--bf16`, `--no-bf16`, `--fp16`, `--no-fp16`, `--gradient-checkpointing` |
+| Research precision | `--bnb-compute-dtype {auto,float16,bfloat16,float32}` |
 | Optional | `--report-to wandb`, `--dry-run` |
 
 Alias `--lr` và `--grad-accum-steps` được giữ để tương thích lệnh cũ, nhưng tài liệu dùng tên đầy đủ.
@@ -119,7 +123,7 @@ python -m training.research_agent.train \
   --output-dir /content/drive/MyDrive/vn-history/research_agent
 ```
 
-L4/A100 thường dùng BF16 mặc định. Luôn lưu output lên Drive nếu cần chống mất checkpoint khi Colab disconnect.
+L4/A100 dùng `--bf16 --no-fp16` sau khi preflight xác nhận BF16 support. `--bnb-compute-dtype auto` giữ Trainer và BitsAndBytes cùng dtype. Luôn lưu output lên Drive nếu cần chống mất checkpoint khi Colab disconnect.
 
 ## 🧳 Migration Phase 1-10
 

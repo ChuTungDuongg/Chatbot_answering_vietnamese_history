@@ -18,6 +18,8 @@ def test_training_cli_help_smoke():
         "training.research_agent.build_history_trajectories",
         "training.research_agent.train",
         "training.research_agent.evaluate",
+        "training.research_agent.validate_dataset",
+        "training.research_agent.preflight",
         "training.evidence_agent.prepare_dataset",
         "training.evidence_agent.train",
         "training.evidence_agent.evaluate",

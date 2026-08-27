@@ -227,7 +227,7 @@ Output này không được `training.history_answerer.train` sử dụng trong 
 
 ### 3. Research / Tool Agent
 
-Tạo history trajectories:
+Research Agent chỉ chọn tools/actions và dừng; nó không sinh final history answer. Tạo grounded, unrolled history trajectories:
 
 ```bash
 python -m training.research_agent.build_history_trajectories \
@@ -235,12 +235,32 @@ python -m training.research_agent.build_history_trajectories \
   --output datasets/research_agent/history_trajectories.jsonl
 ```
 
-Chuẩn hóa xLAM, AgentInstruct hoặc Hotpot-style JSONL đã tải riêng:
+Convert xLAM (generic function calling) hoặc selected AgentInstruct OS trajectories bằng schema riêng:
 
 ```bash
 python -m training.research_agent.prepare_dataset \
-  --input datasets/raw/agent_rows.jsonl \
-  --output datasets/research_agent/external_normalized.jsonl
+  --source xlam \
+  --output datasets/research_agent/xlam.jsonl
+
+python -m training.research_agent.prepare_dataset \
+  --source agentinstruct --split os \
+  --output datasets/research_agent/agentinstruct_os.jsonl
+```
+
+xLAM yêu cầu accept dataset terms và Hugging Face login. AgentInstruct environment không map chắc chắn sẽ bị skip/report thay vì tạo tool call giả. VN History dạy domain retrieval policy; false-premise vẫn retrieval, còn no-tool dùng greeting/meta examples thật.
+
+Pre-training validation bắt buộc:
+
+```bash
+python -m training.research_agent.validate_dataset \
+  --dataset datasets/research_agent/history_trajectories.jsonl
+
+python -m training.research_agent.preflight \
+  --dataset datasets/research_agent/history_trajectories.jsonl
+
+python -m training.research_agent.train \
+  --dataset datasets/research_agent/history_trajectories.jsonl \
+  --batch-size 1 --max-samples 10 --dry-run
 ```
 
 Train:
@@ -289,6 +309,8 @@ Ba lệnh train đều hỗ trợ:
 --gradient-checkpointing/--no-gradient-checkpointing
 --resume-from-checkpoint --report-to {none,wandb}
 ```
+
+Research Agent có thêm `--bnb-compute-dtype {auto,float16,bfloat16,float32}`; `auto` đồng bộ 4-bit compute dtype với Trainer và hardware.
 
 History RAG-SFT có thêm `--dataset-messages` và `--dataset-chunks`; không còn cờ Phase 1 adapter.
 

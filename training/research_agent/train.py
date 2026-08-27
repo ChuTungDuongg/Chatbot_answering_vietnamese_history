@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import json
+from dataclasses import replace
+from pathlib import Path
 
 from training.common.cli import add_training_arguments, lora_settings_from_args, validate_training_arguments
-from training.common.datasets import first_user_assistant, load_messages, split_rows
+from training.common.datasets import load_messages, split_rows, split_statistics
+from training.common.qlora import QLoRASettings, resolve_precision
 from training.research_agent.config import ResearchAgentConfig
+from training.research_agent.validate_dataset import validate_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -13,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", default="artifacts/training/research_agent/normalized.jsonl")
     parser.add_argument("--output-dir", default="artifacts/training/research_agent/qwen3_tool_agent")
     parser.add_argument("--model-id", default=cfg.model_id)
-    add_training_arguments(parser, cfg)
+    add_training_arguments(parser, cfg, auto_precision=True)
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -22,7 +27,41 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     validate_training_arguments(args)
     rows = load_messages(args.dataset)
-    print({"rows": len(rows), "model_id": args.model_id, "batch_size": args.batch_size})
+    validation = validate_rows(rows)
+    if not validation["valid"]:
+        raise ValueError(f"dataset validation failed: {validation['errors'][:5]}")
+    precision = resolve_precision(
+        bf16=args.bf16,
+        fp16=args.fp16,
+        bnb_compute_dtype=args.bnb_compute_dtype,
+    )
+    splits = split_rows(rows, seed=args.seed, max_samples=args.max_samples, group_key="group_id")
+    statistics = split_statistics(splits)
+    group_sets = [
+        {str(row["group_id"]) for row in getattr(splits, name)}
+        for name in ("train", "eval", "test")
+    ]
+    assert group_sets[0].isdisjoint(group_sets[1])
+    assert group_sets[0].isdisjoint(group_sets[2])
+    assert group_sets[1].isdisjoint(group_sets[2])
+    print({
+        "rows": len(rows),
+        "model_id": args.model_id,
+        "batch_size": args.batch_size,
+        "trainer_dtype": "bfloat16" if precision.bf16 else "float16" if precision.fp16 else "float32",
+        "bnb_compute_dtype": precision.compute_dtype,
+        "splits": statistics,
+    })
+    manifest = {
+        "statistics": statistics,
+        "groups": {
+            name: sorted({str(row["group_id"]) for row in getattr(splits, name)})
+            for name in ("train", "eval", "test")
+        },
+    }
+    manifest_path = Path(args.output_dir) / "split_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     if args.dry_run:
         return 0
 
@@ -30,22 +69,18 @@ def main(argv: list[str] | None = None) -> int:
     from peft import get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    from training.common.qlora import QLoRASettings, build_bnb_config, build_lora_config
+    from training.common.qlora import build_bnb_config, build_lora_config
+    from training.common.sft import AssistantOnlyCollator, build_assistant_only_example
     from training.common.trainer import build_metrics_callback, build_training_arguments
-    from training.history_answerer.loss import (
-        WeightedDataCollator,
-        build_instruction_training_example,
-        weighted_trainer_class,
-    )
+    from transformers import Trainer
 
     cfg = ResearchAgentConfig()
-    splits = split_rows(rows, seed=args.seed, max_samples=args.max_samples)
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
-        quantization_config=build_bnb_config(QLoRASettings()),
+        quantization_config=build_bnb_config(replace(QLoRASettings(), bnb_4bit_compute_dtype=precision.compute_dtype)),
         device_map="auto",
         trust_remote_code=True,
     )
@@ -54,12 +89,11 @@ def main(argv: list[str] | None = None) -> int:
     model.config.use_cache = False
 
     def tokenize(row):
-        user_text, assistant_text = first_user_assistant(row)
-        return build_instruction_training_example(tokenizer, user_text, assistant_text, max_length=args.max_length)
+        return build_assistant_only_example(tokenizer, row["messages"], max_length=args.max_length)
 
     train_ds = Dataset.from_list(splits.train).map(tokenize, remove_columns=list(splits.train[0].keys()))
     eval_ds = Dataset.from_list(splits.eval).map(tokenize, remove_columns=list(splits.eval[0].keys()))
-    trainer = weighted_trainer_class()(
+    trainer = Trainer(
         model=model,
         args=build_training_arguments(
             output_dir=args.output_dir,
@@ -73,8 +107,8 @@ def main(argv: list[str] | None = None) -> int:
             logging_steps=args.logging_steps,
             eval_steps=args.eval_steps,
             save_steps=args.save_steps,
-            bf16=args.bf16,
-            fp16=args.fp16,
+            bf16=precision.bf16,
+            fp16=precision.fp16,
             gradient_checkpointing=args.gradient_checkpointing,
             seed=args.seed,
             report_to=args.report_to,
@@ -82,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         tokenizer=tokenizer,
-        data_collator=WeightedDataCollator(tokenizer.pad_token_id),
+        data_collator=AssistantOnlyCollator(tokenizer.pad_token_id),
         callbacks=[build_metrics_callback(args.output_dir)],
     )
     trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)

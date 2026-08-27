@@ -365,6 +365,17 @@ class HybridRetriever:
     # Question analysis
     # ========================================================
 
+    def classify_question(self, question: str) -> dict[str, Any]:
+        """Run the lightweight anchor intent guard without corpus retrieval."""
+        intent = self.intent_scores(clean_text(question))
+        public_intent = {key: value for key, value in intent.items() if key != "query_embedding"}
+        is_ood = bool(intent["explicit_ood"] and intent["margin"] < self.ood_anchor_margin)
+        return {
+            "is_ood": is_ood,
+            "ood_reason": "explicit_ood+anchor_guard" if is_ood else "",
+            "intent": public_intent,
+        }
+
     def analyze_question(self, question: str) -> dict[str, Any]:
         question = clean_text(question)
         normalized = match_norm(question)
