@@ -11,6 +11,11 @@ from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
 from training.common.datasets import split_rows
 from training.common.jsonl import read_jsonl
+from training.evidence_agent.coverage import (
+    GENERIC_MISSING_PREFIX,
+    accentfold,
+    assess_answer_coverage,
+)
 from training.evidence_agent.prepare_dataset import GENERIC_SUMMARIES
 
 
@@ -35,6 +40,17 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
     empty_compressed = 0
     copy_through = 0
     selected_count = 0
+    sufficient_rows = 0
+    partial_rows = 0
+    conflict_rows = 0
+    partial_with_full_gold_answer_coverage = 0
+    sufficient_with_missing_information = 0
+    partial_with_empty_missing_information = 0
+    partial_without_useful_coverage = 0
+    sufficient_with_suspicious_coverage = 0
+    duplicate_rows_selecting_all_duplicates = 0
+    generic_missing_information_count = 0
+    relevance_by_class: dict[str, list[float]] = defaultdict(list)
 
     for index, row in enumerate(rows, 1):
         label = f"row {index}"
@@ -109,6 +125,39 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
 
         if output.summary in GENERIC_SUMMARIES:
             errors.append(f"{label}: generic template summary is forbidden")
+        generic_missing = [
+            item
+            for item in output.missing_information
+            if accentfold(item).startswith(GENERIC_MISSING_PREFIX)
+        ]
+        generic_missing_information_count += len(generic_missing)
+        if generic_missing:
+            errors.append(f"{label}: generic missing_information is forbidden")
+
+        gold_answer = str((row.get("metadata") or {}).get("gold_answer") or "").strip()
+        if gold_answer:
+            input_coverage = assess_answer_coverage(
+                request.question, gold_answer, [item.text for item in request.evidence]
+            )
+            selected_coverage = assess_answer_coverage(
+                request.question,
+                gold_answer,
+                [candidates[evidence_id].text for evidence_id in selected_ids if evidence_id in candidates],
+            )
+            if output.status == "sufficient" and not selected_coverage.full:
+                sufficient_with_suspicious_coverage += 1
+                message = f"{label}: sufficient selected evidence does not cover the gold answer components"
+                if selected_coverage.confident:
+                    errors.append(message)
+                else:
+                    warnings.append(message + " (heuristic)")
+            if behavior == "partial":
+                if input_coverage.full:
+                    partial_with_full_gold_answer_coverage += 1
+                    errors.append(f"{label}: partial input still has full gold-answer coverage")
+                if not selected_coverage.useful:
+                    partial_without_useful_coverage += 1
+                    errors.append(f"{label}: partial selection supports no required answer component")
         if output.status == "conflicting":
             for conflict in output.conflicts:
                 mentioned = [evidence_id for evidence_id in candidates if evidence_id in conflict]
@@ -122,10 +171,24 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
             }
             if not duplicate_ids or duplicate_ids & set(selected_ids):
                 errors.append(f"{label}: duplicate behavior must reject generated duplicate IDs")
+            if duplicate_ids and duplicate_ids <= set(selected_ids):
+                duplicate_rows_selecting_all_duplicates += 1
         if behavior == "partial" and not (
             output.status == "insufficient" and output.selected_evidence and output.missing_information
         ):
             errors.append(f"{label}: partial behavior requires useful selected evidence plus missing information")
+        if output.status == "sufficient":
+            sufficient_rows += 1
+            sufficient_with_missing_information += int(bool(output.missing_information))
+            if output.missing_information:
+                errors.append(f"{label}: sufficient output must not contain missing_information")
+        if behavior == "partial":
+            partial_rows += 1
+            partial_with_empty_missing_information += int(not output.missing_information)
+        if output.status == "conflicting":
+            conflict_rows += 1
+        relevance_class = "partial" if behavior == "partial" else output.status
+        relevance_by_class[relevance_class].extend(item.relevance for item in output.selected_evidence)
         if output.status == "insufficient" and output.selected_evidence and behavior != "partial":
             warnings.append(f"{label}: insufficient output retains evidence outside documented partial behavior")
 
@@ -163,6 +226,27 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
 
     mean_original = statistics.mean(original_lengths) if original_lengths else 0.0
     mean_compressed = statistics.mean(compressed_lengths) if compressed_lengths else 0.0
+    relevance_status_shortcut_stats = {
+        name: {
+            "count": len(values),
+            "unique_values": len(set(values)),
+            "min": min(values) if values else None,
+            "max": max(values) if values else None,
+            "mean": statistics.mean(values) if values else None,
+        }
+        for name, values in sorted(relevance_by_class.items())
+    }
+    partial_relevance = relevance_by_class.get("partial", [])
+    sufficient_relevance = relevance_by_class.get("sufficient", [])
+    relevance_shortcut_detected = bool(
+        len(partial_relevance) >= 5
+        and len(sufficient_relevance) >= 5
+        and len(set(partial_relevance)) == 1
+        and len(set(sufficient_relevance)) == 1
+        and partial_relevance[0] != sufficient_relevance[0]
+    )
+    if relevance_shortcut_detected:
+        errors.append("relevance is a deterministic partial/sufficient class shortcut")
     return {
         "valid": not errors,
         "rows": len(rows),
@@ -183,6 +267,18 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         "split_group_counts": split_group_counts,
         "split_group_overlap": simulated_overlap,
         "grounding_metric": "extractive claim containment (heuristic)",
+        "sufficient_rows": sufficient_rows,
+        "partial_rows": partial_rows,
+        "conflict_rows": conflict_rows,
+        "partial_with_full_gold_answer_coverage": partial_with_full_gold_answer_coverage,
+        "sufficient_with_missing_information": sufficient_with_missing_information,
+        "partial_with_empty_missing_information": partial_with_empty_missing_information,
+        "partial_without_useful_coverage": partial_without_useful_coverage,
+        "sufficient_with_suspicious_coverage": sufficient_with_suspicious_coverage,
+        "duplicate_rows_selecting_all_duplicates": duplicate_rows_selecting_all_duplicates,
+        "generic_missing_information_count": generic_missing_information_count,
+        "relevance_status_shortcut_stats": relevance_status_shortcut_stats,
+        "relevance_shortcut_detected": relevance_shortcut_detected,
         "errors": errors,
         "warnings": warnings,
     }

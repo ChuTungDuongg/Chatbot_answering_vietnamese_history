@@ -32,24 +32,28 @@ Runtime tự derive `selected_ids`, `rejected_ids`, `compressed_context` và `su
 ```bash
 python -m training.evidence_agent.prepare_dataset \
   --input Dataset/merged_jsonl/all_messages.jsonl \
-  --output datasets/evidence_agent/train_v2.jsonl
+  --output datasets/evidence_agent/train.jsonl
 
 python -m training.evidence_agent.validate_dataset \
-  --dataset datasets/evidence_agent/train_v2.jsonl
+  --dataset datasets/evidence_agent/train.jsonl
 ```
 
 Builder giữ clean sufficient examples và tạo các behavior có tỷ lệ cấu hình được: duplicate, controlled numeric conflict, partial evidence, relevant+distractor và insufficient. Conflict giả lập chỉ tồn tại trong training row với metadata `synthetic_conflict`; nó không được ghi vào history corpus. Claims/compression là extractive để validator có thể kiểm tra grounding.
 
+Partial augmentation không còn được gán chỉ bằng regex/quota. Builder trích các answer component có độ tin cậy cao từ cấu trúc câu hỏi và gold answer, thử loại supporting chunk/claim, rồi chỉ giữ target partial khi input còn hỗ trợ ít nhất một component nhưng thực sự mất component khác. Nếu evidence còn cover đủ, row trở lại sufficient; nếu không chứng minh được partial một cách bảo thủ, augmentation bị bỏ. `missing_information` được sinh theo slot cụ thể như thời gian, người chỉ đạo, lực lượng đối phương, hiệu hoặc tự.
+
+`relevance` được tính từ độ phủ token nội dung giữa question và từng evidence item, độc lập với status của toàn evidence pool. Metadata `semantic_coverage` và `coverage_audit` không nằm trong messages dùng để train; chúng phục vụ audit/validator.
+
 Source row legacy cite evidence ID không có trong chính input context sẽ bị loại thay vì tự remap hoặc bịa evidence. CLI báo rõ `dropped_source_rows`.
 
-Validator kiểm tra JSON/schema, ID/group uniqueness, selected ID tồn tại, grounded claims, non-empty compression, generic summary, semantics duplicate/conflict/partial, class distribution và group overlap của split mô phỏng. Critical error trả exit code khác 0.
+Validator kiểm tra JSON/schema, ID/group uniqueness, selected ID tồn tại, grounded claims, non-empty compression, generic summary/missing-information, answer-component coverage, relevance shortcut, semantics duplicate/conflict/partial, class distribution và group overlap của split mô phỏng. Critical error trả exit code khác 0; các coverage case chỉ có heuristic confidence được báo warning riêng thay vì tự động relabel.
 
 ## Corrective fine-tune từ adapter hiện có
 
 ```bash
 python -m training.evidence_agent.train \
   --model-id Qwen/Qwen3-4B-Instruct-2507 \
-  --dataset datasets/evidence_agent/train_v2.jsonl \
+  --dataset datasets/evidence_agent/train.jsonl \
   --init-adapter /path/to/evidence-agent-full \
   --batch-size 1 \
   --eval-batch-size 1 \

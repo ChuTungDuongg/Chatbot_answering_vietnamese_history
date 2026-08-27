@@ -81,8 +81,12 @@ class EvidenceModelOutput(BaseModel):
             raise ValueError("selected evidence requires non-empty grounded claims")
         if self.status == "sufficient" and not self.selected_evidence:
             raise ValueError("sufficient output requires selected evidence")
+        if self.status == "sufficient" and self.missing_information:
+            raise ValueError("sufficient output must not contain missing_information")
         if self.status == "conflicting" and not self.conflicts:
             raise ValueError("conflicting output requires a non-empty conflicts list")
+        if self.status != "conflicting" and self.conflicts:
+            raise ValueError("conflicts are only valid when status is conflicting")
         if self.status == "insufficient" and not self.missing_information:
             raise ValueError("insufficient output requires missing_information")
         return self

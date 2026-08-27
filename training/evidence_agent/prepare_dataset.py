@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import re
 from collections import Counter
@@ -11,6 +12,12 @@ from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput, SelectedEvidence
 from training.common.datasets import first_user_assistant, load_messages
 from training.common.jsonl import write_jsonl
+from training.evidence_agent.coverage import (
+    CoverageAssessment,
+    assess_answer_coverage,
+    evidence_relevance,
+    specific_missing_information,
+)
 from training.history_answerer.evaluate import parse_source_ids
 
 
@@ -116,7 +123,12 @@ def _selected_item(
     claims, compressed = grounded_compression(question, answer, str(source["text"]), max_chars=max_chars)
     if not claims or not compressed:
         raise ValueError(f"selected evidence {evidence_id!r} produced empty compression")
-    return SelectedEvidence(evidence_id=evidence_id, relevance=1.0, claims=claims, compressed_text=compressed)
+    return SelectedEvidence(
+        evidence_id=evidence_id,
+        relevance=evidence_relevance(question, str(source["text"])),
+        claims=claims,
+        compressed_text=compressed,
+    )
 
 
 def _base_record(row: dict[str, Any], *, compression_max_chars: int) -> dict[str, Any]:
@@ -153,6 +165,8 @@ def _base_record(row: dict[str, Any], *, compression_max_chars: int) -> dict[str
             missing_information=["Evidence được cung cấp không nêu đủ thông tin để trả lời chắc chắn."],
             summary=f"Evidence được cung cấp chưa đủ để trả lời câu hỏi: {question}",
         )
+    selected_source_texts = [str(by_id[item.evidence_id]["text"]) for item in selected]
+    coverage = assess_answer_coverage(question, answer, selected_source_texts)
     return {
         "source": row,
         "question": question,
@@ -160,6 +174,7 @@ def _base_record(row: dict[str, Any], *, compression_max_chars: int) -> dict[str
         "answer": answer,
         "output": output,
         "source_hash": stable_source_hash(row),
+        "base_coverage": coverage,
     }
 
 
@@ -238,7 +253,7 @@ def _apply_conflict(record: dict[str, Any]) -> tuple[list[dict[str, Any]], Evide
     })
     corrupted_item = SelectedEvidence(
         evidence_id=conflict_id,
-        relevance=1.0,
+        relevance=evidence_relevance(record["question"], corrupted),
         claims=[corrupted],
         compressed_text=corrupted,
     )
@@ -262,48 +277,217 @@ def _apply_conflict(record: dict[str, Any]) -> tuple[list[dict[str, Any]], Evide
     }
 
 
-def _apply_partial(record: dict[str, Any]) -> tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]:
-    original = record["output"].selected_evidence[0]
-    partial_claim = original.claims[0]
+def _partial_candidate(
+    record: dict[str, Any],
+    retained: list[SelectedEvidence],
+    *,
+    claim_override: tuple[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], list[SelectedEvidence], CoverageAssessment]:
     supporting_ids = {item.evidence_id for item in record["output"].selected_evidence}
-    evidence = []
+    retained_by_id = {item.evidence_id: item for item in retained}
+    evidence: list[dict[str, Any]] = []
     for item in record["evidence"]:
         candidate = dict(item)
-        if candidate["evidence_id"] == original.evidence_id:
-            candidate["text"] = partial_claim
-            candidate["source_type"] = "synthetic_partial"
-        elif candidate["evidence_id"] in supporting_ids:
-            # A multipart partial example keeps A but removes gold chunks that
-            # would still reveal B and make the input sufficient.
+        evidence_id = candidate["evidence_id"]
+        if evidence_id not in supporting_ids:
+            evidence.append(candidate)
             continue
+        if evidence_id not in retained_by_id:
+            continue
+        if claim_override and evidence_id == claim_override[0]:
+            candidate["text"] = claim_override[1]
+            candidate["source_type"] = "synthetic_partial"
         evidence.append(candidate)
-    partial_item = SelectedEvidence(
-        evidence_id=original.evidence_id,
-        relevance=0.75,
-        claims=[partial_claim],
-        compressed_text=partial_claim,
+
+    retained_ids = set(retained_by_id)
+    retained_texts = [str(item["text"]) for item in evidence if item["evidence_id"] in retained_ids]
+    retained_coverage = assess_answer_coverage(record["question"], record["answer"], retained_texts)
+    # A nominal distractor may independently reveal the component being
+    # ablated. Remove only those hidden-support chunks; otherwise the provided
+    # pool would still be sufficient even though the gold selection is partial.
+    filtered_evidence: list[dict[str, Any]] = []
+    retained_components = set(retained_coverage.supported_keys)
+    for item in evidence:
+        if item["evidence_id"] in retained_ids:
+            filtered_evidence.append(item)
+            continue
+        item_coverage = assess_answer_coverage(
+            record["question"], record["answer"], [str(item["text"])]
+        )
+        if set(item_coverage.supported_keys) - retained_components:
+            continue
+        filtered_evidence.append(item)
+    evidence = filtered_evidence
+
+    assessment = assess_answer_coverage(
+        record["question"], record["answer"], [str(item["text"]) for item in evidence]
     )
+    return evidence, retained, assessment
+
+
+def _propose_partial(
+    record: dict[str, Any],
+) -> tuple[tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]] | None, dict[str, Any]]:
+    base_coverage: CoverageAssessment = record["base_coverage"]
+    audit_base = {
+        "old_status": "insufficient",
+        "old_behavior": "partial",
+        "base_selected_coverage": base_coverage.as_dict(),
+    }
+    if not base_coverage.confident or len(base_coverage.requirements) < 2:
+        original = record["output"].selected_evidence[0]
+        claim = original.claims[0]
+        _, _, retained_assessment = _partial_candidate(
+            record,
+            [
+                SelectedEvidence(
+                    evidence_id=original.evidence_id,
+                    relevance=evidence_relevance(record["question"], claim),
+                    claims=[claim],
+                    compressed_text=claim,
+                )
+            ],
+            claim_override=(original.evidence_id, claim),
+        )
+        if retained_assessment.full:
+            outcome = "reclassified_to_sufficient"
+            reason = "remaining evidence still covers complete gold answer"
+        else:
+            outcome = "dropped_invalid"
+            reason = "no high-confidence multi-component ablation can prove partial coverage"
+        return None, {
+            **audit_base,
+            "new_status": "sufficient",
+            "audit_outcome": outcome,
+            "reason": reason,
+        }
+    if not base_coverage.full:
+        return None, {
+            **audit_base,
+            "new_status": "dropped",
+            "audit_outcome": "dropped_invalid",
+            "reason": "original selected evidence does not cover the complete gold answer",
+        }
+
+    original_selected = list(record["output"].selected_evidence)
+    candidates: list[tuple[list[dict[str, Any]], list[SelectedEvidence], CoverageAssessment]] = []
+
+    # Sentence-level ablation handles a single chunk containing separate answer
+    # units (for example, date in one sentence and leader in another).
+    for original in original_selected:
+        for claim in original.claims:
+            selected = SelectedEvidence(
+                evidence_id=original.evidence_id,
+                relevance=evidence_relevance(record["question"], claim),
+                claims=[claim],
+                compressed_text=claim,
+            )
+            candidates.append(
+                _partial_candidate(record, [selected], claim_override=(original.evidence_id, claim))
+            )
+
+    # Chunk-level ablation handles A/B support distributed across chunks.
+    for count in range(1, len(original_selected)):
+        for subset in itertools.combinations(original_selected, count):
+            candidates.append(_partial_candidate(record, list(subset)))
+
+    def selected_coverage(
+        item: tuple[list[dict[str, Any]], list[SelectedEvidence], CoverageAssessment]
+    ) -> CoverageAssessment:
+        evidence, selected, _ = item
+        by_id = {candidate["evidence_id"]: candidate for candidate in evidence}
+        return assess_answer_coverage(
+            record["question"],
+            record["answer"],
+            [str(by_id[value.evidence_id]["text"]) for value in selected if value.evidence_id in by_id],
+        )
+
+    valid = [item for item in candidates if item[2].partial and selected_coverage(item).useful]
+    if not valid:
+        outcome = "reclassified_to_sufficient" if any(item[2].full for item in candidates) else "dropped_invalid"
+        reason = (
+            "remaining evidence still covers complete gold answer"
+            if outcome == "reclassified_to_sufficient"
+            else "proposed ablation retains no useful answer component"
+        )
+        return None, {
+            **audit_base,
+            "new_status": "sufficient",
+            "audit_outcome": outcome,
+            "reason": reason,
+        }
+
+    evidence, selected, assessment = sorted(
+        valid,
+        key=lambda item: (
+            -len(item[2].supported_keys),
+            tuple(
+                index
+                for index, requirement in enumerate(item[2].requirements)
+                if requirement.key in item[2].supported_keys
+            ),
+            len(item[1]),
+            tuple(selected.evidence_id for selected in item[1]),
+        ),
+    )[0]
+    missing = specific_missing_information(assessment)
     output = EvidenceModelOutput(
         status="insufficient",
-        selected_evidence=[partial_item],
+        selected_evidence=selected,
         conflicts=[],
-        missing_information=[f"Thiếu evidence cho các phần còn lại của câu hỏi: {record['question']}"],
-        summary=f"Evidence {original.evidence_id} chỉ hỗ trợ một phần: {partial_claim}",
+        missing_information=missing,
+        summary=(
+            f"Evidence đã chọn hỗ trợ {len(assessment.supported_keys)}/{len(assessment.requirements)} "
+            f"thành phần trả lời; còn thiếu: {'; '.join(missing)}"
+        ),
     )
-    return evidence, output, {"synthetic_partial": True, "retained_evidence_id": original.evidence_id}
+    audit = {
+        **audit_base,
+        "new_status": "insufficient",
+        "audit_outcome": "remain_true_partial",
+        "reason": "supporting-unit ablation causes verified answer-component loss",
+        "remaining_coverage": assessment.as_dict(),
+    }
+    return (
+        evidence,
+        output,
+        {
+            "synthetic_partial": True,
+            "retained_evidence_ids": [item.evidence_id for item in selected],
+            "coverage_audit": audit,
+        },
+    ), audit
 
 
 def _format_row(record: dict[str, Any], behavior: str, *, max_selected: int) -> dict[str, Any]:
     evidence = record["evidence"]
     output: EvidenceModelOutput = record["output"]
-    metadata: dict[str, Any] = {"synthetic": False}
+    metadata: dict[str, Any] = {"synthetic": False, "gold_answer": record["answer"]}
+    if record.get("coverage_audit"):
+        metadata["coverage_audit"] = record["coverage_audit"]
     if behavior == "duplicate":
-        evidence, output, metadata = _apply_duplicate(record)
+        evidence, output, behavior_metadata = _apply_duplicate(record)
+        metadata.update(behavior_metadata)
     elif behavior == "conflict":
-        evidence, output, metadata = _apply_conflict(record)
+        evidence, output, behavior_metadata = _apply_conflict(record)
+        metadata.update(behavior_metadata)
     elif behavior == "partial":
-        evidence, output, metadata = _apply_partial(record)
+        evidence, output, behavior_metadata = record["partial_variant"]
+        metadata.update(behavior_metadata)
     request = EvidenceAgentRequest(question=record["question"], max_selected=max_selected, evidence=evidence)
+    candidates = {item.evidence_id: item for item in request.evidence}
+    input_coverage = assess_answer_coverage(
+        record["question"], record["answer"], [item.text for item in request.evidence]
+    )
+    selected_coverage = assess_answer_coverage(
+        record["question"],
+        record["answer"],
+        [candidates[item.evidence_id].text for item in output.selected_evidence if item.evidence_id in candidates],
+    )
+    metadata["semantic_coverage"] = {
+        "input": input_coverage.as_dict(),
+        "selected": selected_coverage.as_dict(),
+    }
     legacy_id = str(record["source"].get("id") or f"source-{record['source_hash'][:12]}")
     group_id = f"evidence-history-{_id_component(legacy_id, 'unknown-group')}"
     sample_id = f"{group_id}-{behavior}-{record['source_hash'][:16]}"
@@ -336,6 +520,7 @@ def build_dataset_v2(
     partial_ratio: float = 0.12,
     compression_max_chars: int = 600,
     max_selected: int = 8,
+    audit_report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if any(value < 0 or value > 1 for value in (duplicate_ratio, conflict_ratio, partial_ratio)):
         raise ValueError("behavior ratios must be between 0 and 1")
@@ -352,38 +537,103 @@ def build_dataset_v2(
     # input context. Dropping those rows is safer than silently remapping IDs or
     # fabricating compression targets. The CLI reports the count explicitly.
     records: list[dict[str, Any]] = []
+    malformed_source_rows = 0
     for row in unique_rows:
         try:
             records.append(_base_record(row, compression_max_chars=compression_max_chars))
         except InvalidSourceRowError:
+            malformed_source_rows += 1
             continue
     sufficient_indices = [index for index, item in enumerate(records) if item["output"].status == "sufficient"]
+    coverage_invalid_indices = {
+        index
+        for index in sufficient_indices
+        if records[index]["base_coverage"].confident and not records[index]["base_coverage"].full
+    }
+    suspicious_heuristic_indices = {
+        index
+        for index in sufficient_indices
+        if not records[index]["base_coverage"].confident and not records[index]["base_coverage"].full
+    }
 
     def ordered(indices: list[int], salt: str) -> list[int]:
         return sorted(indices, key=lambda index: hashlib.sha256(f"{salt}:{records[index]['source_hash']}".encode()).hexdigest())
 
-    assigned: dict[int, str] = {}
-    conflict_eligible = [
+    # Reconstruct the v2 assignment order solely to audit all 119 rows that
+    # were previously labelled partial. Final v2.1 assignment is computed
+    # separately below so semantic partials can be prioritized.
+    legacy_assigned: dict[int, str] = {}
+    legacy_conflict_eligible = [
         index for index in sufficient_indices
         if _mutate_fact(records[index]["output"].selected_evidence[0].compressed_text) is not None
     ]
     conflict_target = round(len(records) * conflict_ratio)
+    for index in ordered(legacy_conflict_eligible, "conflict")[:conflict_target]:
+        legacy_assigned[index] = "conflict"
+
+    remaining = [index for index in sufficient_indices if index not in legacy_assigned]
+    duplicate_target = round(len(records) * duplicate_ratio)
+    for index in ordered(remaining, "duplicate")[:duplicate_target]:
+        legacy_assigned[index] = "duplicate"
+
+    remaining = [index for index in sufficient_indices if index not in legacy_assigned]
+    partial_eligible = [index for index in remaining if MULTIPART_RE.search(records[index]["question"])]
+    partial_target = round(len(records) * partial_ratio)
+    old_partial_indices = ordered(partial_eligible, "partial")[:partial_target]
+    partial_outcomes: Counter[str] = Counter()
+    for index in old_partial_indices:
+        variant, audit = _propose_partial(records[index])
+        partial_outcomes[audit["audit_outcome"]] += 1
+        if variant is None:
+            records[index]["coverage_audit"] = audit
+
+    # V2.1 prioritizes every semantically verified partial candidate (up to the
+    # configured cap), then backfills conflict/duplicate quotas from other
+    # rows. Previously broken partial rows are protected from unrelated
+    # synthetic relabelling so their corrected sufficient targets remain clear.
+    assigned: dict[int, str] = {}
+    safe_partial_variants: dict[int, tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]] = {}
+    for index in sufficient_indices:
+        if index in coverage_invalid_indices:
+            continue
+        variant, audit = _propose_partial(records[index])
+        if variant is not None:
+            safe_partial_variants[index] = variant
+            if index not in old_partial_indices:
+                variant[2]["coverage_audit"] = {
+                    **audit,
+                    "old_status": "sufficient",
+                    "old_behavior": "source_sufficient",
+                    "audit_outcome": "new_true_partial",
+                }
+    for index in ordered(list(safe_partial_variants), "semantic-partial")[:partial_target]:
+        records[index]["partial_variant"] = safe_partial_variants[index]
+        assigned[index] = "partial"
+
+    protected = set(old_partial_indices)
+    conflict_eligible = [
+        index
+        for index in sufficient_indices
+        if index not in assigned
+        and index not in protected
+        and index not in coverage_invalid_indices
+        and _mutate_fact(records[index]["output"].selected_evidence[0].compressed_text) is not None
+    ]
     for index in ordered(conflict_eligible, "conflict")[:conflict_target]:
         assigned[index] = "conflict"
 
-    remaining = [index for index in sufficient_indices if index not in assigned]
-    duplicate_target = round(len(records) * duplicate_ratio)
-    for index in ordered(remaining, "duplicate")[:duplicate_target]:
+    duplicate_eligible = [
+        index
+        for index in sufficient_indices
+        if index not in assigned and index not in protected and index not in coverage_invalid_indices
+    ]
+    for index in ordered(duplicate_eligible, "duplicate")[:duplicate_target]:
         assigned[index] = "duplicate"
-
-    remaining = [index for index in sufficient_indices if index not in assigned]
-    partial_eligible = [index for index in remaining if MULTIPART_RE.search(records[index]["question"])]
-    partial_target = round(len(records) * partial_ratio)
-    for index in ordered(partial_eligible, "partial")[:partial_target]:
-        assigned[index] = "partial"
 
     output: list[dict[str, Any]] = []
     for index, record in enumerate(records):
+        if index in coverage_invalid_indices:
+            continue
         if index in assigned:
             behavior = assigned[index]
         elif record["output"].status == "insufficient":
@@ -396,6 +646,23 @@ def build_dataset_v2(
     ids = [row["id"] for row in output]
     if len(ids) != len(set(ids)):
         raise ValueError("Evidence v2 builder produced duplicate row IDs")
+    if audit_report is not None:
+        audit_report.clear()
+        audit_report.update({
+            "source_rows": len(source_rows),
+            "unique_source_rows": len(unique_rows),
+            "malformed_source_rows": malformed_source_rows,
+            "coverage_invalid_source_rows": len(coverage_invalid_indices),
+            "old_partial_rows": len(old_partial_indices),
+            "reclassified_to_sufficient": partial_outcomes["reclassified_to_sufficient"],
+            "remain_true_partial": partial_outcomes["remain_true_partial"],
+            "dropped_invalid_partial_augmentation": partial_outcomes["dropped_invalid"],
+            "new_verified_partial_rows": sum(value == "partial" for value in assigned.values()),
+            "sufficient_audited": len(sufficient_indices),
+            "suspicious_insufficient_coverage": len(coverage_invalid_indices) + len(suspicious_heuristic_indices),
+            "high_confidence_insufficient_coverage": len(coverage_invalid_indices),
+            "heuristic_coverage_warnings": len(suspicious_heuristic_indices),
+        })
     return output
 
 
@@ -411,7 +678,7 @@ def build_row(row: dict[str, Any]) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build Evidence Agent v2 data using the canonical runtime model-output schema.")
     parser.add_argument("--input", default="Dataset/merged_jsonl/all_messages.jsonl")
-    parser.add_argument("--output", default="datasets/evidence_agent/train_v2.jsonl")
+    parser.add_argument("--output", default="datasets/evidence_agent/train.jsonl")
     parser.add_argument("--duplicate-ratio", type=float, default=0.13)
     parser.add_argument("--conflict-ratio", type=float, default=0.13)
     parser.add_argument("--partial-ratio", type=float, default=0.12)
@@ -426,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     source_rows = load_messages(args.input)
     if args.max_source_rows is not None:
         source_rows = source_rows[: max(args.max_source_rows, 0)]
+    audit_report: dict[str, Any] = {}
     rows = build_dataset_v2(
         source_rows,
         duplicate_ratio=args.duplicate_ratio,
@@ -433,6 +701,7 @@ def main(argv: list[str] | None = None) -> int:
         partial_ratio=args.partial_ratio,
         compression_max_chars=args.compression_max_chars,
         max_selected=args.max_selected,
+        audit_report=audit_report,
     )
     status = Counter(row["output"]["status"] for row in rows)
     behavior = Counter(row["behavior"] for row in rows)
@@ -443,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
         "dropped_source_rows": len(source_rows) - count,
         "status": status,
         "behavior": behavior,
+        "semantic_audit": audit_report,
     }, ensure_ascii=False, sort_keys=True))
     return 0
 

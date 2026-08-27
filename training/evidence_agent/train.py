@@ -14,7 +14,7 @@ from training.evidence_agent.validate_dataset import validate_rows
 def build_parser() -> argparse.ArgumentParser:
     cfg = EvidenceAgentConfig()
     parser = argparse.ArgumentParser(description="QLoRA SFT for the canonical Evidence Critic/Compressor contract.")
-    parser.add_argument("--dataset", default="datasets/evidence_agent/train_v2.jsonl")
+    parser.add_argument("--dataset", default="datasets/evidence_agent/train.jsonl")
     parser.add_argument("--output-dir", default="artifacts/training/evidence_agent/qwen3_critic_v2")
     parser.add_argument("--model-id", default=cfg.model_id)
     parser.add_argument(
