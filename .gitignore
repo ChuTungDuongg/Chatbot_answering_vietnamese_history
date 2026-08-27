@@ -114,6 +114,10 @@ qdrant_storage/
 *_messages.jsonl
 *_stats.json
 
+# Keep the VN-history source and generated Research Agent trajectories in Git.
+!Dataset/merged_jsonl/all_messages.jsonl
+!datasets/research_agent/history_trajectories.jsonl
+
 # =========================
 # Chunk export outputs
 # =========================
