@@ -18,6 +18,11 @@ from training.evidence_agent.coverage import (
     evidence_relevance,
     specific_missing_information,
 )
+from training.evidence_agent.conflicts import (
+    ConflictMutation,
+    propose_irrelevant_disagreement,
+    propose_question_relevant_conflict,
+)
 from training.history_answerer.evaluate import parse_source_ids
 
 
@@ -190,90 +195,156 @@ def _mutate_fact(text: str) -> tuple[str, str, str] | None:
     return text[: match.start()] + new + text[match.end() :], old, new
 
 
+def _opaque_evidence_id(record: dict[str, Any], parent_id: str, purpose: str) -> str:
+    digest = hashlib.sha256(
+        f"{record['source_hash']}:{parent_id}:{purpose}".encode("utf-8")
+    ).hexdigest()[:20]
+    return f"ev_{digest}"
+
+
+def _opaque_chunk_id(record: dict[str, Any], parent_id: str, purpose: str) -> str:
+    digest = hashlib.sha256(
+        f"chunk:{record['source_hash']}:{parent_id}:{purpose}".encode("utf-8")
+    ).hexdigest()[:20]
+    return f"chunk_{digest}"
+
+
+def _date_paraphrase(text: str) -> str:
+    word_date = re.search(
+        r"\bngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{3,4})\b",
+        text,
+        re.I,
+    )
+    if word_date:
+        replacement = f"ngày {word_date.group(1)}/{word_date.group(2)}/{word_date.group(3)}"
+        return text[: word_date.start()] + replacement + text[word_date.end() :]
+    slash_date = re.search(r"(?<!\d)(\d{1,2})/(\d{1,2})/(\d{3,4})(?!\d)", text)
+    if slash_date:
+        replacement = (
+            f"{slash_date.group(1)} tháng {slash_date.group(2)} năm {slash_date.group(3)}"
+        )
+        return text[: slash_date.start()] + replacement + text[slash_date.end() :]
+    return f"Theo nguồn này, {text}"
+
+
 def _apply_duplicate(record: dict[str, Any]) -> tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]:
     evidence = [dict(item) for item in record["evidence"]]
     selected = record["output"].selected_evidence[0]
     source = next(item for item in evidence if item["evidence_id"] == selected.evidence_id)
-    exact_id = f"{selected.evidence_id}__dup_exact"
-    overlap_id = f"{selected.evidence_id}__dup_overlap"
-    paraphrase_id = f"{selected.evidence_id}__dup_paraphrase"
-    cross_source_id = f"{selected.evidence_id}__dup_cross_source"
+    exact_id = _opaque_evidence_id(record, selected.evidence_id, "duplicate-exact")
+    overlap_id = _opaque_evidence_id(record, selected.evidence_id, "duplicate-overlap")
+    paraphrase_id = _opaque_evidence_id(record, selected.evidence_id, "duplicate-paraphrase")
+    cross_source_id = _opaque_evidence_id(record, selected.evidence_id, "duplicate-cross-source")
     evidence.extend([
         {
             **source,
             "evidence_id": exact_id,
-            "chunk_id": exact_id,
-            "source_type": "synthetic_duplicate_exact",
+            "chunk_id": _opaque_chunk_id(record, selected.evidence_id, "duplicate-exact"),
         },
         {
             **source,
             "evidence_id": overlap_id,
-            "chunk_id": overlap_id,
-            "source_type": "synthetic_duplicate_overlap",
+            "chunk_id": _opaque_chunk_id(record, selected.evidence_id, "duplicate-overlap"),
             "text": selected.compressed_text,
         },
         {
             **source,
             "evidence_id": paraphrase_id,
-            "chunk_id": paraphrase_id,
-            "source_type": "synthetic_duplicate_paraphrase",
-            "text": f"Theo evidence nguồn, {selected.compressed_text}",
+            "chunk_id": _opaque_chunk_id(record, selected.evidence_id, "duplicate-paraphrase"),
+            "text": _date_paraphrase(selected.compressed_text),
         },
         {
             **source,
             "evidence_id": cross_source_id,
-            "chunk_id": cross_source_id,
-            "source_type": "synthetic_duplicate_cross_source",
+            "chunk_id": _opaque_chunk_id(record, selected.evidence_id, "duplicate-cross-source"),
             "text": selected.compressed_text,
             "url": None,
         },
     ])
     return evidence, record["output"], {
-        "synthetic_duplicate": True,
+        "synthetic": True,
+        "augmentation_type": "duplicate",
         "duplicate_types": ["exact", "overlapping_chunk", "attribution_paraphrase", "cross_source_simulation"],
-        "duplicate_of": selected.evidence_id,
+        "parent_evidence_id": selected.evidence_id,
+        "augmented_evidence_ids": [exact_id, overlap_id, paraphrase_id, cross_source_id],
     }
 
 
-def _apply_conflict(record: dict[str, Any]) -> tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]:
+def _apply_conflict(
+    record: dict[str, Any],
+    variant: tuple[str, ConflictMutation],
+) -> tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]:
     evidence = [dict(item) for item in record["evidence"]]
-    original = record["output"].selected_evidence[0]
-    mutation = _mutate_fact(original.compressed_text)
-    if mutation is None:
-        raise ValueError("conflict candidate has no controllable numeric factual slot")
-    corrupted, old, new = mutation
-    conflict_id = f"{original.evidence_id}__conflict"
-    source = next(item for item in evidence if item["evidence_id"] == original.evidence_id)
+    parent_id, mutation = variant
+    source = next(item for item in evidence if item["evidence_id"] == parent_id)
+    conflict_id = _opaque_evidence_id(record, parent_id, f"conflict-{mutation.slot_key}")
     evidence.append({
         **source,
         "evidence_id": conflict_id,
-        "chunk_id": conflict_id,
-        "source_type": "synthetic_conflict",
-        "text": corrupted,
+        "chunk_id": _opaque_chunk_id(record, parent_id, f"conflict-{mutation.slot_key}"),
+        "text": mutation.mutated_claim,
     })
+    original_item = SelectedEvidence(
+        evidence_id=parent_id,
+        relevance=evidence_relevance(record["question"], mutation.original_claim),
+        claims=[mutation.original_claim],
+        compressed_text=mutation.original_claim,
+    )
     corrupted_item = SelectedEvidence(
         evidence_id=conflict_id,
-        relevance=evidence_relevance(record["question"], corrupted),
-        claims=[corrupted],
-        compressed_text=corrupted,
+        relevance=evidence_relevance(record["question"], mutation.mutated_claim),
+        claims=[mutation.mutated_claim],
+        compressed_text=mutation.mutated_claim,
     )
     output = EvidenceModelOutput(
         status="conflicting",
-        selected_evidence=[original, corrupted_item],
+        selected_evidence=[original_item, corrupted_item],
         conflicts=[
-            f"{original.evidence_id} nêu giá trị {old}, trong khi {conflict_id} nêu giá trị {new} cho cùng fact."
+            f"{parent_id} nêu {mutation.slot_label} là {mutation.original_value}, trong khi "
+            f"{conflict_id} nêu {mutation.slot_label} là {mutation.mutated_value}."
         ],
-        missing_information=["Cần nguồn đáng tin cậy để xác minh giá trị đang mâu thuẫn."],
+        missing_information=[f"Cần xác minh {mutation.slot_label} đang có hai giá trị không tương thích."],
         summary=(
             f"Evidence cho câu hỏi “{record['question']}” mâu thuẫn giữa "
-            f"{original.evidence_id} và {conflict_id}; chưa thể kết luận chắc chắn."
+            f"{parent_id} và {conflict_id}; chưa thể kết luận chắc chắn."
         ),
     )
     return evidence, output, {
-        "synthetic_conflict": True,
-        "corrupted_evidence_id": conflict_id,
-        "original_value": old,
-        "corrupted_value": new,
+        "synthetic": True,
+        "augmentation_type": "conflict",
+        "parent_evidence_id": parent_id,
+        "augmented_evidence_ids": [conflict_id],
+        "mutated_evidence_id": conflict_id,
+        "mutated_slot": mutation.slot_key,
+        "slot_label": mutation.slot_label,
+        "conflict_type": mutation.conflict_type,
+        "original_value": mutation.original_value,
+        "mutated_value": mutation.mutated_value,
+    }
+
+
+def _apply_irrelevant_disagreement(
+    record: dict[str, Any],
+    variant: tuple[str, ConflictMutation],
+) -> tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]:
+    evidence = [dict(item) for item in record["evidence"]]
+    parent_id, mutation = variant
+    source = next(item for item in evidence if item["evidence_id"] == parent_id)
+    augmented_id = _opaque_evidence_id(record, parent_id, "irrelevant-disagreement")
+    evidence.append({
+        **source,
+        "evidence_id": augmented_id,
+        "chunk_id": _opaque_chunk_id(record, parent_id, "irrelevant-disagreement"),
+        "text": mutation.mutated_claim,
+    })
+    return evidence, record["output"], {
+        "synthetic": True,
+        "augmentation_type": "irrelevant_disagreement",
+        "parent_evidence_id": parent_id,
+        "augmented_evidence_ids": [augmented_id],
+        "original_value": mutation.original_value,
+        "mutated_value": mutation.mutated_value,
+        "mutated_slot": "unrelated",
     }
 
 
@@ -296,7 +367,6 @@ def _partial_candidate(
             continue
         if claim_override and evidence_id == claim_override[0]:
             candidate["text"] = claim_override[1]
-            candidate["source_type"] = "synthetic_partial"
         evidence.append(candidate)
 
     retained_ids = set(retained_by_id)
@@ -469,7 +539,12 @@ def _format_row(record: dict[str, Any], behavior: str, *, max_selected: int) -> 
         evidence, output, behavior_metadata = _apply_duplicate(record)
         metadata.update(behavior_metadata)
     elif behavior == "conflict":
-        evidence, output, behavior_metadata = _apply_conflict(record)
+        evidence, output, behavior_metadata = _apply_conflict(record, record["conflict_variant"])
+        metadata.update(behavior_metadata)
+    elif behavior == "irrelevant_disagreement":
+        evidence, output, behavior_metadata = _apply_irrelevant_disagreement(
+            record, record["irrelevant_disagreement_variant"]
+        )
         metadata.update(behavior_metadata)
     elif behavior == "partial":
         evidence, output, behavior_metadata = record["partial_variant"]
@@ -559,6 +634,20 @@ def build_dataset_v2(
     def ordered(indices: list[int], salt: str) -> list[int]:
         return sorted(indices, key=lambda index: hashlib.sha256(f"{salt}:{records[index]['source_hash']}".encode()).hexdigest())
 
+    def diversified_conflict_order(indices: list[int]) -> list[int]:
+        buckets: dict[str, list[int]] = {}
+        for index in indices:
+            conflict_type = records[index]["conflict_variant"][1].conflict_type
+            buckets.setdefault(conflict_type, []).append(index)
+        for conflict_type, values in buckets.items():
+            buckets[conflict_type] = ordered(values, f"conflict-{conflict_type}")
+        result: list[int] = []
+        while any(buckets.values()):
+            for conflict_type in sorted(buckets):
+                if buckets[conflict_type]:
+                    result.append(buckets[conflict_type].pop(0))
+        return result
+
     # Reconstruct the v2 assignment order solely to audit all 119 rows that
     # were previously labelled partial. Final v2.1 assignment is computed
     # separately below so semantic partials can be prioritized.
@@ -610,22 +699,42 @@ def build_dataset_v2(
         records[index]["partial_variant"] = safe_partial_variants[index]
         assigned[index] = "partial"
 
-    protected = set(old_partial_indices)
-    conflict_eligible = [
-        index
-        for index in sufficient_indices
-        if index not in assigned
-        and index not in protected
-        and index not in coverage_invalid_indices
-        and _mutate_fact(records[index]["output"].selected_evidence[0].compressed_text) is not None
-    ]
-    for index in ordered(conflict_eligible, "conflict")[:conflict_target]:
+    conflict_eligible: list[int] = []
+    for index in sufficient_indices:
+        if index in assigned or index in coverage_invalid_indices:
+            continue
+        variant = propose_question_relevant_conflict(
+            question=records[index]["question"],
+            gold_answer=records[index]["answer"],
+            selected=records[index]["output"].selected_evidence,
+            evidence_texts=[str(item["text"]) for item in records[index]["evidence"]],
+        )
+        if variant is not None:
+            records[index]["conflict_variant"] = variant
+            conflict_eligible.append(index)
+    for index in diversified_conflict_order(conflict_eligible)[:conflict_target]:
         assigned[index] = "conflict"
+
+    irrelevant_disagreement_eligible: list[int] = []
+    for index in sufficient_indices:
+        if index in assigned or index in coverage_invalid_indices:
+            continue
+        variant = propose_irrelevant_disagreement(
+            question=records[index]["question"],
+            gold_answer=records[index]["answer"],
+            selected=records[index]["output"].selected_evidence,
+        )
+        if variant is not None:
+            records[index]["irrelevant_disagreement_variant"] = variant
+            irrelevant_disagreement_eligible.append(index)
+    hard_negative_target = min(max(12, conflict_target // 2), len(irrelevant_disagreement_eligible))
+    for index in ordered(irrelevant_disagreement_eligible, "irrelevant-disagreement")[:hard_negative_target]:
+        assigned[index] = "irrelevant_disagreement"
 
     duplicate_eligible = [
         index
         for index in sufficient_indices
-        if index not in assigned and index not in protected and index not in coverage_invalid_indices
+        if index not in assigned and index not in coverage_invalid_indices
     ]
     for index in ordered(duplicate_eligible, "duplicate")[:duplicate_target]:
         assigned[index] = "duplicate"
@@ -658,6 +767,18 @@ def build_dataset_v2(
             "remain_true_partial": partial_outcomes["remain_true_partial"],
             "dropped_invalid_partial_augmentation": partial_outcomes["dropped_invalid"],
             "new_verified_partial_rows": sum(value == "partial" for value in assigned.values()),
+            "legacy_numeric_conflict_candidates": len(legacy_conflict_eligible),
+            "question_relevant_conflict_candidates": len(conflict_eligible),
+            "regenerated_conflict_rows": sum(value == "conflict" for value in assigned.values()),
+            "irrelevant_disagreement_candidates": len(irrelevant_disagreement_eligible),
+            "hard_negative_irrelevant_disagreement_rows": sum(
+                value == "irrelevant_disagreement" for value in assigned.values()
+            ),
+            "conflict_type_distribution": dict(Counter(
+                records[index]["conflict_variant"][1].conflict_type
+                for index, behavior in assigned.items()
+                if behavior == "conflict"
+            )),
             "sufficient_audited": len(sufficient_indices),
             "suspicious_insufficient_coverage": len(coverage_invalid_indices) + len(suspicious_heuristic_indices),
             "high_confidence_insufficient_coverage": len(coverage_invalid_indices),
@@ -676,7 +797,7 @@ def build_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build Evidence Agent v2 data using the canonical runtime model-output schema.")
+    parser = argparse.ArgumentParser(description="Build Evidence Agent v2.2 data using the canonical runtime model-output schema.")
     parser.add_argument("--input", default="Dataset/merged_jsonl/all_messages.jsonl")
     parser.add_argument("--output", default="datasets/evidence_agent/train.jsonl")
     parser.add_argument("--duplicate-ratio", type=float, default=0.13)

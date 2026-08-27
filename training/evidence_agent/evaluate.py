@@ -5,7 +5,13 @@ import json
 from typing import Any
 
 from app.agents.schemas import EvidenceModelOutput
+from app.agents.evidence_validation import (
+    compressed_derived_from_own_claims,
+    grounded_in_source,
+    referenced_evidence_ids,
+)
 from training.common.jsonl import read_jsonl
+from training.evidence_agent.conflicts import MODEL_VISIBLE_RESERVED_MARKERS
 
 
 def _payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -33,13 +39,21 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
     invented = predicted_selected = 0
     duplicate_cases = duplicate_success = 0
     conflict_correct = 0
+    conflict_true_positive = conflict_false_positive = conflict_false_negative = 0
+    relevant_conflict_cases = relevant_conflict_correct = 0
+    irrelevant_disagreement_cases = irrelevant_disagreement_rejected = 0
     missing_proxy_correct = 0
     compressed_nonempty = compressed_total = 0
     original_chars = compressed_chars = 0
+    grounded_claims = total_claims = 0
+    grounded_compressed = total_compressed_grounding = 0
+    synthetic_marker_rows = 0
 
     for pred_row, gold_row in zip(predictions[:count], gold[:count]):
         gold_output = EvidenceModelOutput.model_validate(_payload(gold_row))
         candidates = {str(item["evidence_id"]): item for item in gold_row.get("evidence", [])}
+        visible_payload = json.dumps(gold_row.get("input") or {}, ensure_ascii=False).casefold()
+        synthetic_marker_rows += int(any(marker in visible_payload for marker in MODEL_VISIBLE_RESERVED_MARKERS))
         try:
             pred_payload = _payload(pred_row)
             parsed += 1
@@ -68,15 +82,25 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
 
         if gold_row.get("behavior") == "duplicate":
             duplicate_cases += 1
-            duplicate_ids = {
-                evidence_id
-                for evidence_id, item in candidates.items()
-                if str(item.get("source_type") or "").startswith("synthetic_duplicate")
-            }
+            duplicate_ids = set((gold_row.get("metadata") or {}).get("augmented_evidence_ids") or [])
             duplicate_success += int(bool(pred_ids & gold_ids) and not (pred_ids & duplicate_ids))
         gold_is_conflict = gold_output.status == "conflicting"
         pred_is_conflict = prediction.status == "conflicting"
         conflict_correct += int(gold_is_conflict == pred_is_conflict)
+        pred_conflict_valid = bool(
+            pred_is_conflict
+            and prediction.conflicts
+            and all(len(referenced_evidence_ids(item, candidates)) >= 2 for item in prediction.conflicts)
+        )
+        conflict_true_positive += int(gold_is_conflict and pred_conflict_valid)
+        conflict_false_positive += int(not gold_is_conflict and pred_is_conflict)
+        conflict_false_negative += int(gold_is_conflict and not pred_conflict_valid)
+        if gold_row.get("behavior") == "conflict":
+            relevant_conflict_cases += 1
+            relevant_conflict_correct += int(pred_conflict_valid)
+        if gold_row.get("behavior") == "irrelevant_disagreement":
+            irrelevant_disagreement_cases += 1
+            irrelevant_disagreement_rejected += int(not pred_is_conflict)
         missing_proxy_correct += int(bool(prediction.missing_information) == bool(gold_output.missing_information))
 
         for item in prediction.selected_evidence:
@@ -84,9 +108,22 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
             compressed_nonempty += int(bool(item.compressed_text.strip()))
             compressed_chars += len(item.compressed_text)
             if item.evidence_id in candidates:
-                original_chars += len(str(candidates[item.evidence_id].get("text") or ""))
+                source_text = str(candidates[item.evidence_id].get("text") or "")
+                original_chars += len(source_text)
+                for claim in item.claims:
+                    total_claims += 1
+                    grounded_claims += int(grounded_in_source(claim, source_text))
+                total_compressed_grounding += 1
+                grounded_compressed += int(compressed_derived_from_own_claims(item, source_text))
 
     ratio = lambda numerator, denominator: numerator / max(denominator, 1)
+    conflict_precision = ratio(conflict_true_positive, conflict_true_positive + conflict_false_positive)
+    conflict_recall = ratio(conflict_true_positive, conflict_true_positive + conflict_false_negative)
+    conflict_f1 = (
+        0.0
+        if conflict_precision + conflict_recall == 0
+        else 2 * conflict_precision * conflict_recall / (conflict_precision + conflict_recall)
+    )
     return {
         "count": count,
         "json_parse_rate": ratio(parsed, count),
@@ -98,11 +135,25 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
         "invented_id_rate": ratio(invented, predicted_selected),
         "duplicate_reduction_rate": ratio(duplicate_success, duplicate_cases),
         "conflict_detection_accuracy": ratio(conflict_correct, count),
+        "conflict_precision": conflict_precision,
+        "conflict_recall": conflict_recall,
+        "conflict_f1": conflict_f1,
+        "question_relevant_conflict_detection_accuracy": ratio(
+            relevant_conflict_correct, relevant_conflict_cases
+        ),
+        "irrelevant_disagreement_rejection_accuracy": ratio(
+            irrelevant_disagreement_rejected, irrelevant_disagreement_cases
+        ),
+        "per_evidence_claim_grounding_rate": ratio(grounded_claims, total_claims),
+        "per_evidence_compressed_grounding_rate": ratio(
+            grounded_compressed, total_compressed_grounding
+        ),
+        "synthetic_marker_leakage_rate": ratio(synthetic_marker_rows, count),
         "missing_information_accuracy_proxy": ratio(missing_proxy_correct, count),
         "compressed_text_nonempty_rate": ratio(compressed_nonempty, compressed_total),
         "compression_ratio": ratio(compressed_chars, original_chars),
-        "semantic_grounding_metric": None,
-        "semantic_grounding_note": "No reliable automated semantic grounding metric is claimed; use human/execution evaluation.",
+        "semantic_grounding_metric": "normalized extractive containment per evidence_id",
+        "semantic_grounding_note": "Conservative normalized grounding; semantic paraphrases still require human evaluation.",
     }
 
 

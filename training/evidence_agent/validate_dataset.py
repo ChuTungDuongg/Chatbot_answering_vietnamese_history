@@ -9,6 +9,11 @@ from typing import Any
 
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
+from app.agents.evidence_validation import (
+    compressed_derived_from_own_claims,
+    grounded_in_source,
+    referenced_evidence_ids,
+)
 from training.common.datasets import split_rows
 from training.common.jsonl import read_jsonl
 from training.evidence_agent.coverage import (
@@ -16,10 +21,21 @@ from training.evidence_agent.coverage import (
     accentfold,
     assess_answer_coverage,
 )
+from training.evidence_agent.conflicts import (
+    MODEL_VISIBLE_RESERVED_MARKERS,
+    conflict_metadata_is_question_relevant,
+    conflict_values_incompatible,
+)
 from training.evidence_agent.prepare_dataset import GENERIC_SUMMARIES
 
 
-REQUIRED_V2_BEHAVIORS = {"duplicate", "conflict", "partial", "insufficient"}
+REQUIRED_V2_BEHAVIORS = {
+    "duplicate",
+    "conflict",
+    "partial",
+    "insufficient",
+    "irrelevant_disagreement",
+}
 
 
 def _normalized(text: str) -> str:
@@ -43,6 +59,23 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
     sufficient_rows = 0
     partial_rows = 0
     conflict_rows = 0
+    question_relevant_conflicts = 0
+    irrelevant_conflict_rows = 0
+    conflict_without_two_valid_ids = 0
+    conflict_without_incompatible_values = 0
+    conflict_without_slot_value_details = 0
+    model_visible_synthetic_markers = 0
+    model_visible_synthetic_source_types = 0
+    model_visible_reserved_titles = 0
+    model_visible_serialized_metadata_fields = 0
+    model_visible_conflict_id_suffixes = 0
+    model_visible_duplicate_id_suffixes = 0
+    cross_id_claim_attribution = 0
+    cross_id_compressed_attribution = 0
+    conflict_type_distribution: Counter[str] = Counter()
+    hard_negative_compatible_pairs = 0
+    hard_negative_complementary_pairs = 0
+    hard_negative_irrelevant_disagreement = 0
     partial_with_full_gold_answer_coverage = 0
     sufficient_with_missing_information = 0
     partial_with_empty_missing_information = 0
@@ -77,7 +110,8 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         if messages[0].get("content") != EVIDENCE_AGENT_SYSTEM:
             errors.append(f"{label}: system prompt differs from EVIDENCE_AGENT_SYSTEM")
         try:
-            request = EvidenceAgentRequest.model_validate(json.loads(messages[1].get("content") or ""))
+            visible_user_content = str(messages[1].get("content") or "")
+            request = EvidenceAgentRequest.model_validate(json.loads(visible_user_content))
         except Exception as exc:
             errors.append(f"{label}: invalid EvidenceAgentRequest: {exc}")
             continue
@@ -93,6 +127,38 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
             errors.append(f"{label}: top-level output differs from training assistant message")
         if row.get("question") != request.question:
             errors.append(f"{label}: question differs from canonical request")
+
+        visible_folded = visible_user_content.casefold()
+        visible_markers = [marker for marker in MODEL_VISIBLE_RESERVED_MARKERS if marker in visible_folded]
+        if visible_markers:
+            model_visible_synthetic_markers += 1
+            errors.append(f"{label}: model-visible synthetic/class markers are forbidden: {visible_markers}")
+        synthetic_sources = sum("synthetic" in item.source_type.casefold() for item in request.evidence)
+        reserved_titles = sum(
+            any(marker in str(item.title or "").casefold() for marker in MODEL_VISIBLE_RESERVED_MARKERS)
+            for item in request.evidence
+        )
+        serialized_metadata = sum(
+            marker in visible_folded
+            for marker in ("augmentation_type", "parent_evidence_id", '"behavior"', '"synthetic"')
+        )
+        model_visible_synthetic_source_types += synthetic_sources
+        model_visible_reserved_titles += reserved_titles
+        model_visible_serialized_metadata_fields += serialized_metadata
+        if synthetic_sources:
+            errors.append(f"{label}: synthetic source_type is visible to the model")
+        if reserved_titles:
+            errors.append(f"{label}: reserved augmentation marker appears in an evidence title")
+        if serialized_metadata:
+            errors.append(f"{label}: augmentation metadata/class field was serialized into the prompt")
+        conflict_suffixes = sum("__conflict" in item.evidence_id.casefold() for item in request.evidence)
+        duplicate_suffixes = sum("__dup_" in item.evidence_id.casefold() for item in request.evidence)
+        model_visible_conflict_id_suffixes += conflict_suffixes
+        model_visible_duplicate_id_suffixes += duplicate_suffixes
+        if conflict_suffixes:
+            errors.append(f"{label}: model-visible conflict ID suffix is forbidden")
+        if duplicate_suffixes:
+            errors.append(f"{label}: model-visible duplicate ID suffix is forbidden")
 
         candidates = {item.evidence_id: item for item in request.evidence}
         selected_ids = [item.evidence_id for item in output.selected_evidence]
@@ -118,10 +184,16 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
             compressed_lengths.append(len(item.compressed_text))
             copy_through += int(compressed == source_text)
             for claim in item.claims:
-                if _normalized(claim) not in source_text:
-                    errors.append(f"{label}: claim for {item.evidence_id!r} is not extractively grounded")
-            if compressed != _normalized(" ".join(item.claims)):
-                errors.append(f"{label}: compressed_text must be composed from its grounded claims")
+                if not grounded_in_source(claim, source.text):
+                    cross_id_claim_attribution += 1
+                    errors.append(
+                        f"{label}: claim for {item.evidence_id!r} is not grounded in that same evidence source"
+                    )
+            if not compressed_derived_from_own_claims(item, source.text):
+                cross_id_compressed_attribution += 1
+                errors.append(
+                    f"{label}: compressed_text for {item.evidence_id!r} is not derivable from its own claims/source"
+                )
 
         if output.summary in GENERIC_SUMMARIES:
             errors.append(f"{label}: generic template summary is forbidden")
@@ -158,21 +230,71 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
                 if not selected_coverage.useful:
                     partial_without_useful_coverage += 1
                     errors.append(f"{label}: partial selection supports no required answer component")
+        metadata = row.get("metadata") or {}
         if output.status == "conflicting":
             for conflict in output.conflicts:
-                mentioned = [evidence_id for evidence_id in candidates if evidence_id in conflict]
+                mentioned = referenced_evidence_ids(conflict, candidates)
                 if len(mentioned) < 2:
+                    conflict_without_two_valid_ids += 1
                     errors.append(f"{label}: conflict must name at least two existing evidence IDs")
         if behavior == "conflict" and output.status != "conflicting":
             errors.append(f"{label}: conflict behavior requires conflicting status")
+        if behavior == "conflict" and output.status == "conflicting":
+            conflict_type = str(metadata.get("conflict_type") or "other")
+            conflict_type_distribution[conflict_type] += 1
+            relevant = conflict_metadata_is_question_relevant(
+                question=request.question,
+                gold_answer=gold_answer,
+                metadata=metadata,
+            )
+            question_relevant_conflicts += int(relevant)
+            irrelevant_conflict_rows += int(not relevant)
+            if not relevant:
+                errors.append(f"{label}: conflict does not affect a question-relevant answer slot")
+            parent_id = str(metadata.get("parent_evidence_id") or "")
+            mutated_id = str(metadata.get("mutated_evidence_id") or "")
+            original_value = str(metadata.get("original_value") or "")
+            mutated_value = str(metadata.get("mutated_value") or "")
+            valid_pair = parent_id in candidates and mutated_id in candidates and parent_id != mutated_id
+            if not valid_pair:
+                conflict_without_two_valid_ids += 1
+                errors.append(f"{label}: conflict metadata does not identify two supplied evidence IDs")
+            values_grounded = bool(
+                valid_pair
+                and grounded_in_source(original_value, candidates[parent_id].text)
+                and grounded_in_source(mutated_value, candidates[mutated_id].text)
+            )
+            incompatible = values_grounded and conflict_values_incompatible(
+                original_value, mutated_value, conflict_type
+            )
+            if not incompatible:
+                conflict_without_incompatible_values += 1
+                errors.append(f"{label}: conflict values are missing, ungrounded, or compatible")
+            conflict_details = " ".join(output.conflicts)
+            slot_label = str(metadata.get("slot_label") or "")
+            detailed = all(
+                grounded_in_source(value, conflict_details)
+                for value in (parent_id, mutated_id, slot_label, original_value, mutated_value)
+            )
+            if not detailed:
+                conflict_without_slot_value_details += 1
+                errors.append(f"{label}: conflict description must name both IDs, the slot, and both values")
         if behavior == "duplicate":
-            duplicate_ids = {
-                item.evidence_id for item in request.evidence if item.source_type.startswith("synthetic_duplicate")
-            }
-            if not duplicate_ids or duplicate_ids & set(selected_ids):
+            duplicate_ids = set(metadata.get("augmented_evidence_ids") or [])
+            parent_id = str(metadata.get("parent_evidence_id") or "")
+            if not duplicate_ids or not duplicate_ids <= set(candidates):
+                errors.append(f"{label}: duplicate metadata must name generated evidence IDs")
+            if duplicate_ids & set(selected_ids) or parent_id not in selected_ids:
                 errors.append(f"{label}: duplicate behavior must reject generated duplicate IDs")
             if duplicate_ids and duplicate_ids <= set(selected_ids):
                 duplicate_rows_selecting_all_duplicates += 1
+            hard_negative_compatible_pairs += int(bool(duplicate_ids))
+        if behavior == "irrelevant_disagreement":
+            hard_negative_irrelevant_disagreement += 1
+            if output.status == "conflicting":
+                errors.append(f"{label}: irrelevant disagreement must not be labelled conflicting")
+        if output.status == "sufficient" and len(output.selected_evidence) >= 2:
+            hard_negative_complementary_pairs += 1
         if behavior == "partial" and not (
             output.status == "insufficient" and output.selected_evidence and output.missing_information
         ):
@@ -279,6 +401,23 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         "sufficient_rows": sufficient_rows,
         "partial_rows": partial_rows,
         "conflict_rows": conflict_rows,
+        "question_relevant_conflicts": question_relevant_conflicts,
+        "irrelevant_conflict_rows": irrelevant_conflict_rows,
+        "conflict_without_two_valid_ids": conflict_without_two_valid_ids,
+        "conflict_without_incompatible_values": conflict_without_incompatible_values,
+        "conflict_without_slot_value_details": conflict_without_slot_value_details,
+        "model_visible_synthetic_markers": model_visible_synthetic_markers,
+        "model_visible_synthetic_source_types": model_visible_synthetic_source_types,
+        "model_visible_reserved_titles": model_visible_reserved_titles,
+        "model_visible_serialized_metadata_fields": model_visible_serialized_metadata_fields,
+        "model_visible_conflict_id_suffixes": model_visible_conflict_id_suffixes,
+        "model_visible_duplicate_id_suffixes": model_visible_duplicate_id_suffixes,
+        "cross_id_claim_attribution": cross_id_claim_attribution,
+        "cross_id_compressed_attribution": cross_id_compressed_attribution,
+        "conflict_type_distribution": dict(conflict_type_distribution),
+        "hard_negative_compatible_pairs": hard_negative_compatible_pairs,
+        "hard_negative_complementary_pairs": hard_negative_complementary_pairs,
+        "hard_negative_irrelevant_disagreement": hard_negative_irrelevant_disagreement,
         "partial_with_full_gold_answer_coverage": partial_with_full_gold_answer_coverage,
         "sufficient_with_missing_information": sufficient_with_missing_information,
         "partial_with_empty_missing_information": partial_with_empty_missing_information,
@@ -294,7 +433,7 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate Evidence Agent v2 JSONL against the production runtime contract.")
+    parser = argparse.ArgumentParser(description="Validate Evidence Agent v2.2 JSONL against the production runtime contract.")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--report", default=None)
     parser.add_argument("--allow-partial-fixture", action="store_true", help="Do not require every v2 behavior in tiny fixtures.")

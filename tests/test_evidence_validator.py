@@ -45,6 +45,12 @@ def test_evaluator_scores_exact_empty_selection_as_a_match():
     assert report["runtime_schema_validity"] == 1.0
     assert report["selected_evidence_f1"] == 1.0
     assert report["invented_id_rate"] == 0.0
+    assert report["conflict_precision"] == 1.0
+    assert report["conflict_recall"] == 1.0
+    assert report["conflict_f1"] == 1.0
+    assert report["per_evidence_claim_grounding_rate"] == 1.0
+    assert report["per_evidence_compressed_grounding_rate"] == 1.0
+    assert report["synthetic_marker_leakage_rate"] == 0.0
 
 
 def test_validator_rejects_partial_input_with_full_coverage_and_generic_missing_text():
@@ -64,3 +70,27 @@ def test_validator_rejects_partial_input_with_full_coverage_and_generic_missing_
     assert not report["valid"]
     assert report["partial_with_full_gold_answer_coverage"] == 1
     assert report["generic_missing_information_count"] == 1
+
+
+def test_validator_rejects_model_visible_synthetic_markers():
+    rows = sanity_rows()
+    broken = next(item for item in rows if item["id"] == "case-d")
+    broken["input"]["evidence"][1]["source_type"] = "synthetic_duplicate_exact"
+    broken["evidence"][1]["source_type"] = "synthetic_duplicate_exact"
+    _sync_user(broken)
+    report = validate_rows(rows)
+    assert not report["valid"]
+    assert report["model_visible_synthetic_markers"] == 1
+
+
+def test_validator_rejects_cross_id_claim_and_compressed_attribution():
+    rows = sanity_rows()
+    broken = rows[0]
+    foreign = broken["evidence"][1]["text"]
+    broken["output"]["selected_evidence"][0]["claims"] = [foreign]
+    broken["output"]["selected_evidence"][0]["compressed_text"] = foreign
+    _sync_assistant(broken)
+    report = validate_rows(rows)
+    assert not report["valid"]
+    assert report["cross_id_claim_attribution"] == 1
+    assert report["cross_id_compressed_attribution"] == 1

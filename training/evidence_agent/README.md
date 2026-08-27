@@ -1,4 +1,4 @@
-# Evidence Critic / Compressor v2
+# Evidence Critic / Compressor v2.2
 
 [Training overview](../README.md) · [Runtime agents](../../app/agents/README.md)
 
@@ -43,7 +43,11 @@ python -m training.evidence_agent.preflight \
   --max-length 4096
 ```
 
-Builder giữ clean sufficient examples và tạo các behavior có tỷ lệ cấu hình được: duplicate, controlled numeric conflict, partial evidence, relevant+distractor và insufficient. Conflict giả lập chỉ tồn tại trong training row với metadata `synthetic_conflict`; nó không được ghi vào history corpus. Claims/compression là extractive để validator có thể kiểm tra grounding.
+Builder giữ clean sufficient examples và tạo các behavior có tỷ lệ cấu hình được: duplicate, question-relevant conflict, irrelevant-disagreement hard negative, partial evidence, relevant+distractor và insufficient. Augmentation chỉ tồn tại trong training row với provenance ở top-level metadata; nó không được ghi vào history corpus. Claims/compression là extractive để validator có thể kiểm tra grounding.
+
+V2.2 chỉ tạo conflict khi mutation đổi một giá trị thuộc answer slot mà question thực sự yêu cầu. Date/year, person, location, count và role/title mutation đều được rút deterministically từ question + gold answer + supplied evidence; nếu không chứng minh được same-slot incompatibility thì augmentation conflict bị bỏ. Các disagreement ngoài answer slot được dùng làm hard negative `irrelevant_disagreement` với target non-conflicting.
+
+Synthetic provenance chỉ nằm trong top-level `metadata`. Model-visible `EvidenceAgentRequest` dùng opaque stable IDs và production-like `source_type`; các marker `__conflict`, `__dup_*`, `synthetic_conflict` và `synthetic_duplicate_*` bị validator cấm. Duplicate target luôn ưu tiên source gốc và không gán claim của bản paraphrase sang evidence ID khác.
 
 Partial augmentation không còn được gán chỉ bằng regex/quota. Builder trích các answer component có độ tin cậy cao từ cấu trúc câu hỏi và gold answer, thử loại supporting chunk/claim, rồi chỉ giữ target partial khi input còn hỗ trợ ít nhất một component nhưng thực sự mất component khác. Nếu evidence còn cover đủ, row trở lại sufficient; nếu không chứng minh được partial một cách bảo thủ, augmentation bị bỏ. `missing_information` được sinh theo slot cụ thể như thời gian, người chỉ đạo, lực lượng đối phương, hiệu hoặc tự.
 
@@ -52,6 +56,8 @@ Partial augmentation không còn được gán chỉ bằng regex/quota. Builder
 Source row legacy cite evidence ID không có trong chính input context sẽ bị loại thay vì tự remap hoặc bịa evidence. CLI báo rõ `dropped_source_rows`.
 
 Validator kiểm tra JSON/schema, ID/group uniqueness, selected ID tồn tại, grounded claims, non-empty compression, generic summary/missing-information, answer-component coverage, relevance shortcut, semantics duplicate/conflict/partial, class distribution và group overlap của split mô phỏng. Critical error trả exit code khác 0; các coverage case chỉ có heuristic confidence được báo warning riêng thay vì tự động relabel.
+
+Grounding được kiểm tra theo từng evidence ID bằng normalized extractive containment. `compressed_text` phải là đoạn của chính source hoặc được ghép từ các claim đã grounded của chính source đó. Runtime áp dụng cùng invariant và reject output cross-ID attribution; conflict output còn phải nhắc ít nhất hai supplied evidence IDs.
 
 Tokenization preflight chỉ tải tokenizer, không tải Qwen weights. Nó chạy đúng đường assistant-only tokenization của Trainer cho cả train/eval/test và fail nếu input/target rỗng, assistant target bị mất, hoặc sample có 0 supervised token. Báo cáo gồm độ dài sequence, số row overlength/capped, và min/mean/max của prompt, assistant, supervised token. Với Evidence JSON quá dài, pipeline giữ nguyên question, evidence ID, title/source metadata và mọi grounded target claim; nó cắt evidence text theo cấu trúc trước khi render JSON. Assistant target được giữ nguyên toàn bộ, prompt không bị token-slice thành JSON lỗi.
 

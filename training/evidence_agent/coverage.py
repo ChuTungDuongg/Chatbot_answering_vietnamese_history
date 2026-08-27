@@ -105,9 +105,9 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
     if birth_death:
         slots.append(_slot("birth_time", "thời gian sinh", ["sinh ngày tháng năm"] ))
         slots.append(_slot("death_time", "thời gian mất hoặc qua đời", ["mất qua đời ngày tháng năm"] ))
-    elif re.search(r"\b(?:khi nao|ngay nao|thoi gian)\b", folded):
+    elif re.search(r"\b(?:khi nao|ngay nao|nam nao|thoi gian|vao nam nao)\b", folded):
         slots.append(_slot("time", "thời gian hoặc ngày tháng được hỏi", ["ngày thời gian khi"] ))
-    if re.search(r"\b(?:o dau|dia diem|noi nao)\b", folded):
+    if re.search(r"\b(?:o dau|tai dau|dia diem|noi nao|khu vuc nao)\b", folded):
         slots.append(_slot("place", "địa điểm được hỏi", ["địa điểm nơi tại ở"] ))
     if re.search(r"\b(?:do\s+ai\s+(?:lãnh đạo|chỉ đạo)|ai\s+(?:lãnh đạo|chỉ đạo))\b", raw):
         leader = "người chỉ đạo sự kiện được hỏi" if "chi dao" in folded else "người lãnh đạo sự kiện được hỏi"
@@ -116,6 +116,8 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
         slots.append(_slot("person", "người hoặc nhân vật được hỏi", ["người do làm gồm"] ))
     elif re.search(r"\bai\b", raw):
         slots.append(_slot("person", "người hoặc nhân vật được hỏi", ["người ai"] ))
+    if re.search(r"\bnhan vat\b", folded):
+        slots.append(_slot("person", "người hoặc nhân vật được hỏi", ["nhân vật người"] ))
     if re.search(r"chong(?: lai)?\s+(?:ai|luc luong nao|doi tuong nao)", folded):
         slots.append(_slot("opponent", "lực lượng hoặc đối tượng bị chống lại", ["chống lực lượng đối tượng"] ))
     if re.search(r"(?:\bcó\b|\bmang\b|\blấy\b).{0,30}\bhiệu\b|\bhiệu\s+và\s+tự\b", raw):
@@ -132,8 +134,12 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
         slots.append(_slot("result", "kết quả được hỏi", ["kết quả dẫn đến đạt được"] ))
     if re.search(r"\b(?:muc dich|nham.+?gi)\b", folded):
         slots.append(_slot("purpose", "mục đích được hỏi", ["mục đích nhằm để"] ))
-    if re.search(r"\bchuc vu\b", folded):
-        slots.append(_slot("position", "chức vụ được hỏi", ["chức vụ phong làm giữ chức"] ))
+    if re.search(r"\b(?:chuc vu|vai tro|nhiem vu)\b", folded):
+        slots.append(_slot("position", "chức vụ, vai trò hoặc nhiệm vụ được hỏi", ["chức vụ vai trò nhiệm vụ phong làm giữ chức"] ))
+    if re.search(r"\b(?:bao nhieu|so luong|may nguoi|may lan)\b", folded):
+        slots.append(_slot("count", "số lượng được hỏi", ["số lượng bao nhiêu"] ))
+    if re.search(r"\b(?:su kien nao|tran nao|chien dich nao)\b", folded):
+        slots.append(_slot("event", "sự kiện được hỏi", ["sự kiện trận chiến dịch"] ))
 
     unique: dict[str, tuple[str, str, tuple[str, ...]]] = {}
     for item in slots:
@@ -164,6 +170,8 @@ def _slot_cues(key: str) -> set[str]:
         },
         "purpose": {"muc dich", "nham", " de ", "chu truong"},
         "position": {"chuc vu", "phong", "giu"},
+        "count": {"so luong", "bao nhieu", "quan", "nguoi", "lan"},
+        "event": {"su kien", "tran", "chien dich"},
     }.get(key, set())
 
 

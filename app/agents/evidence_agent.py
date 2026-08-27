@@ -8,6 +8,11 @@ from pydantic import ValidationError
 from app.agents.model_runtime import SharedAgentModelRuntime
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceModelOutput, SelectedEvidence
+from app.agents.evidence_validation import (
+    compressed_derived_from_own_claims,
+    grounded_in_source,
+    referenced_evidence_ids,
+)
 
 
 class EvidenceModelContractError(ValueError):
@@ -133,9 +138,28 @@ class EvidenceCriticAgent:
             raise EvidenceModelContractError(f"Evidence model returned invalid canonical output: {exc}") from exc
         selected = model_output.selected_evidence
         selected_ids = [item.evidence_id for item in selected]
-        unknown = [item for item in selected_ids if item not in available]
+        visible_sources = {item.evidence_id: item.text for item in request.evidence}
+        unknown = [item for item in selected_ids if item not in visible_sources]
         if unknown:
-            raise ValueError(f"Evidence model invented IDs: {unknown}")
+            raise EvidenceModelContractError(f"Evidence model invented IDs: {unknown}")
+        for item in selected:
+            source_text = visible_sources[item.evidence_id]
+            for claim in item.claims:
+                if not grounded_in_source(claim, source_text):
+                    raise EvidenceModelContractError(
+                        f"claim under {item.evidence_id!r} is not grounded in that same evidence source"
+                    )
+            if not compressed_derived_from_own_claims(item, source_text):
+                raise EvidenceModelContractError(
+                    f"compressed_text under {item.evidence_id!r} is not derivable from its own grounded claims"
+                )
+        if model_output.status == "conflicting":
+            for conflict in model_output.conflicts:
+                mentioned = referenced_evidence_ids(conflict, visible_sources)
+                if len(mentioned) < 2:
+                    raise EvidenceModelContractError(
+                        "each conflict must reference at least two supplied evidence IDs"
+                    )
         contexts: list[dict[str, Any]] = []
         for item in selected[: self.max_contexts]:
             context = dict(available[item.evidence_id])

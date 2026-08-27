@@ -60,3 +60,63 @@ def test_runtime_rejects_legacy_list_of_ids_with_clear_diagnostic():
     with pytest.raises(EvidenceModelContractError, match=r"legacy selected_evidence format list\[str\]"):
         EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=1)
 
+
+def test_runtime_rejects_claim_attributed_to_the_wrong_evidence_id():
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_31",
+            "relevance": 1.0,
+            "claims": ["Câu chỉ có trong ev_32."],
+            "compressed_text": "Câu chỉ có trong ev_32.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Sai attribution.",
+    })
+    evidence = [
+        {"chunk_id": "ev_31", "text": "Câu A thuộc ev_31.", "source_kind": "local"},
+        {"chunk_id": "ev_32", "text": "Câu chỉ có trong ev_32.", "source_kind": "local"},
+    ]
+    with pytest.raises(EvidenceModelContractError, match="same evidence source"):
+        EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+
+
+def test_runtime_rejects_compressed_text_copied_from_another_source():
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_31",
+            "relevance": 1.0,
+            "claims": ["Câu A thuộc ev_31."],
+            "compressed_text": "Câu B chỉ thuộc ev_32.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Sai compressed attribution.",
+    })
+    evidence = [
+        {"chunk_id": "ev_31", "text": "Câu A thuộc ev_31.", "source_kind": "local"},
+        {"chunk_id": "ev_32", "text": "Câu B chỉ thuộc ev_32.", "source_kind": "local"},
+    ]
+    with pytest.raises(EvidenceModelContractError, match="not derivable"):
+        EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+
+
+def test_runtime_rejects_conflict_without_two_supplied_ids():
+    text = "ev_41 nêu ngày 2/9/1945."
+    runtime = FakeRuntime({
+        "status": "conflicting",
+        "selected_evidence": [{
+            "evidence_id": "ev_41",
+            "relevance": 1.0,
+            "claims": [text],
+            "compressed_text": text,
+        }],
+        "conflicts": ["Hai nguồn mâu thuẫn."],
+        "missing_information": ["Cần xác minh ngày."],
+        "summary": "Có mâu thuẫn.",
+    })
+    evidence = [{"chunk_id": "ev_41", "text": text, "source_kind": "local"}]
+    with pytest.raises(EvidenceModelContractError, match="at least two"):
+        EvidenceCriticAgent(model_runtime=runtime).compress("Ngày nào?", evidence, final_k=1)

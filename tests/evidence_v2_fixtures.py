@@ -27,6 +27,7 @@ def dataset_row(
     output: dict[str, Any],
     *,
     group_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     request = EvidenceAgentRequest(question=question, max_selected=8, evidence=evidence)
     target = EvidenceModelOutput.model_validate(output)
@@ -42,7 +43,7 @@ def dataset_row(
         "evidence": [item.model_dump() for item in request.evidence],
         "input": request_payload,
         "output": output_payload,
-        "metadata": {"synthetic": behavior in {"duplicate", "conflict", "partial"}},
+        "metadata": metadata or {"synthetic": behavior in {"duplicate", "conflict", "partial"}},
         "messages": [
             {"role": "system", "content": EVIDENCE_AGENT_SYSTEM},
             {"role": "user", "content": json.dumps(request_payload, ensure_ascii=False, sort_keys=True)},
@@ -105,7 +106,7 @@ def sanity_rows() -> list[dict[str, Any]]:
         "Hồ Chí Minh đọc Tuyên ngôn Độc lập khi nào và ở đâu?",
         [
             candidate("ev_31", proclamation),
-            candidate("ev_32", proclamation, source_type="synthetic_duplicate"),
+            candidate("ev_32", proclamation),
             candidate("ev_33", "Chiến dịch Điện Biên Phủ kết thúc ngày 7/5/1954."),
         ],
         {
@@ -115,6 +116,12 @@ def sanity_rows() -> list[dict[str, Any]]:
             "missing_information": [],
             "summary": "Evidence ev_31 đủ; ev_32 lặp cùng fact và không cần giữ lại.",
         },
+        metadata={
+            "synthetic": True,
+            "augmentation_type": "duplicate",
+            "parent_evidence_id": "ev_31",
+            "augmented_evidence_ids": ["ev_32"],
+        },
     )
     true_date = "Hồ Chí Minh đọc Tuyên ngôn Độc lập ngày 2/9/1945 tại Ba Đình."
     corrupt_date = "Hồ Chí Minh đọc Tuyên ngôn Độc lập ngày 3/9/1945 tại Ba Đình."
@@ -122,16 +129,32 @@ def sanity_rows() -> list[dict[str, Any]]:
         "case-e",
         "conflict",
         "Hồ Chí Minh đọc Tuyên ngôn Độc lập ngày nào?",
-        [candidate("ev_41", true_date), candidate("ev_42", corrupt_date, source_type="synthetic_conflict")],
+        [candidate("ev_41", true_date), candidate("ev_42", corrupt_date)],
         {
             "status": "conflicting",
             "selected_evidence": [
                 {"evidence_id": "ev_41", "relevance": 1.0, "claims": [true_date], "compressed_text": true_date},
                 {"evidence_id": "ev_42", "relevance": 1.0, "claims": [corrupt_date], "compressed_text": corrupt_date},
             ],
-            "conflicts": ["ev_41 nêu ngày 2/9/1945 trong khi ev_42 nêu ngày 3/9/1945."],
+            "conflicts": [
+                "ev_41 nêu thời gian hoặc ngày tháng được hỏi là 2/9/1945, "
+                "trong khi ev_42 nêu 3/9/1945."
+            ],
             "missing_information": ["Cần nguồn đáng tin cậy để xác minh ngày đang mâu thuẫn."],
             "summary": "ev_41 và ev_42 mâu thuẫn trực tiếp về ngày công bố Tuyên ngôn Độc lập.",
+        },
+        metadata={
+            "synthetic": True,
+            "augmentation_type": "conflict",
+            "gold_answer": true_date,
+            "parent_evidence_id": "ev_41",
+            "mutated_evidence_id": "ev_42",
+            "augmented_evidence_ids": ["ev_42"],
+            "mutated_slot": "time",
+            "slot_label": "thời gian hoặc ngày tháng được hỏi",
+            "conflict_type": "date",
+            "original_value": "2/9/1945",
+            "mutated_value": "3/9/1945",
         },
     )
     birth = "Ngô Quyền sinh ngày 17 tháng 4 năm 898."
@@ -139,7 +162,7 @@ def sanity_rows() -> list[dict[str, Any]]:
         "case-partial",
         "partial",
         "Ngô Quyền sinh và mất vào thời gian nào?",
-        [candidate("ev_51", birth, source_type="synthetic_partial")],
+        [candidate("ev_51", birth)],
         {
             "status": "insufficient",
             "selected_evidence": [{"evidence_id": "ev_51", "relevance": 0.75, "claims": [birth], "compressed_text": birth}],
@@ -148,4 +171,36 @@ def sanity_rows() -> list[dict[str, Any]]:
             "summary": "ev_51 chỉ cho biết ngày sinh, chưa có ngày mất.",
         },
     )
-    return [a, b, c, d, e, partial]
+    location = "Các di tích tưởng niệm Ngô Quyền tập trung nhiều nhất ở Hải Phòng."
+    irrelevant = dataset_row(
+        "case-irrelevant-disagreement",
+        "irrelevant_disagreement",
+        "Những di tích tưởng niệm Ngô Quyền tập trung nhiều ở khu vực nào?",
+        [
+            candidate("ev_61", f"{location} Chiến thắng diễn ra năm 938."),
+            candidate("ev_62", f"{location} Chiến thắng diễn ra năm 939."),
+        ],
+        {
+            "status": "sufficient",
+            "selected_evidence": [{
+                "evidence_id": "ev_61",
+                "relevance": 1.0,
+                "claims": [location],
+                "compressed_text": location,
+            }],
+            "conflicts": [],
+            "missing_information": [],
+            "summary": "Hai nguồn thống nhất answer slot địa điểm là Hải Phòng; lệch năm không đổi câu trả lời.",
+        },
+        metadata={
+            "synthetic": True,
+            "augmentation_type": "irrelevant_disagreement",
+            "gold_answer": location,
+            "parent_evidence_id": "ev_61",
+            "augmented_evidence_ids": ["ev_62"],
+            "mutated_slot": "unrelated",
+            "original_value": "938",
+            "mutated_value": "939",
+        },
+    )
+    return [a, b, c, d, e, partial, irrelevant]

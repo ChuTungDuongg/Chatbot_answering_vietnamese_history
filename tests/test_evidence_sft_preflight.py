@@ -68,12 +68,12 @@ def _long_evidence_row():
 def test_long_evidence_pool_is_capped_as_valid_json_with_gold_claim_and_metadata():
     row = _long_evidence_row()
     feature, stats, messages = build_evidence_assistant_only_example(
-        CharacterTokenizer(), row, max_length=1900
+        CharacterTokenizer(), row, max_length=2400
     )
     capped = json.loads(messages[1]["content"])
     gold = next(item for item in capped["evidence"] if item["evidence_id"] == "ev-gold")
     assert stats.overlength and stats.structured_truncation
-    assert stats.sequence_tokens <= 1900
+    assert stats.sequence_tokens <= 2400
     assert stats.supervised_tokens == stats.assistant_tokens > 0
     assert capped["question"] == row["input"]["question"]
     assert gold["title"] == "Bạch Đằng"
@@ -86,7 +86,7 @@ def test_long_evidence_pool_is_capped_as_valid_json_with_gold_claim_and_metadata
 def test_split_preflight_reports_required_token_diagnostics():
     tokenizer = CharacterTokenizer()
     features, report = prepare_evidence_split(
-        tokenizer, [_long_evidence_row()], max_length=1900, split_name="eval"
+        tokenizer, [_long_evidence_row()], max_length=2400, split_name="eval"
     )
     assert len(features) == report["rows"] == 1
     assert report["zero_supervised_rows"] == 0
