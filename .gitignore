@@ -87,8 +87,14 @@ merged_model/
 # =========================
 # RAG artifacts
 # =========================
-artifacts/*
-!artifacts/README.md
+# Keep reports, manifests, and other lightweight artifacts trackable; ignore
+# model weights and training checkpoints generated under this directory.
+artifacts/**/*.safetensors
+artifacts/**/*.bin
+artifacts/**/*.pt
+artifacts/**/*.pth
+artifacts/**/*.ckpt
+artifacts/**/*.onnx
 
 vector_db/
 faiss_index/
@@ -173,3 +179,5 @@ pnpm-debug.log*
 !examples/*.md
 
 node_modules/
+artifacts/vn_history_deployment/
+artifacts/vn_history_modal/

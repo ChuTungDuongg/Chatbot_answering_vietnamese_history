@@ -438,6 +438,11 @@ class RAGService:
                 "device": self._resolve_compute_device(),
             }
 
+        model_loaded = (
+            self.model is not None
+            or self.external_generation_backend
+        )
+
         ready = all(
             [
                 bool(self.loaded),
@@ -447,7 +452,7 @@ class RAGService:
                 self.embedder is not None,
                 self.reranker is not None,
                 self.tokenizer is not None,
-                self.model is not None,
+                model_loaded,
             ]
         )
 
@@ -468,7 +473,7 @@ class RAGService:
             "bm25_loaded": self.bm25 is not None,
             "embedder_loaded": self.embedder is not None,
             "reranker_loaded": self.reranker is not None,
-            "model_loaded": self.model is not None or self.external_generation_backend,
+            "model_loaded": model_loaded,
             "corpus_chunks": len(self.chunks) if self.chunks else None,
             "faiss_vectors": (
                 int(self.faiss_index.ntotal)

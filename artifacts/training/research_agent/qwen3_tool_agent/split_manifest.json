@@ -1,0 +1,45 @@
+{
+  "groups": {
+    "eval": [
+      "history-sample_0004"
+    ],
+    "test": [
+      "history-sample_0011"
+    ],
+    "train": [
+      "history-sample_0010"
+    ]
+  },
+  "statistics": {
+    "eval": {
+      "classes": {
+        "local_only": 90
+      },
+      "rows": 90,
+      "sources": {
+        "vn_history_phase6": 90
+      },
+      "unique_groups": 1
+    },
+    "test": {
+      "classes": {
+        "local_only": 90
+      },
+      "rows": 90,
+      "sources": {
+        "vn_history_phase6": 90
+      },
+      "unique_groups": 1
+    },
+    "train": {
+      "classes": {
+        "local_only": 90
+      },
+      "rows": 90,
+      "sources": {
+        "vn_history_phase6": 90
+      },
+      "unique_groups": 1
+    }
+  }
+}

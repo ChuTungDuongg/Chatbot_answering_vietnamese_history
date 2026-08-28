@@ -1,0 +1,158 @@
+{
+  "behavior_distribution": {
+    "clean_relevant": 79,
+    "conflict": 112,
+    "duplicate": 130,
+    "insufficient": 100,
+    "irrelevant_disagreement": 65,
+    "partial": 44,
+    "relevant_distractor": 483
+  },
+  "compression_ratio": 0.17960779216884035,
+  "conflict_rows": 112,
+  "conflict_type_distribution": {
+    "count": 6,
+    "date": 27,
+    "location": 10,
+    "person": 8,
+    "role/title": 1,
+    "year": 60
+  },
+  "conflict_without_incompatible_values": 0,
+  "conflict_without_slot_value_details": 0,
+  "conflict_without_two_valid_ids": 0,
+  "copy_through_compressed_text": 162,
+  "cross_id_claim_attribution": 0,
+  "cross_id_compressed_attribution": 0,
+  "duplicate_rows_selecting_all_duplicates": 0,
+  "empty_compressed_text": 0,
+  "errors": [],
+  "generic_missing_information_count": 0,
+  "generic_summary_frequency": 0,
+  "generic_summary_ratio": 0.0,
+  "grounding_metric": "extractive claim containment (heuristic)",
+  "hard_negative_compatible_pairs": 130,
+  "hard_negative_complementary_pairs": 2,
+  "hard_negative_irrelevant_disagreement": 65,
+  "insufficient_no_support_selected_nonempty": 0,
+  "insufficient_partial_selected_empty": 0,
+  "insufficient_with_partial_support": 44,
+  "irrelevant_conflict_rows": 0,
+  "irrelevant_selected_in_sufficient": 0,
+  "leave_one_out_partial_pairs": 4,
+  "mean_compressed_chars": 419.82473222979553,
+  "mean_original_chars": 2337.452775073028,
+  "model_visible_conflict_id_suffixes": 0,
+  "model_visible_duplicate_id_suffixes": 0,
+  "model_visible_reserved_titles": 0,
+  "model_visible_serialized_metadata_fields": 0,
+  "model_visible_synthetic_markers": 0,
+  "model_visible_synthetic_source_types": 0,
+  "partial_missing_slot_generic": 0,
+  "partial_missing_slot_specific": 44,
+  "partial_rows": 44,
+  "partial_with_empty_missing_information": 0,
+  "partial_with_full_gold_answer_coverage": 0,
+  "partial_without_useful_coverage": 0,
+  "question_relevant_conflicts": 112,
+  "redundant_multi_source_sufficient": 0,
+  "relevance_shortcut_detected": false,
+  "relevance_status_shortcut_stats": {
+    "conflicting": {
+      "count": 224,
+      "max": 1.0,
+      "mean": 0.9264375,
+      "min": 0.7402,
+      "unique_values": 35
+    },
+    "insufficient": {
+      "count": 0,
+      "max": null,
+      "mean": null,
+      "min": null,
+      "unique_values": 0
+    },
+    "partial": {
+      "count": 44,
+      "max": 0.9743,
+      "mean": 0.8443545454545455,
+      "min": 0.689,
+      "unique_values": 30
+    },
+    "sufficient": {
+      "count": 759,
+      "max": 1.0,
+      "mean": 0.9674411067193676,
+      "min": 0.7236,
+      "unique_values": 46
+    }
+  },
+  "rows": 1013,
+  "selected_evidence_items": 1027,
+  "single_source_multi_slot_sufficient": 46,
+  "slot_specific_missing_information_count": 256,
+  "source_distribution": {
+    "evidence_v23_fixture": 9,
+    "vn_history_phase6": 1004
+  },
+  "split_behavior_distribution": {
+    "eval": {
+      "clean_relevant": 5,
+      "conflict": 8,
+      "duplicate": 5,
+      "insufficient": 10,
+      "irrelevant_disagreement": 1,
+      "partial": 3,
+      "relevant_distractor": 30
+    },
+    "test": {
+      "clean_relevant": 6,
+      "conflict": 9,
+      "duplicate": 9,
+      "insufficient": 10,
+      "irrelevant_disagreement": 5,
+      "partial": 4,
+      "relevant_distractor": 39
+    },
+    "train": {
+      "clean_relevant": 68,
+      "conflict": 95,
+      "duplicate": 116,
+      "insufficient": 80,
+      "irrelevant_disagreement": 59,
+      "partial": 37,
+      "relevant_distractor": 414
+    }
+  },
+  "split_group_counts": {
+    "eval": 2,
+    "test": 3,
+    "train": 39
+  },
+  "split_group_overlap": {
+    "eval_test": 0,
+    "train_eval": 0,
+    "train_test": 0
+  },
+  "split_missing_behaviors": {
+    "eval": [],
+    "test": [],
+    "train": []
+  },
+  "status_distribution": {
+    "conflicting": 112,
+    "insufficient": 144,
+    "sufficient": 757
+  },
+  "sufficient_rows": 757,
+  "sufficient_selected_subset_full_coverage": 757,
+  "sufficient_selected_subset_incomplete": 0,
+  "sufficient_with_missing_information": 0,
+  "sufficient_with_suspicious_coverage": 0,
+  "true_multi_source_sufficient": 2,
+  "unique_groups": 44,
+  "unique_ids": 1013,
+  "unique_summaries": 981,
+  "valid": true,
+  "warnings": []
+}

@@ -114,7 +114,12 @@ def _get_generation_runtime(request: Request) -> tuple[Any, Any]:
             detail="Generation runtime is not loaded. Use APP_MODE=full to enable chat.",
         )
 
-    if not service.loaded or service.model is None:
+    generation_ready = (
+        service.model is not None
+        or bool(getattr(service, "external_generation_backend", False))
+    )
+
+    if not service.loaded or not generation_ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Generation model is not ready.",

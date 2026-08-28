@@ -1,0 +1,96 @@
+{
+  "fresh_adapter": true,
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "rows": 994,
+  "splits": {
+    "eval": 60,
+    "test": 60,
+    "train": 874
+  },
+  "tokenization": {
+    "eval": {
+      "assistant_tokens": {
+        "max": 212,
+        "mean": 119.96666666666667,
+        "min": 58
+      },
+      "context_capped_rows": 0,
+      "errors": [],
+      "final_prompt_tokens": {
+        "max": 3146,
+        "mean": 2224.9,
+        "min": 708
+      },
+      "overlength_rows": 0,
+      "raw_prompt_tokens": {
+        "max": 3146,
+        "mean": 2224.9,
+        "min": 708
+      },
+      "rows": 60,
+      "sequence_tokens": {
+        "max": 3323,
+        "mean": 2344.866666666667,
+        "min": 790
+      },
+      "valid": true,
+      "zero_supervised_rows": 0
+    },
+    "test": {
+      "assistant_tokens": {
+        "max": 195,
+        "mean": 119.73333333333333,
+        "min": 63
+      },
+      "context_capped_rows": 0,
+      "errors": [],
+      "final_prompt_tokens": {
+        "max": 3214,
+        "mean": 2510.4,
+        "min": 596
+      },
+      "overlength_rows": 0,
+      "raw_prompt_tokens": {
+        "max": 3214,
+        "mean": 2510.4,
+        "min": 596
+      },
+      "rows": 60,
+      "sequence_tokens": {
+        "max": 3346,
+        "mean": 2630.133333333333,
+        "min": 789
+      },
+      "valid": true,
+      "zero_supervised_rows": 0
+    },
+    "train": {
+      "assistant_tokens": {
+        "max": 226,
+        "mean": 116.89244851258582,
+        "min": 50
+      },
+      "context_capped_rows": 0,
+      "errors": [],
+      "final_prompt_tokens": {
+        "max": 3251,
+        "mean": 2188.183066361556,
+        "min": 318
+      },
+      "overlength_rows": 0,
+      "raw_prompt_tokens": {
+        "max": 3251,
+        "mean": 2188.183066361556,
+        "min": 318
+      },
+      "rows": 874,
+      "sequence_tokens": {
+        "max": 3405,
+        "mean": 2305.075514874142,
+        "min": 390
+      },
+      "valid": true,
+      "zero_supervised_rows": 0
+    }
+  }
+}

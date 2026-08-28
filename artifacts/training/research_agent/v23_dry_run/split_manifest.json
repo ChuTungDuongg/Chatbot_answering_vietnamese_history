@@ -1,0 +1,104 @@
+{
+  "groups": {
+    "eval": [
+      "history-sample_0039",
+      "no-tool-thanks"
+    ],
+    "test": [
+      "history-sample_0014",
+      "history-sample_0016",
+      "history-sample_0020",
+      "no-tool-capability"
+    ],
+    "train": [
+      "boundary-history-with-greeting",
+      "boundary-history-with-help-prefix",
+      "boundary-history-with-thanks",
+      "history-sample_0001",
+      "history-sample_0002",
+      "history-sample_0003",
+      "history-sample_0004",
+      "history-sample_0005",
+      "history-sample_0006",
+      "history-sample_0007",
+      "history-sample_0008",
+      "history-sample_0009",
+      "history-sample_0010",
+      "history-sample_0011",
+      "history-sample_0012",
+      "history-sample_0013",
+      "history-sample_0015",
+      "history-sample_0017",
+      "history-sample_0018",
+      "history-sample_0019",
+      "history-sample_0021",
+      "history-sample_0022",
+      "history-sample_0023",
+      "history-sample_0024",
+      "history-sample_0025",
+      "history-sample_0026",
+      "history-sample_0027",
+      "history-sample_0028",
+      "history-sample_0029",
+      "history-sample_0030",
+      "history-sample_0031",
+      "history-sample_0032",
+      "history-sample_0033",
+      "history-sample_0034",
+      "history-sample_0035",
+      "history-sample_0036",
+      "history-sample_0037",
+      "history-sample_0038",
+      "history-sample_0040",
+      "no-tool-acknowledgement",
+      "no-tool-control",
+      "no-tool-farewell",
+      "no-tool-greeting",
+      "no-tool-near-empty",
+      "no-tool-repeat-reformat",
+      "no-tool-ui-help",
+      "no-tool-usage-help"
+    ]
+  },
+  "statistics": {
+    "eval": {
+      "classes": {
+        "false_premise": 60,
+        "no_tool": 8
+      },
+      "rows": 68,
+      "sources": {
+        "no_tool_v23": 8,
+        "vn_history_phase6": 60
+      },
+      "unique_groups": 2
+    },
+    "test": {
+      "classes": {
+        "false_premise": 30,
+        "local_only": 240,
+        "no_tool": 8
+      },
+      "rows": 278,
+      "sources": {
+        "no_tool_v23": 8,
+        "vn_history_phase6": 270
+      },
+      "unique_groups": 4
+    },
+    "train": {
+      "classes": {
+        "false_premise": 60,
+        "local_only": 2504,
+        "no_tool": 64
+      },
+      "rows": 2628,
+      "sources": {
+        "no_tool_v23": 64,
+        "policy_boundary_v23": 12,
+        "vn_history_phase6": 2552
+      },
+      "unique_groups": 47
+    }
+  }
+}

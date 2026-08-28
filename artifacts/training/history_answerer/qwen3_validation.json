@@ -1,0 +1,18 @@
+{
+  "citation_aware_rows": 994,
+  "embedding_leakage": 0,
+  "errors": [],
+  "grounded_rows": 894,
+  "hallucinated_gold_citations": 0,
+  "invalid_source_ids": 0,
+  "rows": 994,
+  "type_distribution": {
+    "false_premise": 50,
+    "grounded_qa": 200,
+    "insufficient_context": 100,
+    "noisy_context": 644
+  },
+  "unique_groups": 40,
+  "valid": true,
+  "warnings": []
+}

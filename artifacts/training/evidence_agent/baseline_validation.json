@@ -1,0 +1,156 @@
+{
+  "behavior_distribution": {
+    "clean_relevant": 120,
+    "conflict": 104,
+    "duplicate": 129,
+    "insufficient": 100,
+    "irrelevant_disagreement": 64,
+    "partial": 14,
+    "relevant_distractor": 460
+  },
+  "compression_ratio": 0.18089176653208952,
+  "conflict_rows": 104,
+  "conflict_type_distribution": {
+    "count": 6,
+    "date": 25,
+    "location": 9,
+    "person": 7,
+    "role/title": 1,
+    "year": 56
+  },
+  "conflict_without_incompatible_values": 0,
+  "conflict_without_slot_value_details": 0,
+  "conflict_without_two_valid_ids": 0,
+  "copy_through_compressed_text": 118,
+  "cross_id_claim_attribution": 0,
+  "cross_id_compressed_attribution": 0,
+  "duplicate_rows_selecting_all_duplicates": 0,
+  "empty_compressed_text": 0,
+  "errors": [],
+  "generic_missing_information_count": 0,
+  "generic_summary_frequency": 0,
+  "generic_summary_ratio": 0.0,
+  "grounding_metric": "extractive claim containment (heuristic)",
+  "hard_negative_compatible_pairs": 129,
+  "hard_negative_complementary_pairs": 254,
+  "hard_negative_irrelevant_disagreement": 64,
+  "irrelevant_conflict_rows": 0,
+  "mean_compressed_chars": 456.3177641653905,
+  "mean_original_chars": 2522.6010719754977,
+  "model_visible_conflict_id_suffixes": 0,
+  "model_visible_duplicate_id_suffixes": 0,
+  "model_visible_reserved_titles": 0,
+  "model_visible_serialized_metadata_fields": 0,
+  "model_visible_synthetic_markers": 0,
+  "model_visible_synthetic_source_types": 0,
+  "partial_rows": 14,
+  "partial_with_empty_missing_information": 0,
+  "partial_with_full_gold_answer_coverage": 0,
+  "partial_without_useful_coverage": 0,
+  "question_relevant_conflicts": 104,
+  "relevance_shortcut_detected": false,
+  "relevance_status_shortcut_stats": {
+    "conflicting": {
+      "count": 208,
+      "max": 1.0,
+      "mean": 0.9294817307692308,
+      "min": 0.7402,
+      "unique_values": 34
+    },
+    "insufficient": {
+      "count": 0,
+      "max": null,
+      "mean": null,
+      "min": null,
+      "unique_values": 0
+    },
+    "partial": {
+      "count": 14,
+      "max": 0.9743,
+      "mean": 0.8351428571428572,
+      "min": 0.5,
+      "unique_values": 12
+    },
+    "sufficient": {
+      "count": 1084,
+      "max": 1.0,
+      "mean": 0.962520110701107,
+      "min": 0.7236,
+      "unique_values": 62
+    }
+  },
+  "rows": 991,
+  "selected_evidence_items": 1306,
+  "source_distribution": {
+    "vn_history_phase6": 991
+  },
+  "split_behavior_distribution": {
+    "eval": {
+      "clean_relevant": 6,
+      "conflict": 7,
+      "duplicate": 7,
+      "insufficient": 10,
+      "irrelevant_disagreement": 1,
+      "partial": 1,
+      "relevant_distractor": 28
+    },
+    "test": {
+      "clean_relevant": 6,
+      "conflict": 10,
+      "duplicate": 1,
+      "insufficient": 10,
+      "irrelevant_disagreement": 1,
+      "partial": 2,
+      "relevant_distractor": 20
+    },
+    "train": {
+      "clean_relevant": 108,
+      "conflict": 87,
+      "duplicate": 121,
+      "insufficient": 80,
+      "irrelevant_disagreement": 62,
+      "partial": 11,
+      "relevant_distractor": 412
+    }
+  },
+  "split_group_counts": {
+    "eval": 2,
+    "test": 2,
+    "train": 36
+  },
+  "split_group_overlap": {
+    "eval_test": 0,
+    "train_eval": 0,
+    "train_test": 0
+  },
+  "split_missing_behaviors": {
+    "eval": [],
+    "test": [],
+    "train": []
+  },
+  "status_distribution": {
+    "conflicting": 104,
+    "insufficient": 114,
+    "sufficient": 773
+  },
+  "sufficient_rows": 773,
+  "sufficient_with_missing_information": 0,
+  "sufficient_with_suspicious_coverage": 11,
+  "unique_groups": 40,
+  "unique_ids": 991,
+  "unique_summaries": 984,
+  "valid": true,
+  "warnings": [
+    "row 166: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 399: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 533: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 619: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 733: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 734: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 735: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 937: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 961: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 963: sufficient selected evidence does not cover the gold answer components (heuristic)",
+    "row 974: sufficient selected evidence does not cover the gold answer components (heuristic)"
+  ]
+}

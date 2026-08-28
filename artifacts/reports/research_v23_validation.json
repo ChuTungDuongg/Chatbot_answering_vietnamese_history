@@ -1,0 +1,81 @@
+{
+  "avg_rows_per_group": 56.113207547169814,
+  "avg_trajectories_per_group": 20.49056603773585,
+  "boundary_categories": {
+    "history_with_greeting": 4,
+    "history_with_help_prefix": 4,
+    "history_with_thanks": 4
+  },
+  "class_distribution": {
+    "false_premise": 150,
+    "local_only": 2744,
+    "no_tool": 80
+  },
+  "errors": [],
+  "history_with_conversational_prefix": 12,
+  "meta_without_history_lookup": 24,
+  "near_duplicate_no_tool_cross_split": 0,
+  "no_tool_categories": {
+    "acknowledgement": 8,
+    "capability": 8,
+    "control": 8,
+    "farewell": 8,
+    "greeting": 8,
+    "near_empty": 8,
+    "repeat_reformat": 8,
+    "thanks": 8,
+    "ui_help": 8,
+    "usage_help": 8
+  },
+  "no_tool_group_overlap": 0,
+  "no_tool_percentage": 2.6899798251513114,
+  "no_tool_rows": 80,
+  "rows": 2974,
+  "source_distribution": {
+    "no_tool_v23": 80,
+    "policy_boundary_v23": 12,
+    "vn_history_phase6": 2882
+  },
+  "split_class_distribution": {
+    "eval": {
+      "false_premise": 60,
+      "local_only": 90,
+      "no_tool": 8
+    },
+    "test": {
+      "false_premise": 30,
+      "local_only": 240,
+      "no_tool": 8
+    },
+    "train": {
+      "false_premise": 60,
+      "local_only": 2414,
+      "no_tool": 64
+    }
+  },
+  "split_group_overlap": {
+    "eval_test": 0,
+    "train_eval": 0,
+    "train_test": 0
+  },
+  "split_groups": {
+    "eval": 3,
+    "test": 4,
+    "train": 46
+  },
+  "split_no_tool_distribution": {
+    "eval": 8,
+    "test": 8,
+    "train": 64
+  },
+  "split_rows": {
+    "eval": 158,
+    "test": 278,
+    "train": 2538
+  },
+  "unique_groups": 53,
+  "unique_ids": 2974,
+  "unique_trajectory_ids": 1086,
+  "valid": true,
+  "warnings": []
+}
