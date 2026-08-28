@@ -23,6 +23,25 @@ def _payload(row: dict[str, Any]) -> Any:
     raise ValueError("missing decision payload")
 
 
+def _tool_calls(decision: Any) -> list[Any]:
+    if isinstance(decision, ToolBatchDecision):
+        return list(decision.tool_calls)
+    if isinstance(decision, ToolDecision):
+        return [decision]
+    return []
+
+
+def _inspect_evidence_ids(calls: list[Any]) -> list[str]:
+    ids: list[str] = []
+    for call in calls:
+        if call.tool_name != "inspect_evidence":
+            continue
+        raw_ids = call.arguments.get("ids", [])
+        if isinstance(raw_ids, list):
+            ids.extend(str(value) for value in raw_ids if str(value).strip())
+    return list(dict.fromkeys(ids))
+
+
 def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]]) -> dict[str, Any]:
     count = min(len(predictions), len(gold))
     totals = defaultdict(int)
@@ -47,8 +66,8 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
             totals["action_correct"] += 1
             bucket["action_correct"] += 1
 
-        pred_calls = pred.tool_calls if isinstance(pred, ToolBatchDecision) else ([pred] if isinstance(pred, ToolDecision) else [])
-        gold_calls = gold_decision.tool_calls if isinstance(gold_decision, ToolBatchDecision) else ([gold_decision] if isinstance(gold_decision, ToolDecision) else [])
+        pred_calls = _tool_calls(pred)
+        gold_calls = _tool_calls(gold_decision)
         if gold_calls:
             totals["tool_rows"] += 1
             bucket["tool_rows"] += 1
@@ -91,9 +110,23 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
             )
         if any(call.tool_name == "inspect_evidence" for call in gold_calls):
             totals["search_to_inspect_rows"] += 1
-            totals["search_to_inspect_correct"] += int(
-                any(call.tool_name == "inspect_evidence" for call in pred_calls)
+            transition_correct = (
+                pred_action == "tool"
+                and len(pred_calls) == 1
+                and pred_calls[0].tool_name == "inspect_evidence"
             )
+            totals["search_to_inspect_correct"] += int(transition_correct)
+            # Evidence-ID quality is conditional on taking the correct state
+            # transition. A repeated search is a transition error, not also an
+            # evidence-ID error.
+            if transition_correct:
+                pred_ids = set(_inspect_evidence_ids(pred_calls))
+                gold_ids = set(_inspect_evidence_ids(gold_calls))
+                totals["step2_id_scored_rows"] += 1
+                totals["step2_id_exact"] += int(pred_ids == gold_ids)
+                totals["step2_id_intersection"] += len(pred_ids & gold_ids)
+                totals["step2_id_predicted"] += len(pred_ids)
+                totals["step2_id_gold"] += len(gold_ids)
         if gold_action == "finish" and any(obs.tool == "inspect_evidence" for obs in state.observations):
             totals["inspect_to_finish_rows"] += 1
             totals["inspect_to_finish_correct"] += int(pred_action == "finish")
@@ -112,6 +145,7 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
 
     trajectory_success = sum(value["pred"] == value["gold"] for value in sequences.values())
     ratio = lambda numerator, denominator: numerator / max(denominator, 1)
+    optional_ratio = lambda numerator, denominator: None if denominator == 0 else numerator / denominator
     no_tool_precision = ratio(totals["no_tool_tp"], totals["no_tool_predicted"])
     no_tool_recall = ratio(totals["no_tool_tp"], totals["no_tool_rows"])
     report = {
@@ -134,6 +168,20 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
         ),
         "search_to_inspect_accuracy": ratio(
             totals["search_to_inspect_correct"], totals["search_to_inspect_rows"]
+        ),
+        "step2_action_tool_transition_accuracy": ratio(
+            totals["search_to_inspect_correct"], totals["search_to_inspect_rows"]
+        ),
+        "step2_transition_rows": totals["search_to_inspect_rows"],
+        "step2_evidence_id_scored_rows": totals["step2_id_scored_rows"],
+        "step2_evidence_id_exact_match": optional_ratio(
+            totals["step2_id_exact"], totals["step2_id_scored_rows"]
+        ),
+        "step2_evidence_id_precision": optional_ratio(
+            totals["step2_id_intersection"], totals["step2_id_predicted"]
+        ),
+        "step2_evidence_id_recall": optional_ratio(
+            totals["step2_id_intersection"], totals["step2_id_gold"]
         ),
         "inspect_to_finish_accuracy": ratio(
             totals["inspect_to_finish_correct"], totals["inspect_to_finish_rows"]

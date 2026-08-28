@@ -108,3 +108,53 @@ python -m training.research_agent.evaluate \
 ```
 
 Report gồm action accuracy, no-tool precision/recall/F1, history-search recall, conversational-prefix accuracy, meta no-tool, false-premise initial search, search→inspect, inspect→finish, schema validity và exact trajectory proxy.
+
+### Canonical sanity replay
+
+Không dựng synthetic T2 state bằng tay. Tạo sanity gold trực tiếp từ canonical rows để system message, serialized `ResearchPolicyState`, tool schemas, `search_history` observation, `evidence_ids` và gold action giữ nguyên distribution train/runtime:
+
+```bash
+python -m training.research_agent.sanity \
+  --dataset datasets/research_agent/history_trajectories.jsonl \
+  --output-gold artifacts/reports/research_sanity_gold.jsonl
+```
+
+Default suite giữ năm category riêng: 5 `no_tool`, 5 factual-history search, 5 conversational-prefix history search, 20 real `search→inspect` step-2 rows và 20 real `inspect→finish` rows. Step-2 sampler ưu tiên group khác nhau và từ chối synthetic/non-canonical payload.
+
+Trong notebook, dùng nguyên input messages thay vì tự rút gọn state:
+
+```python
+from training.common.jsonl import read_jsonl
+from training.research_agent.sanity import (
+    build_sanity_suite,
+    evaluate_sanity_predictions,
+    inference_messages,
+)
+
+gold = build_sanity_suite(
+    read_jsonl("datasets/research_agent/history_trajectories.jsonl")
+)
+predictions = []
+for row in gold:
+    decision = generate_research_json(inference_messages(row))
+    predictions.append({"prediction": decision})
+
+report = evaluate_sanity_predictions(predictions, gold)
+```
+
+Hoặc ghi predictions theo đúng thứ tự suite rồi chạy:
+
+```bash
+python -m training.research_agent.sanity \
+  --dataset datasets/research_agent/history_trajectories.jsonl \
+  --predictions predictions/research_sanity.jsonl
+```
+
+Step-2 report tách riêng:
+
+- `step2_action_tool_transition_accuracy`: model có chuyển đúng sang một `inspect_evidence` action hay không;
+- `step2_evidence_id_exact_match`: exact set match, không phụ thuộc thứ tự ID;
+- `step2_evidence_id_precision` và `step2_evidence_id_recall`: micro ID metrics;
+- `step2_evidence_id_scored_rows`: chỉ các rows đã chọn đúng transition mới được chấm ID.
+
+Vì vậy search lại ở T2 chỉ là transition failure. Chọn đúng `inspect_evidence` nhưng sai/thừa/thiếu IDs vẫn pass transition và chỉ làm giảm ID metrics.
