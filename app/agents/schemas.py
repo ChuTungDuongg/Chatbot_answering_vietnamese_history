@@ -105,6 +105,13 @@ class EvidenceCritique(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     summary: str = ""
     model_input_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    raw_candidate_count: int = 0
+    model_visible_candidate_count: int = 0
+    dropped_for_budget_count: int = 0
+    dropped_ids: list[str] = Field(default_factory=list)
+    dropped_reasons: dict[str, str] = Field(default_factory=dict)
+    source_kind_counts_raw: dict[str, int] = Field(default_factory=dict)
+    source_kind_counts_visible: dict[str, int] = Field(default_factory=dict)
     generation_calls: int = 0
     repair_used: bool = False
     repair_path: str | None = None

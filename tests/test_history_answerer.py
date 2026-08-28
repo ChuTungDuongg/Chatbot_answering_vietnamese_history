@@ -119,6 +119,8 @@ def test_provenance_reports_direct_history_adapter_generation():
         "guard_short_circuit": False,
         "guard_name": None,
         "guard_override": False,
+        "answer_depth": "standard",
+        "structured_expansion_used": False,
     }
     assert result["history_debug"]["generation_calls"] == 1
     assert result["history_debug"]["input_evidence_ids"] == [

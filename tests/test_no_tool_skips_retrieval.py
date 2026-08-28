@@ -34,7 +34,7 @@ class FinishRuntime:
         return {"action": "finish", "sufficient": True, "missing_information": []}
 
 
-def test_no_tool_finish_skips_static_retrieval():
+def test_model_finish_still_uses_one_deterministic_local_prefetch():
     retriever = CountingRetriever()
     registry = ToolRegistry()
     registry.register(SearchHistoryTool(retriever))
@@ -45,5 +45,7 @@ def test_no_tool_finish_skips_static_retrieval():
         model_runtime=FinishRuntime(),
     )
     result = asyncio.run(agent.run("Xin chào", final_k=4))
-    assert retriever.retrieve_calls == 0
-    assert result.tool_trace == ["agent:finish:1"]
+    assert retriever.retrieve_calls == 1
+    assert result.tool_trace == ["search_history:0", "agent:finish:1"]
+    assert result.debug["tools"][0]["deterministic_prefetch"] is True
+    assert result.debug["generation_calls"] == 1

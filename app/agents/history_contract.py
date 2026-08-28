@@ -67,6 +67,8 @@ def _canonical_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, str]]:
 def build_history_answerer_user_text(
     question: str,
     evidence: list[dict[str, Any]],
+    *,
+    answer_depth: str = "standard",
 ) -> str:
     """Render the exact user-message structure used by canonical History SFT."""
     question = str(question).strip()
@@ -81,18 +83,32 @@ def build_history_answerer_user_text(
         blocks.append(f"{header}\n{item['text']}")
 
     references = "\n\n".join(blocks)
-    return f"{QUESTION_PREFIX}\n{question}\n\n{REFERENCES_PREFIX}\n{references}"
+    depth_instruction = ""
+    if answer_depth == "deep":
+        depth_instruction = (
+            "\n\nYêu cầu độ sâu:\n"
+            "Trả lời theo hướng tổng hợp sâu nếu bằng chứng cho phép: nêu kết luận trực tiếp, "
+            "hệ quả trước mắt, ý nghĩa chính trị/chủ quyền hoặc tác động dài hạn. "
+            "Không thêm ý nào không được tài liệu hỗ trợ."
+        )
+    return f"{QUESTION_PREFIX}\n{question}{depth_instruction}\n\n{REFERENCES_PREFIX}\n{references}"
 
 
 def build_history_answerer_messages(
     question: str,
     evidence: list[dict[str, Any]],
+    *,
+    answer_depth: str = "standard",
 ) -> list[dict[str, str]]:
     # Canonical History SFT contains no system or conversation-history message.
     return [
         {
             "role": "user",
-            "content": build_history_answerer_user_text(question, evidence),
+            "content": build_history_answerer_user_text(
+                question,
+                evidence,
+                answer_depth=answer_depth,
+            ),
         }
     ]
 

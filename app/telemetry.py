@@ -39,15 +39,35 @@ class RequestTelemetry:
     research_steps: int = 0
     research_ms: float = 0.0
     research_json_repairs: int = 0
+    research_prefetch_used: bool = False
+    external_fallback_triggered: bool = False
     tool_calls: int = 0
     tool_calls_by_type: dict[str, int] = field(default_factory=dict)
     retrieval_ms: float = 0.0
     wikipedia_calls: int = 0
+    wikipedia_search_count: int = 0
+    wikipedia_fetch_count: int = 0
     wikipedia_ms: float = 0.0
     generic_web_calls: int = 0
     generic_web_ms: float = 0.0
     evidence_attempts: int = 0
     evidence_ms: float = 0.0
+    evidence_candidate_count: int = 0
+    evidence_candidate_count_raw: int = 0
+    evidence_candidate_count_model_visible: int = 0
+    evidence_dropped_for_budget_count: int = 0
+    evidence_dropped_ids: list[str] = field(default_factory=list)
+    evidence_source_kind_counts_raw: dict[str, int] = field(default_factory=dict)
+    evidence_source_kind_counts_visible: dict[str, int] = field(default_factory=dict)
+    external_evidence_collected_count: int = 0
+    external_evidence_model_visible_count: int = 0
+    external_evidence_selected_count: int = 0
+    external_evidence_rejected_count: int = 0
+    external_evidence_rejection_reasons: dict[str, str] = field(default_factory=dict)
+    evidence_selected_count: int = 0
+    evidence_relevance_guard_triggered: bool = False
+    evidence_reconsideration_used: bool = False
+    evidence_coverage_guard_triggered: bool = False
     evidence_recovery_used: bool = False
     evidence_repair_used: bool = False
     evidence_rebucket_attempted: bool = False
@@ -55,6 +75,11 @@ class RequestTelemetry:
     evidence_rebucket_moved_claim_count: int = 0
     evidence_rebucket_destination_ids: list[str] = field(default_factory=list)
     evidence_final_validation_result: str | None = None
+    duplicate_inspect_skipped: bool = False
+    wikipedia_query: str | None = None
+    wikipedia_candidate_titles: list[str] = field(default_factory=list)
+    wikipedia_selected_title: str | None = None
+    wikipedia_year_conflict_rejections: int = 0
     history_ms: float = 0.0
     history_generation_calls: int = 0
     generation_metrics: list[GenerationMetric] = field(default_factory=list)
@@ -111,16 +136,37 @@ class RequestTelemetry:
             "research_ms": self.research_ms,
             "research_llm_calls": self.research_llm_calls,
             "research_json_repairs": self.research_json_repairs,
+            "research_prefetch_used": self.research_prefetch_used,
+            "research_generation_calls": self.research_llm_calls,
+            "external_fallback_triggered": self.external_fallback_triggered,
             "tool_calls": self.tool_calls,
             "tool_calls_by_type": self.tool_calls_by_type,
             "retrieval_ms": self.retrieval_ms,
             "wikipedia_calls": self.wikipedia_calls,
+            "wikipedia_search_count": self.wikipedia_search_count,
+            "wikipedia_fetch_count": self.wikipedia_fetch_count,
             "wikipedia_ms": self.wikipedia_ms,
             "generic_web_calls": self.generic_web_calls,
             "generic_web_ms": self.generic_web_ms,
             "evidence_attempts": self.evidence_attempts,
             "evidence_ms": self.evidence_ms,
+            "evidence_candidate_count": self.evidence_candidate_count,
+            "evidence_candidate_count_raw": self.evidence_candidate_count_raw,
+            "evidence_candidate_count_model_visible": self.evidence_candidate_count_model_visible,
+            "evidence_dropped_for_budget_count": self.evidence_dropped_for_budget_count,
+            "evidence_dropped_ids": self.evidence_dropped_ids,
+            "evidence_source_kind_counts_raw": self.evidence_source_kind_counts_raw,
+            "evidence_source_kind_counts_visible": self.evidence_source_kind_counts_visible,
+            "external_evidence_collected_count": self.external_evidence_collected_count,
+            "external_evidence_model_visible_count": self.external_evidence_model_visible_count,
+            "external_evidence_selected_count": self.external_evidence_selected_count,
+            "external_evidence_rejected_count": self.external_evidence_rejected_count,
+            "external_evidence_rejection_reasons": self.external_evidence_rejection_reasons,
+            "evidence_selected_count": self.evidence_selected_count,
             "evidence_generation_calls": self.evidence_generation_calls,
+            "evidence_relevance_guard_triggered": self.evidence_relevance_guard_triggered,
+            "evidence_reconsideration_used": self.evidence_reconsideration_used,
+            "evidence_coverage_guard_triggered": self.evidence_coverage_guard_triggered,
             "evidence_recovery_used": self.evidence_recovery_used,
             "evidence_repair_used": self.evidence_repair_used,
             "evidence_rebucket_attempted": self.evidence_rebucket_attempted,
@@ -128,9 +174,19 @@ class RequestTelemetry:
             "evidence_rebucket_moved_claim_count": self.evidence_rebucket_moved_claim_count,
             "evidence_rebucket_destination_ids": self.evidence_rebucket_destination_ids,
             "evidence_final_validation_result": self.evidence_final_validation_result,
+            "duplicate_inspect_skipped": self.duplicate_inspect_skipped,
+            "wikipedia_query": self.wikipedia_query,
+            "wikipedia_candidate_titles": self.wikipedia_candidate_titles,
+            "wikipedia_selected_title": self.wikipedia_selected_title,
+            "wikipedia_year_conflict_rejections": self.wikipedia_year_conflict_rejections,
             "history_ms": self.history_ms,
             "history_generation_calls": self.history_generation_calls,
             "total_llm_calls": self.total_llm_calls,
+            "per_role_latency_ms": {
+                "research": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "research"),
+                "evidence": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "evidence"),
+                "history": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "history"),
+            },
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
             "average_generation_tokens_per_sec": self.average_generation_tokens_per_sec,

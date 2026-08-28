@@ -82,6 +82,7 @@ class HybridRAGOrchestrator:
             ood_reason=str(retrieval.get("ood_reason") or ""),
             history=None,
             request_id=request_id,
+            answer_depth="standard",
         )
         result["inference_mode"] = "hybrid_rag"
         result["agentic"] = False
@@ -184,12 +185,14 @@ class AgentOrchestrator:
                 ood_reason=research.ood_reason,
                 history=history,
                 request_id=request_id,
+                answer_depth="deep",
             )
         finally:
             self.research_agent.evidence_store.remove_session(session_id)
         result["agentic"] = True
         result["inference_mode"] = "agentic_rag"
         result["evidence_critique"] = critique.model_dump()
+        telemetry = current_request_telemetry()
         result["research_debug"] = {
             "steps": sum(int(item.get("steps", 0)) for item in research_attempts),
             "generation_calls": sum(int(item.get("generation_calls", 0)) for item in research_attempts),
@@ -205,6 +208,16 @@ class AgentOrchestrator:
                 for evidence_id in attempt.get("evidence_ids", [])
             )),
             "retrieval_question": research_attempts[0].get("retrieval_question"),
+            "prefetch_used": telemetry.research_prefetch_used if telemetry is not None else any(
+                tool.get("deterministic_prefetch")
+                for attempt in research_attempts
+                for tool in attempt.get("tools", [])
+            ),
+            "external_fallback_triggered": telemetry.external_fallback_triggered if telemetry is not None else any(
+                tool.get("external_fallback")
+                for attempt in research_attempts
+                for tool in attempt.get("tools", [])
+            ),
         }
         result["evidence_debug"] = {
             "input_count": len(research.evidence),
@@ -224,11 +237,28 @@ class AgentOrchestrator:
             "generation_calls": critique.generation_calls,
             "repair_used": critique.repair_used,
             "repair_path": critique.repair_path,
+            "candidate_count": len(critique.model_input_evidence),
+            "selected_count": len(critique.selected_evidence),
+            "raw_candidate_count": critique.raw_candidate_count,
+            "model_visible_candidate_count": critique.model_visible_candidate_count,
+            "dropped_for_budget_count": critique.dropped_for_budget_count,
+            "dropped_ids": critique.dropped_ids,
+            "dropped_reasons": critique.dropped_reasons,
+            "source_kind_counts_raw": critique.source_kind_counts_raw,
+            "source_kind_counts_visible": critique.source_kind_counts_visible,
+            "relevance_guard_triggered": (
+                telemetry.evidence_relevance_guard_triggered if telemetry is not None else False
+            ),
+            "coverage_guard_triggered": (
+                telemetry.evidence_coverage_guard_triggered if telemetry is not None else False
+            ),
+            "reconsideration_used": (
+                telemetry.evidence_reconsideration_used if telemetry is not None else False
+            ),
             "missing_information": critique.missing_information,
             "summary": critique.summary,
         }
         provenance = result.setdefault("answer_provenance", {})
-        telemetry = current_request_telemetry()
         research_generation_calls = (
             telemetry.research_llm_calls if telemetry is not None else result["research_debug"]["generation_calls"]
         )
@@ -248,9 +278,35 @@ class AgentOrchestrator:
             "research_steps": result["research_debug"]["steps"],
             "research_generation_calls": research_generation_calls,
             "research_json_repairs": sum(int(item.get("json_repairs", 0)) for item in research_attempts),
+            "research_prefetch_used": telemetry.research_prefetch_used if telemetry is not None else result["research_debug"]["prefetch_used"],
+            "external_fallback_triggered": telemetry.external_fallback_triggered if telemetry is not None else result["research_debug"]["external_fallback_triggered"],
+            "wikipedia_search_count": telemetry.wikipedia_search_count if telemetry is not None else 0,
+            "wikipedia_fetch_count": telemetry.wikipedia_fetch_count if telemetry is not None else 0,
+            "wikipedia_query": telemetry.wikipedia_query if telemetry is not None else None,
+            "wikipedia_candidate_titles": telemetry.wikipedia_candidate_titles if telemetry is not None else [],
+            "wikipedia_selected_title": telemetry.wikipedia_selected_title if telemetry is not None else None,
+            "wikipedia_year_conflict_rejections": telemetry.wikipedia_year_conflict_rejections if telemetry is not None else 0,
+            "duplicate_inspect_skipped": telemetry.duplicate_inspect_skipped if telemetry is not None else False,
             "evidence_generation_calls": evidence_generation_calls,
             "evidence_repair_used": critique.repair_used,
+            "evidence_candidate_count": len(critique.model_input_evidence),
+            "evidence_candidate_count_raw": critique.raw_candidate_count,
+            "evidence_candidate_count_model_visible": critique.model_visible_candidate_count,
+            "evidence_dropped_for_budget_count": critique.dropped_for_budget_count,
+            "evidence_dropped_ids": critique.dropped_ids,
+            "evidence_source_kind_counts_raw": critique.source_kind_counts_raw,
+            "evidence_source_kind_counts_visible": critique.source_kind_counts_visible,
+            "external_evidence_collected_count": telemetry.external_evidence_collected_count if telemetry is not None else 0,
+            "external_evidence_model_visible_count": telemetry.external_evidence_model_visible_count if telemetry is not None else 0,
+            "external_evidence_selected_count": telemetry.external_evidence_selected_count if telemetry is not None else 0,
+            "external_evidence_rejected_count": telemetry.external_evidence_rejected_count if telemetry is not None else 0,
+            "external_evidence_rejection_reasons": telemetry.external_evidence_rejection_reasons if telemetry is not None else {},
+            "evidence_selected_count": len(critique.selected_evidence),
+            "evidence_relevance_guard_triggered": telemetry.evidence_relevance_guard_triggered if telemetry is not None else False,
+            "evidence_coverage_guard_triggered": telemetry.evidence_coverage_guard_triggered if telemetry is not None else False,
+            "evidence_reconsideration_used": telemetry.evidence_reconsideration_used if telemetry is not None else False,
             "history_generation_calls": history_generation_calls,
+            "history_input_evidence_count": len(result.get("history_debug", {}).get("input_evidence_ids", [])),
             "total_llm_calls": total_llm_calls,
         })
         result["total_latency_sec"] = time.perf_counter() - started

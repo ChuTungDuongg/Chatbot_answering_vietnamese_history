@@ -156,7 +156,8 @@ def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter()
     assert result["answer_provenance"]["guard_override"] is False
     assert [call["adapter"] for call in role_runtime.calls].count("history") == 1
     assert [call["adapter"] for call in role_runtime.calls].count("evidence") == 1
-    assert not any("structured" in item or "repair" in item for item in result["tool_trace"])
+    assert "history:deep_structured_expansion" in result["tool_trace"]
+    assert result["answer_provenance"]["structured_expansion_used"] is True
 
     debug = _build_debug(result)
     assert debug["research"]["tools"][0]["arguments"]["query"] == QUESTION

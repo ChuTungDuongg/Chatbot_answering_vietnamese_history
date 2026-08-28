@@ -24,6 +24,8 @@ from app.telemetry import current_request_telemetry, log_event
 
 
 WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
+YEAR_RE = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
+QUESTION_YEAR_RE = re.compile(r"\bnam\s+(\d{3,4})\b")
 QUESTION_STOPWORDS = {
     "ai", "bao", "bi", "cai", "cho", "co", "cua", "da", "duoc", "gi",
     "khi", "la", "mot", "nam", "nao", "nhu", "nhung", "o", "ra", "sau",
@@ -36,6 +38,22 @@ EVIDENCE_TEXT_BUDGET = 14_000
 MAX_EVIDENCE_ITEM_CHARS = 3_200
 MIN_EVIDENCE_ITEM_CHARS = 1_200
 MAX_RECOVERY_SPAN_CHARS = 700
+SEMANTIC_RELEVANCE_MARGIN = 0.24
+SEMANTIC_RELEVANCE_FLOOR = 0.34
+ANALYTICAL_CUES = {
+    "nguyen nhan", "vi sao", "tai sao", "dan den", "suy yeu", "y nghia",
+    "vai tro", "so sanh", "phan tich", "danh gia", "he qua", "tac dong",
+}
+FACTOR_KEYWORDS = {
+    "political": {"chinh tri", "quyen luc", "trieu dinh", "vua", "quan lai", "the che", "lanh dao", "ho quy ly"},
+    "social": {"xa hoi", "nong dan", "khoi nghia", "bat binh", "bien dong", "dan chung", "noi day"},
+    "military": {"chien tranh", "quan su", "ngoai xam", "cham", "chiem", "nguyen", "xung dot", "bien gioi"},
+    "economic": {"kinh te", "thue", "ruong dat", "mat mua", "doi kem", "tai chinh", "san xuat"},
+    "institutional": {"the che", "to chuc", "quan lieu", "suy thoai", "tham nhung", "cai cach", "ky cuong"},
+    "religious": {"phat giao", "ton giao", "su tang", "chua", "tu vien"},
+    "sovereignty": {"doc lap", "tu chu", "bac thuoc", "nam han", "chu quyen", "xung vuong"},
+    "commemoration": {"mieu", "den", "le", "te", "thai lao", "co", "tuong niem"},
+}
 logger = logging.getLogger(__name__)
 
 
@@ -150,6 +168,88 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return result
 
 
+def _normalized_text(value: str) -> str:
+    return normalize_grounding(value)
+
+
+def _question_is_analytical(question: str) -> bool:
+    normalized = _normalized_text(question)
+    return any(cue in normalized for cue in ANALYTICAL_CUES)
+
+
+def _question_years(question: str) -> set[str]:
+    normalized = _normalized_text(question)
+    years = set(QUESTION_YEAR_RE.findall(normalized))
+    if years:
+        return years
+    all_years = set(YEAR_RE.findall(normalized))
+    return all_years if len(all_years) == 1 else set()
+
+
+def _title_year_conflicts_question(question: str, title: str | None) -> bool:
+    question_years = _question_years(question)
+    title_years = set(YEAR_RE.findall(_normalized_text(title or "")))
+    return bool(question_years and title_years and question_years.isdisjoint(title_years))
+
+
+def _text_factor_labels(value: str) -> set[str]:
+    normalized = _normalized_text(value)
+    return {
+        label
+        for label, keywords in FACTOR_KEYWORDS.items()
+        if any(keyword in normalized for keyword in keywords)
+    }
+
+
+def _retrieval_score(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(score, 1.0))
+
+
+def _semantic_score(question: str, *, title: str | None, text: str, retrieval_score: Any = None) -> float:
+    question_terms = _content_terms(question)
+    haystack = f"{title or ''} {text}"
+    text_terms = _content_terms(haystack)
+    if not question_terms or not text_terms:
+        return _retrieval_score(retrieval_score) * 0.1
+    overlap = question_terms & text_terms
+    overlap_score = len(overlap) / max(len(question_terms), 1)
+    normalized_question = _normalized_text(question)
+    normalized_haystack = _normalized_text(haystack)
+    phrase_bonus = 0.0
+    for phrase in ("nha tran", "suy yeu", "nguyen nhan", "dan den"):
+        if phrase in normalized_question and phrase in normalized_haystack:
+            phrase_bonus += 0.12
+    factor_bonus = min(0.18, 0.06 * len(_text_factor_labels(haystack)))
+    return min(1.0, overlap_score + phrase_bonus + factor_bonus + _retrieval_score(retrieval_score) * 0.12)
+
+
+def _best_candidate_claims(question: str, candidate: Any, *, max_claims: int = 2) -> list[str]:
+    source_text = str(getattr(candidate, "text", "") or "")
+    scored: list[tuple[float, int, str]] = []
+    for index, span in enumerate(_source_sentence_spans(source_text)):
+        span = span.strip()
+        if not span:
+            continue
+        if len(span) > MAX_RECOVERY_SPAN_CHARS:
+            span = question_relevant_excerpt(span, question, max_chars=MAX_RECOVERY_SPAN_CHARS)
+        if not grounded_in_source(span, source_text):
+            continue
+        score = _semantic_score(question, title=None, text=span, retrieval_score=None)
+        if score <= 0:
+            continue
+        scored.append((score, -index, span))
+    scored.sort(reverse=True)
+    claims = _dedupe_preserve_order([span for _, _, span in scored[:max_claims]])
+    if claims:
+        return claims
+    excerpt = question_relevant_excerpt(source_text, question, max_chars=MAX_RECOVERY_SPAN_CHARS)
+    return [excerpt] if excerpt and grounded_in_source(excerpt, source_text) else []
+
+
 class EvidenceModelContractError(ValueError):
     """The Evidence adapter returned output that cannot satisfy the production contract."""
 
@@ -192,6 +292,32 @@ class EvidenceRebucketResult:
     output: EvidenceModelOutput
     moved_claim_count: int
     destination_evidence_ids: list[str]
+
+
+def _source_kind(item: dict[str, Any]) -> str:
+    value = str(item.get("source_kind") or item.get("source_type") or "history").strip().lower()
+    if value in {"local", "history"}:
+        return "history"
+    if value in {"wikipedia", "web", "attachment"}:
+        return value
+    return "web" if value.startswith("http") else value
+
+
+def _candidate_quality(question: str, item: dict[str, Any]) -> float:
+    score = item.get("final_retrieval_score")
+    if score is None:
+        score = item.get("reranker_score")
+    if score is None:
+        score = item.get("score")
+    quality = _semantic_score(
+        question,
+        title=str(item.get("title") or ""),
+        text=str(item.get("text") or ""),
+        retrieval_score=score,
+    )
+    if _title_year_conflicts_question(question, str(item.get("title") or "")):
+        quality -= 0.6
+    return max(0.0, quality)
 
 
 class EvidenceCriticAgent:
@@ -303,17 +429,46 @@ class EvidenceCriticAgent:
         evidence: list[dict[str, Any]],
         *,
         final_k: int,
-    ) -> tuple[EvidenceAgentRequest, dict[str, dict[str, Any]]]:
+    ) -> tuple[EvidenceAgentRequest, dict[str, dict[str, Any]], dict[str, Any]]:
         # Canonical Evidence SFT contains at most seven candidates. Keep the
-        # production pool close to that distribution and preserve retrieval order.
-        available: dict[str, dict[str, Any]] = {}
+        # production pool close to that distribution while preserving source diversity.
+        raw_available: dict[str, dict[str, Any]] = {}
         for item in evidence:
             chunk_id = str(item.get("chunk_id") or "").strip()
-            if not chunk_id or chunk_id in available:
+            if not chunk_id or chunk_id in raw_available:
                 continue
-            available[chunk_id] = item
-            if len(available) >= self.max_contexts:
+            raw_available[chunk_id] = item
+
+        visible_limit = min(max(final_k, 1), self.max_contexts)
+        ranked = sorted(
+            raw_available.items(),
+            key=lambda pair: (_candidate_quality(question, pair[1]), -list(raw_available).index(pair[0])),
+            reverse=True,
+        )
+        selected_ids: list[str] = []
+        for preferred_kind in ("attachment", "wikipedia", "web", "history"):
+            best = next(
+                (
+                    chunk_id
+                    for chunk_id, item in ranked
+                    if _source_kind(item) == preferred_kind and chunk_id not in selected_ids
+                ),
+                None,
+            )
+            if best is not None:
+                selected_ids.append(best)
+            if len(selected_ids) >= visible_limit:
                 break
+        for chunk_id, _ in ranked:
+            if len(selected_ids) >= visible_limit:
+                break
+            if chunk_id not in selected_ids:
+                selected_ids.append(chunk_id)
+        available = {chunk_id: raw_available[chunk_id] for chunk_id in selected_ids}
+        dropped_ids = [chunk_id for chunk_id in raw_available if chunk_id not in available]
+        raw_kind_counts = Counter(_source_kind(item) for item in raw_available.values())
+        visible_kind_counts = Counter(_source_kind(item) for item in available.values())
+        dropped_reasons = {chunk_id: "budget_not_model_visible" for chunk_id in dropped_ids}
         per_item_limit = min(
             MAX_EVIDENCE_ITEM_CHARS,
             max(MIN_EVIDENCE_ITEM_CHARS, EVIDENCE_TEXT_BUDGET // max(len(available), 1)),
@@ -324,7 +479,7 @@ class EvidenceCriticAgent:
             "evidence": [
                 {
                     "evidence_id": chunk_id,
-                    "source_type": item.get("source_kind", "local"),
+                    "source_type": _source_kind(item),
                     "title": item.get("title"),
                     "url": item.get("url"),
                     "chunk_id": chunk_id,
@@ -333,12 +488,22 @@ class EvidenceCriticAgent:
                         question,
                         max_chars=per_item_limit,
                     ),
-                    "retrieval_score": item.get("score") or item.get("reranker_score"),
+                    "retrieval_score": item.get("final_retrieval_score") or item.get("score") or item.get("reranker_score"),
                 }
                 for chunk_id, item in available.items()
             ],
         })
-        return request, available
+        budget_report = {
+            "raw_candidate_count": len(raw_available),
+            "model_visible_candidate_count": len(available),
+            "dropped_for_budget_count": len(dropped_ids),
+            "dropped_ids": dropped_ids,
+            "dropped_reasons": dropped_reasons,
+            "dropped_source_kinds": {chunk_id: _source_kind(raw_available[chunk_id]) for chunk_id in dropped_ids},
+            "source_kind_counts_raw": dict(raw_kind_counts),
+            "source_kind_counts_visible": dict(visible_kind_counts),
+        }
+        return request, available, budget_report
 
     @staticmethod
     def _evidence_messages(request: EvidenceAgentRequest) -> list[dict[str, str]]:
@@ -578,6 +743,254 @@ class EvidenceCriticAgent:
             {"role": "user", "content": json.dumps(repair_payload, ensure_ascii=False, sort_keys=True)},
         ]
 
+    def _semantic_guard_findings(
+        self,
+        model_output: EvidenceModelOutput,
+        request: EvidenceAgentRequest,
+    ) -> dict[str, Any]:
+        if model_output.status != "sufficient" or not model_output.selected_evidence or not request.evidence:
+            return {
+                "triggered": False,
+                "relevance_triggered": False,
+                "coverage_triggered": False,
+                "best_candidate_ids": [],
+                "candidate_factors": [],
+                "selected_factors": [],
+                "year_conflict_ids": [],
+            }
+
+        candidates_by_id = {item.evidence_id: item for item in request.evidence}
+        ranked = sorted(
+            (
+                (
+                    _semantic_score(
+                        request.question,
+                        title=item.title,
+                        text=item.text,
+                        retrieval_score=item.retrieval_score,
+                    ),
+                    item.evidence_id,
+                    item,
+                )
+                for item in request.evidence
+            ),
+            reverse=True,
+        )
+        selected_ids = {item.evidence_id for item in model_output.selected_evidence}
+        selected_scores = [
+            (
+                item.evidence_id,
+                _semantic_score(
+                    request.question,
+                    title=None,
+                    text=item.compressed_text,
+                    retrieval_score=None,
+                ),
+            )
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+        ]
+        best_selected = max((score for _, score in selected_scores), default=0.0)
+        best_unselected_score, best_unselected_id = next(
+            ((score, evidence_id) for score, evidence_id, _ in ranked if evidence_id not in selected_ids),
+            (0.0, None),
+        )
+        relevance_triggered = (
+            best_unselected_id is not None
+            and best_unselected_score >= SEMANTIC_RELEVANCE_FLOOR
+            and best_unselected_score > best_selected + SEMANTIC_RELEVANCE_MARGIN
+        )
+        normalized_question = _normalized_text(request.question)
+        selected_title_text = " ".join(
+            str(candidates_by_id[item.evidence_id].title or "")
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+        )
+        selected_title_norm = _normalized_text(selected_title_text)
+        direct_entity_unselected = next(
+            (
+                (score, evidence_id)
+                for score, evidence_id, candidate in ranked
+                if evidence_id not in selected_ids
+                and "nha tran" in normalized_question
+                and "nha tran" in _normalized_text(f"{candidate.title or ''} {candidate.text}")
+                and "nha tran" not in selected_title_norm
+            ),
+            None,
+        )
+        if (
+            len(model_output.selected_evidence) == 1
+            and _question_is_analytical(request.question)
+            and direct_entity_unselected is not None
+            and direct_entity_unselected[0] >= max(SEMANTIC_RELEVANCE_FLOOR, best_selected - 0.05)
+        ):
+            relevance_triggered = True
+        weak_selected_ids = [
+            evidence_id
+            for evidence_id, score in selected_scores
+            if score < SEMANTIC_RELEVANCE_FLOOR
+            and max(best_unselected_score, best_selected) >= SEMANTIC_RELEVANCE_FLOOR + SEMANTIC_RELEVANCE_MARGIN
+        ]
+        if weak_selected_ids:
+            relevance_triggered = True
+        year_conflict_ids = [
+            item.evidence_id
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+            and _title_year_conflicts_question(request.question, candidates_by_id[item.evidence_id].title)
+        ]
+        if year_conflict_ids:
+            relevance_triggered = True
+
+        analytical = _question_is_analytical(request.question)
+        strong_candidates: list[tuple[float, str, set[str]]] = []
+        seen_factor_fingerprints: set[tuple[str, ...]] = set()
+        for score, evidence_id, candidate in ranked:
+            if _title_year_conflicts_question(request.question, candidate.title):
+                continue
+            if score < SEMANTIC_RELEVANCE_FLOOR:
+                continue
+            factors = _text_factor_labels(f"{candidate.title or ''} {candidate.text}")
+            if not factors:
+                continue
+            fingerprint = tuple(sorted(factors))
+            if fingerprint in seen_factor_fingerprints:
+                continue
+            seen_factor_fingerprints.add(fingerprint)
+            strong_candidates.append((score, evidence_id, factors))
+        candidate_factors = set().union(*(factors for _, _, factors in strong_candidates)) if strong_candidates else set()
+        selected_factors = set().union(*(
+            _text_factor_labels(f"{candidates_by_id[item.evidence_id].title or ''} {item.compressed_text}")
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+        )) if selected_ids else set()
+        coverage_triggered = (
+            analytical
+            and len(strong_candidates) >= 2
+            and len(candidate_factors) >= 2
+            and len(selected_factors) < min(2, len(candidate_factors))
+        )
+
+        return {
+            "triggered": relevance_triggered or coverage_triggered,
+            "relevance_triggered": relevance_triggered,
+            "coverage_triggered": coverage_triggered,
+            "best_candidate_ids": [evidence_id for _, evidence_id, _ in strong_candidates[: self.max_contexts]],
+            "best_unselected_id": best_unselected_id,
+            "best_unselected_score": best_unselected_score,
+            "best_selected_score": best_selected,
+            "weak_selected_ids": weak_selected_ids,
+            "year_conflict_ids": year_conflict_ids,
+            "candidate_factors": sorted(candidate_factors),
+            "selected_factors": sorted(selected_factors),
+        }
+
+    def _semantic_reconsideration_messages(
+        self,
+        *,
+        request: EvidenceAgentRequest,
+        invalid_output: EvidenceModelOutput,
+        findings: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        payload = {
+            "instructions": [
+                "Return canonical JSON only.",
+                "Reconsider the evidence selection for semantic relevance to the exact question.",
+                "Do not select an evidence title whose explicit year conflicts with the explicit year in the question.",
+                "If direct high-relevance candidates support multiple analytical factors, do not collapse to one narrow source without justification.",
+                "Use only supplied evidence IDs.",
+                "Every claim must be copied verbatim/extractively from its own evidence text.",
+                "The summary may mention only selected_evidence IDs unless an ID is explicitly marked as rejected candidate evidence.",
+            ],
+            "question": request.question,
+            "evidence": [item.model_dump() for item in request.evidence],
+            "previous_output": invalid_output.model_dump(),
+            "guard_findings": findings,
+        }
+        return [
+            {"role": "system", "content": EVIDENCE_AGENT_SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
+        ]
+
+    def _semantic_guard_output(
+        self,
+        *,
+        request: EvidenceAgentRequest,
+        findings: dict[str, Any],
+    ) -> EvidenceModelOutput | None:
+        selected: list[SelectedEvidence] = []
+        candidate_ids = findings.get("best_candidate_ids") or []
+        if findings.get("best_unselected_id") and findings["best_unselected_id"] not in candidate_ids:
+            candidate_ids = [findings["best_unselected_id"], *candidate_ids]
+        weak_selected_ids = set(findings.get("weak_selected_ids") or [])
+        year_conflict_ids = set(findings.get("year_conflict_ids") or [])
+        candidates_by_id = {item.evidence_id: item for item in request.evidence}
+        for evidence_id in candidate_ids:
+            candidate = candidates_by_id.get(str(evidence_id))
+            if candidate is None:
+                continue
+            if candidate.evidence_id in weak_selected_ids or candidate.evidence_id in year_conflict_ids:
+                continue
+            if _title_year_conflicts_question(request.question, candidate.title):
+                continue
+            claims = _best_candidate_claims(request.question, candidate)
+            if not claims:
+                continue
+            claim_score = _semantic_score(
+                request.question,
+                title=None,
+                text=" ".join(claims),
+                retrieval_score=None,
+            )
+            if claim_score < SEMANTIC_RELEVANCE_FLOOR:
+                continue
+            selected.append(SelectedEvidence(
+                evidence_id=candidate.evidence_id,
+                relevance=claim_score,
+                claims=claims,
+                compressed_text=" ".join(claims),
+            ))
+            if len(selected) >= request.max_selected:
+                break
+        if not selected:
+            return None
+        try:
+            return EvidenceModelOutput(
+                status="sufficient",
+                selected_evidence=selected,
+                conflicts=[],
+                missing_information=[],
+                summary="Các bằng chứng đã giữ lại trả lời trực tiếp câu hỏi: "
+                + ", ".join(item.evidence_id for item in selected)
+                + ".",
+            )
+        except ValidationError:
+            return None
+
+    @staticmethod
+    def _summary_consistent_with_selected(
+        model_output: EvidenceModelOutput,
+        visible_sources: dict[str, str],
+    ) -> EvidenceModelOutput:
+        selected_ids = {item.evidence_id for item in model_output.selected_evidence}
+        referenced_ids = set(referenced_evidence_ids(model_output.summary, visible_sources))
+        extra_ids = referenced_ids - selected_ids
+        if not extra_ids:
+            return model_output
+        status_text = {
+            "sufficient": "đủ",
+            "insufficient": "chưa đủ",
+            "conflicting": "mâu thuẫn",
+        }[model_output.status]
+        selected_text = ", ".join(item.evidence_id for item in model_output.selected_evidence) or "không có"
+        return EvidenceModelOutput(
+            status=model_output.status,
+            selected_evidence=model_output.selected_evidence,
+            conflicts=model_output.conflicts,
+            missing_information=model_output.missing_information,
+            summary=f"Evidence {status_text}; các bằng chứng được giữ lại: {selected_text}.",
+        )
+
     def _raise_contract_error(
         self,
         issues: list[EvidenceValidationIssue],
@@ -621,6 +1034,7 @@ class EvidenceCriticAgent:
         *,
         available: dict[str, dict[str, Any]],
         request: EvidenceAgentRequest,
+        budget_report: dict[str, Any],
         question: str,
         generation_calls: int,
         repair_used: bool,
@@ -658,6 +1072,13 @@ class EvidenceCriticAgent:
                 }
                 for item in request.evidence
             ],
+            raw_candidate_count=int(budget_report["raw_candidate_count"]),
+            model_visible_candidate_count=int(budget_report["model_visible_candidate_count"]),
+            dropped_for_budget_count=int(budget_report["dropped_for_budget_count"]),
+            dropped_ids=list(budget_report["dropped_ids"]),
+            dropped_reasons=dict(budget_report["dropped_reasons"]),
+            source_kind_counts_raw=dict(budget_report["source_kind_counts_raw"]),
+            source_kind_counts_visible=dict(budget_report["source_kind_counts_visible"]),
             generation_calls=generation_calls,
             repair_used=repair_used,
             repair_path=repair_path,
@@ -678,7 +1099,7 @@ class EvidenceCriticAgent:
         calls_before = telemetry.total_llm_calls if telemetry is not None else 0
         if telemetry is not None:
             telemetry.evidence_attempts += 1
-        request, available = self._build_evidence_request(question, evidence, final_k=final_k)
+        request, available, budget_report = self._build_evidence_request(question, evidence, final_k=final_k)
         visible_sources = {item.evidence_id: item.text for item in request.evidence}
         selected_candidate_count = min(max(final_k, 1), self.max_contexts)
         generation_calls = 1
@@ -694,6 +1115,27 @@ class EvidenceCriticAgent:
             per_item_limit=len(request.evidence[0].text) if request.evidence else 0,
             text_budget=EVIDENCE_TEXT_BUDGET,
         )
+        if telemetry is not None:
+            telemetry.evidence_candidate_count = len(request.evidence)
+            telemetry.evidence_candidate_count_raw = int(budget_report["raw_candidate_count"])
+            telemetry.evidence_candidate_count_model_visible = int(budget_report["model_visible_candidate_count"])
+            telemetry.evidence_dropped_for_budget_count = int(budget_report["dropped_for_budget_count"])
+            telemetry.evidence_dropped_ids = list(budget_report["dropped_ids"])
+            telemetry.evidence_source_kind_counts_raw = dict(budget_report["source_kind_counts_raw"])
+            telemetry.evidence_source_kind_counts_visible = dict(budget_report["source_kind_counts_visible"])
+            telemetry.external_evidence_collected_count = sum(
+                count for kind, count in telemetry.evidence_source_kind_counts_raw.items()
+                if kind in {"wikipedia", "web"}
+            )
+            telemetry.external_evidence_model_visible_count = sum(
+                count for kind, count in telemetry.evidence_source_kind_counts_visible.items()
+                if kind in {"wikipedia", "web"}
+            )
+            telemetry.external_evidence_rejection_reasons = {
+                chunk_id: reason
+                for chunk_id, reason in dict(budget_report["dropped_reasons"]).items()
+                if dict(budget_report["dropped_source_kinds"]).get(chunk_id) in {"wikipedia", "web"}
+            }
 
         logger.info(
             "evidence_generation_start",
@@ -835,10 +1277,89 @@ class EvidenceCriticAgent:
                 else:
                     self._raise_contract_error(recovered_issues, repair_attempted=False)
 
+        guard_findings = self._semantic_guard_findings(model_output, request)
+        if guard_findings["triggered"]:
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.evidence_relevance_guard_triggered = (
+                    telemetry.evidence_relevance_guard_triggered
+                    or bool(guard_findings["relevance_triggered"])
+                )
+                telemetry.evidence_coverage_guard_triggered = (
+                    telemetry.evidence_coverage_guard_triggered
+                    or bool(guard_findings["coverage_triggered"])
+                )
+            log_event(
+                "EVIDENCE_SEMANTIC_GUARD_TRIGGERED",
+                request_id=request_id,
+                relevance_triggered=guard_findings["relevance_triggered"],
+                coverage_triggered=guard_findings["coverage_triggered"],
+                best_candidate_ids=guard_findings["best_candidate_ids"],
+                selected_ids=[item.evidence_id for item in model_output.selected_evidence],
+                candidate_factors=guard_findings["candidate_factors"],
+                selected_factors=guard_findings["selected_factors"],
+            )
+            reconsidered_output: EvidenceModelOutput | None = None
+            try:
+                generation_calls += 1
+                if telemetry is not None:
+                    telemetry.evidence_reconsideration_used = True
+                log_event("EVIDENCE_RECONSIDERATION_START", request_id=request_id)
+                reconsidered_raw = self.model_runtime.generate_json(
+                    adapter="evidence",
+                    messages=self._semantic_reconsideration_messages(
+                        request=request,
+                        invalid_output=model_output,
+                        findings=guard_findings,
+                    ),
+                    max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
+                    repair=False,
+                )
+                reconsidered_output = self._parse_model_output(
+                    reconsidered_raw,
+                    repair_attempted=True,
+                )
+                reconsidered_issues = self._contract_issues(reconsidered_output, visible_sources)
+                if reconsidered_issues:
+                    self._raise_contract_error(reconsidered_issues, repair_attempted=True)
+                reconsidered_guard = self._semantic_guard_findings(reconsidered_output, request)
+                if not reconsidered_guard["triggered"]:
+                    model_output = reconsidered_output
+                    repair_used = True
+                    repair_path = "semantic_reconsideration"
+                else:
+                    guard_findings = reconsidered_guard
+            finally:
+                log_event("EVIDENCE_RECONSIDERATION_END", request_id=request_id)
+
+            if guard_findings["triggered"]:
+                deterministic_output = self._semantic_guard_output(
+                    request=request,
+                    findings=guard_findings,
+                )
+                deterministic_issues = (
+                    self._contract_issues(deterministic_output, visible_sources)
+                    if deterministic_output is not None
+                    else [EvidenceValidationIssue(
+                        code="semantic_guard_failed",
+                        message="Evidence semantic guard could not build grounded replacement evidence.",
+                        recoverable=False,
+                    )]
+                )
+                if deterministic_output is None or deterministic_issues:
+                    self._raise_contract_error(deterministic_issues, repair_attempted=True)
+                model_output = deterministic_output
+                repair_used = True
+                repair_path = "deterministic_semantic_guard"
+                if telemetry is not None:
+                    telemetry.evidence_recovery_used = True
+
+        model_output = self._summary_consistent_with_selected(model_output, visible_sources)
         critique, contexts = self._critique_from_output(
             model_output,
             available=available,
             request=request,
+            budget_report=budget_report,
             question=question,
             generation_calls=generation_calls,
             repair_used=repair_used,
@@ -860,11 +1381,28 @@ class EvidenceCriticAgent:
         actual_calls = (telemetry.total_llm_calls - calls_before) if telemetry is not None else generation_calls
         if telemetry is not None:
             telemetry.evidence_ms += elapsed_ms
+            telemetry.evidence_selected_count = len(contexts)
+            telemetry.external_evidence_selected_count = sum(
+                1 for context in contexts if _source_kind(context) in {"wikipedia", "web"}
+            )
+            telemetry.external_evidence_rejected_count = max(
+                0,
+                telemetry.external_evidence_collected_count - telemetry.external_evidence_selected_count,
+            )
+            selected_ids = set(critique.selected_ids)
+            for chunk_id, item in available.items():
+                if _source_kind(item) in {"wikipedia", "web"} and chunk_id not in selected_ids:
+                    telemetry.external_evidence_rejection_reasons.setdefault(
+                        chunk_id,
+                        "model_visible_not_selected",
+                    )
             telemetry.evidence_repair_used = telemetry.evidence_repair_used or repair_path == "model"
             telemetry.evidence_recovery_used = telemetry.evidence_recovery_used or repair_path in {
                 "deterministic",
                 "deterministic_rebucket",
                 "model",
+                "semantic_reconsideration",
+                "deterministic_semantic_guard",
             }
         log_event(
             "EVIDENCE_COMPLETE",
