@@ -85,10 +85,25 @@ merged_model/
 *.onnx
 
 # =========================
-# RAG artifacts
+# Deployment artifacts
 # =========================
-# Keep reports, manifests, and other lightweight artifacts trackable; ignore
-# model weights and training checkpoints generated under this directory.
+# Deployment bundles belong in Modal Volume / Drive, not Git.
+artifacts/vn_history_deployment/
+artifacts/vn_history_modal/
+
+# =========================
+# Generated training artifacts
+# =========================
+# Large/generated training JSONL files under artifacts should not be tracked.
+artifacts/training/**/*.jsonl
+
+# Keep lightweight reports / manifests / validation JSON files trackable.
+# Examples:
+# artifacts/reports/*.json
+# artifacts/training/**/split_manifest.json
+# artifacts/training/**/validation.json
+
+# Model weights/checkpoints anywhere under artifacts.
 artifacts/**/*.safetensors
 artifacts/**/*.bin
 artifacts/**/*.pt
@@ -96,6 +111,9 @@ artifacts/**/*.pth
 artifacts/**/*.ckpt
 artifacts/**/*.onnx
 
+# =========================
+# Vector DB / retrieval artifacts
+# =========================
 vector_db/
 faiss_index/
 chroma/
@@ -120,7 +138,7 @@ qdrant_storage/
 *_messages.jsonl
 *_stats.json
 
-# Keep the VN-history source and generated Research Agent trajectories in Git.
+# Canonical datasets that SHOULD stay in Git.
 !Dataset/merged_jsonl/all_messages.jsonl
 !datasets/research_agent/history_trajectories.jsonl
 
@@ -171,13 +189,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+node_modules/
+
 # =========================
 # Keep examples
 # =========================
 !examples/
 !examples/*.jsonl
 !examples/*.md
-
-node_modules/
-artifacts/vn_history_deployment/
-artifacts/vn_history_modal/
