@@ -105,6 +105,9 @@ class EvidenceCritique(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     summary: str = ""
     model_input_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    generation_calls: int = 0
+    repair_used: bool = False
+    repair_path: str | None = None
 
     @model_validator(mode="after")
     def validate_disjoint_ids(self):

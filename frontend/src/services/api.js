@@ -1,5 +1,6 @@
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const CLIENT_ID_STORAGE_KEY = "vn-history-client-id";
+export const EVIDENCE_CONTRACT_FAILURE_MESSAGE = "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.";
 
 function ensureApiConfigured() {
   if (!API_BASE_URL) {
@@ -173,9 +174,10 @@ export async function streamChat({
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  let sawStreamError = false;
 
   try {
-    while (true) {
+    while (!sawStreamError) {
       const { value, done } = await reader.read();
       if (done) break;
 
@@ -185,13 +187,23 @@ export async function streamChat({
 
       for (const block of blocks) {
         const parsed = parseSSEBlock(block);
-        if (parsed) onEvent?.(parsed);
+        if (parsed) {
+          onEvent?.(parsed);
+          if (parsed.event === "error") {
+            sawStreamError = true;
+            break;
+          }
+        }
       }
     }
 
-    buffer += decoder.decode();
-    const parsed = buffer.trim() ? parseSSEBlock(buffer) : null;
-    if (parsed) onEvent?.(parsed);
+    if (sawStreamError) {
+      await reader.cancel();
+    } else {
+      buffer += decoder.decode();
+      const parsed = buffer.trim() ? parseSSEBlock(buffer) : null;
+      if (parsed) onEvent?.(parsed);
+    }
   } finally {
     reader.releaseLock();
   }

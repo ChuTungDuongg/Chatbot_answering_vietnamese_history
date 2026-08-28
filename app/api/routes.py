@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+from contextlib import suppress
 from typing import Any, Iterator
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
+from app.agents.evidence_agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
 from app.schemas import (
     ChatRequest,
@@ -93,6 +95,26 @@ def _result_sources(service: Any, result: dict[str, Any]) -> list[SourceItem]:
 def _sse(event: str, data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _consume_task_exception(task: asyncio.Task) -> None:
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Could not consume background task exception")
+
+
+def _evidence_contract_error_payload(exc: EvidenceModelContractError) -> dict[str, Any]:
+    return {
+        "type": "evidence_contract_error",
+        "stage": exc.stage,
+        "code": exc.code,
+        "message": exc.user_message,
+        "evidence_ids": exc.evidence_ids,
+        "repair_attempted": exc.repair_attempted,
+    }
 
 
 def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
@@ -307,6 +329,20 @@ async def chat(
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except EvidenceModelContractError as exc:
+        logger.warning(
+            "Chat evidence contract error",
+            extra={
+                "stage": exc.stage,
+                "code": exc.code,
+                "evidence_ids": exc.evidence_ids,
+                "repair_attempted": exc.repair_attempted,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_evidence_contract_error_payload(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -352,6 +388,7 @@ async def chat_stream(
 
     async def event_stream():
         stream_started = time.perf_counter()
+        task: asyncio.Task | None = None
 
         yield _sse(
             "status",
@@ -371,25 +408,56 @@ async def chat_stream(
                 payload,
             )
         )
-
-        while not task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=8.0)
-            except asyncio.TimeoutError:
-                yield _sse("ping", {"timestamp": time.time()})
+        task.add_done_callback(_consume_task_exception)
 
         try:
+            while not task.done():
+                if await request.is_disconnected():
+                    break
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=8.0)
+                except asyncio.TimeoutError:
+                    yield _sse("ping", {"timestamp": time.time()})
+
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                return
+
             result = await task
         except LookupError as exc:
             yield _sse("error", {"type": "not_found", "message": str(exc)})
+            yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
+            return
+        except EvidenceModelContractError as exc:
+            logger.warning(
+                "Streaming evidence contract error",
+                extra={
+                    "stage": exc.stage,
+                    "code": exc.code,
+                    "evidence_ids": exc.evidence_ids,
+                    "repair_attempted": exc.repair_attempted,
+                },
+            )
+            yield _sse("error", _evidence_contract_error_payload(exc))
+            yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except ValueError as exc:
             yield _sse("error", {"type": "bad_request", "message": str(exc)})
+            yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except RuntimeError as exc:
             logger.exception("Streaming generation runtime error")
             yield _sse("error", {"type": "runtime_error", "message": str(exc)})
+            yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
+        except asyncio.CancelledError:
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            raise
         except Exception:
             logger.exception("Unexpected streaming chat error")
             yield _sse(
@@ -399,7 +467,13 @@ async def chat_stream(
                     "message": "Internal generation error.",
                 },
             )
+            yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
         yield _sse(
             "status",

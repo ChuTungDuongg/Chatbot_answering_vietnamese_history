@@ -109,6 +109,7 @@ class ResearchAgent:
             },
             debug={
                 "steps": len(policy_steps),
+                "generation_calls": len(policy_steps) if self.model_runtime is not None else 0,
                 "tools": policy_steps,
                 "evidence_ids": [str(item.get("chunk_id")) for item in evidence],
                 "retrieval_question": retrieval_question,

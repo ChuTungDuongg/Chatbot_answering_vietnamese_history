@@ -20,8 +20,9 @@ from app.tools.registry import ToolRegistry
 
 
 QUESTION = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?"
+BACH_DANG_ID = "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68"
 LATE_RELEVANT_PASSAGE = (
-    "Ý nghĩa của chiến thắng Bạch Đằng năm 938 được trình bày trực tiếp trong đoạn này."
+    "Ý nghĩa của chiến thắng Bạch Đằng năm 938 là chấm dứt hơn 1000 năm Bắc thuộc và mở ra thời kỳ độc lập tự chủ."
 )
 
 
@@ -31,7 +32,7 @@ class RegressionRetriever:
         prefix = "Đoạn đầu mô tả mưu kế, bãi cọc và quy luật thủy triều. " * 90
         self.contexts = [
             {
-                "chunk_id": "bach_dang_significance",
+                "chunk_id": BACH_DANG_ID,
                 "title": "Trận Bạch Đằng (938)",
                 "text": prefix + LATE_RELEVANT_PASSAGE,
                 "source_kind": "history",
@@ -79,22 +80,22 @@ class FakeSharedRoleRuntime:
                 return {
                     "action": "tool",
                     "tool_name": "inspect_evidence",
-                    "arguments": {"ids": ["bach_dang_significance"]},
+                    "arguments": {"ids": [BACH_DANG_ID]},
                 }
             return {"action": "finish", "sufficient": True, "missing_information": []}
 
         assert adapter == "evidence"
         request = json.loads(messages[1]["content"])
         visible = {item["evidence_id"]: item["text"] for item in request["evidence"]}
-        assert LATE_RELEVANT_PASSAGE in visible["bach_dang_significance"]
+        assert LATE_RELEVANT_PASSAGE in visible[BACH_DANG_ID]
         return {
             "status": "sufficient",
             "selected_evidence": [
                 {
-                    "evidence_id": "bach_dang_significance",
+                    "evidence_id": BACH_DANG_ID,
                     "relevance": 1.0,
-                    "claims": [LATE_RELEVANT_PASSAGE],
-                    "compressed_text": LATE_RELEVANT_PASSAGE,
+                    "claims": ["Chiến thắng này giúp dân tộc giành lại nền tự chủ lâu dài."],
+                    "compressed_text": "Chiến thắng này giúp dân tộc giành lại nền tự chủ lâu dài.",
                 }
             ],
             "conflicts": [],
@@ -106,11 +107,11 @@ class FakeSharedRoleRuntime:
         self.calls.append({"adapter": adapter, "messages": messages})
         assert adapter == "history"
         prompt = messages[0]["content"]
-        assert "[bach_dang_significance]" in prompt
+        assert f"[{BACH_DANG_ID}]" in prompt
         assert LATE_RELEVANT_PASSAGE in prompt
         assert "bach_dang_distractor" not in prompt
         return (
-            "Nguồn được dùng: [bach_dang_significance]\n\n"
+            f"Nguồn được dùng: [{BACH_DANG_ID}]\n\n"
             "Trả lời:\nCâu trả lời được tạo từ evidence đã chọn."
         )
 
@@ -143,16 +144,19 @@ def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter()
 
     assert retriever.queries[0]["query"] == QUESTION
     assert all(term in retriever.queries[0]["query"] for term in ("Bạch Đằng", "938", "ý nghĩa"))
-    assert result["evidence_critique"]["selected_ids"] == ["bach_dang_significance"]
-    assert result["source_ids"] == ["bach_dang_significance"]
+    assert result["evidence_critique"]["selected_ids"] == [BACH_DANG_ID]
+    assert result["source_ids"] == [BACH_DANG_ID]
     assert result["answer_provenance"]["source"] == "history_adapter"
     assert result["answer_provenance"]["history_generation_calls"] == 1
     assert result["answer_provenance"]["guard_override"] is False
     assert [call["adapter"] for call in role_runtime.calls].count("history") == 1
+    assert [call["adapter"] for call in role_runtime.calls].count("evidence") == 1
     assert not any("structured" in item or "repair" in item for item in result["tool_trace"])
 
     debug = _build_debug(result)
     assert debug["research"]["tools"][0]["arguments"]["query"] == QUESTION
     assert debug["evidence"]["status"] == "sufficient"
-    assert debug["history"]["input_evidence_ids"] == ["bach_dang_significance"]
+    assert debug["evidence"]["repair_path"] == "deterministic"
+    assert debug["history"]["input_evidence_ids"] == [BACH_DANG_ID]
+    assert LATE_RELEVANT_PASSAGE in debug["history"]["input_evidence_preview"][0]["text_preview"]
     assert debug["answer_provenance"]["source"] == "history_adapter"

@@ -91,6 +91,7 @@ class HistoryAnswererAgent:
             "history_debug": {
                 "generation_calls": 0,
                 "input_evidence_ids": [],
+                "input_evidence_preview": [],
                 "cited_ids": [],
                 "conversation_history_used": False,
             },
@@ -190,6 +191,13 @@ class HistoryAnswererAgent:
             "history_debug": {
                 "generation_calls": 1,
                 "input_evidence_ids": input_ids,
+                "input_evidence_preview": [
+                    {
+                        "evidence_id": str(item["chunk_id"]),
+                        "text_preview": str(item.get("text") or "")[:220],
+                    }
+                    for item in contexts
+                ],
                 "cited_ids": parsed.source_ids,
                 "conversation_history_used": False,
             },

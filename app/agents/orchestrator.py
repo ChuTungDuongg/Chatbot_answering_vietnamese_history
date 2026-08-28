@@ -51,7 +51,12 @@ class AgentOrchestrator:
                 conversation_id=conversation_id,
             )
             research_attempts = [research.debug]
-            critique, contexts = self.evidence_agent.compress(question, research.evidence, final_k=final_k)
+            critique, contexts = self.evidence_agent.compress(
+                question,
+                research.evidence,
+                final_k=final_k,
+                request_id=session_id,
+            )
             tool_trace = (
                 ["agent:research"]
                 + research.tool_trace
@@ -72,6 +77,7 @@ class AgentOrchestrator:
                     question,
                     research.evidence,
                     final_k=final_k,
+                    request_id=session_id,
                 )
                 tool_trace.extend(
                     ["agent:research_retry", *research.tool_trace, "agent:evidence_critic_retry"]
@@ -91,6 +97,7 @@ class AgentOrchestrator:
         result["evidence_critique"] = critique.model_dump()
         result["research_debug"] = {
             "steps": sum(int(item.get("steps", 0)) for item in research_attempts),
+            "generation_calls": sum(int(item.get("generation_calls", 0)) for item in research_attempts),
             "attempts": research_attempts,
             "tools": [
                 tool
@@ -119,14 +126,25 @@ class AgentOrchestrator:
             },
             "status": critique.status,
             "selected_ids": critique.selected_ids,
+            "generation_calls": critique.generation_calls,
+            "repair_used": critique.repair_used,
+            "repair_path": critique.repair_path,
             "missing_information": critique.missing_information,
             "summary": critique.summary,
         }
         provenance = result.setdefault("answer_provenance", {})
+        research_generation_calls = result["research_debug"]["generation_calls"]
+        evidence_generation_calls = critique.generation_calls
+        history_generation_calls = int(provenance.get("history_generation_calls") or 0)
         provenance.update({
             "evidence_status": critique.status,
             "selected_evidence_ids": critique.selected_ids,
             "research_steps": result["research_debug"]["steps"],
+            "research_generation_calls": research_generation_calls,
+            "evidence_generation_calls": evidence_generation_calls,
+            "evidence_repair_used": critique.repair_used,
+            "history_generation_calls": history_generation_calls,
+            "total_llm_calls": research_generation_calls + evidence_generation_calls + history_generation_calls,
         })
         result["total_latency_sec"] = time.perf_counter() - started
         logger.info(

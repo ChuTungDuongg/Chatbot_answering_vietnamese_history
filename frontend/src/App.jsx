@@ -23,6 +23,7 @@ import StatusIndicator from "./components/StatusIndicator";
 import {
   createConversation,
   deleteAttachment,
+  EVIDENCE_CONTRACT_FAILURE_MESSAGE,
   deleteConversation,
   getConversation,
   listConversations,
@@ -378,12 +379,15 @@ function App() {
 
           if (eventName === "error") {
             const message = typeof data === "string" ? data : data?.message ?? "Backend không thể hoàn tất yêu cầu.";
+            const assistantErrorMessage = data?.type === "evidence_contract_error"
+              ? EVIDENCE_CONTRACT_FAILURE_MESSAGE
+              : "Không thể hoàn tất câu trả lời.";
             streamFailed = true;
             setError(message);
             setStatus("error");
             updateMessage(assistantMessageId, (current) => ({
               ...current,
-              content: current.content || "Không thể hoàn tất câu trả lời.",
+              content: current.content || assistantErrorMessage,
               status: "error",
             }));
             return;

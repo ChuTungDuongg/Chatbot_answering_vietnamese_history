@@ -7,17 +7,41 @@ from app.agents.evidence_agent import (
     EvidenceModelContractError,
     question_relevant_excerpt,
 )
+from app.agents.evidence_validation import grounded_in_source
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 
 
 class FakeRuntime:
     def __init__(self, output):
-        self.output = output
+        self.outputs = list(output) if isinstance(output, list) else [output]
         self.calls = []
 
     def generate_json(self, **kwargs):
         self.calls.append(kwargs)
-        return self.output
+        index = min(len(self.calls) - 1, len(self.outputs) - 1)
+        return self.outputs[index]
+
+
+def _canonical(text: str, *, evidence_id: str = "ev_01"):
+    return {
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": evidence_id,
+            "relevance": 1.0,
+            "claims": [text],
+            "compressed_text": text,
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": f"{evidence_id} đủ để trả lời.",
+    }
+
+
+def test_strict_grounding_rejects_known_paraphrase_fixture():
+    source = "Chiến thắng Bạch Đằng năm 938 mở ra thời kỳ độc lập tự chủ."
+    paraphrase = "Chiến thắng này đã giúp dân tộc giành lại nền tự chủ lâu dài."
+
+    assert grounded_in_source(paraphrase, source) is False
 
 
 def test_runtime_accepts_canonical_output_and_derives_transport_fields():
@@ -84,6 +108,7 @@ def test_runtime_rejects_claim_attributed_to_the_wrong_evidence_id():
     ]
     with pytest.raises(EvidenceModelContractError, match="same evidence source"):
         EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+    assert len(runtime.calls) == 1
 
 
 def test_runtime_rejects_compressed_text_copied_from_another_source():
@@ -105,6 +130,145 @@ def test_runtime_rejects_compressed_text_copied_from_another_source():
     ]
     with pytest.raises(EvidenceModelContractError, match="not derivable"):
         EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+    assert len(runtime.calls) == 1
+
+
+def test_runtime_rejects_invented_id_without_repair():
+    runtime = FakeRuntime(_canonical("Câu đúng nhưng ID không tồn tại.", evidence_id="ev_missing"))
+    evidence = [{"chunk_id": "ev_01", "text": "Câu đúng nhưng ID không tồn tại.", "source_kind": "local"}]
+
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=1)
+
+    assert exc_info.value.code == "invented_evidence_id"
+    assert exc_info.value.repair_attempted is False
+    assert len(runtime.calls) == 1
+
+
+def test_paraphrased_claim_recovers_to_same_source_extractive_span():
+    source = "Chiến thắng Bạch Đằng năm 938 mở ra thời kỳ độc lập tự chủ."
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_01",
+            "relevance": 0.98,
+            "claims": ["Chiến thắng này đã giúp dân tộc giành lại nền tự chủ lâu dài."],
+            "compressed_text": "Chiến thắng này đã giúp dân tộc giành lại nền tự chủ lâu dài.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Có thể trả lời ý nghĩa.",
+    })
+    evidence = [{"chunk_id": "ev_01", "text": source, "source_kind": "local"}]
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?", evidence, final_k=1
+    )
+
+    assert critique.selected_evidence[0].claims == [source]
+    assert contexts[0]["text"] == source
+    assert critique.generation_calls == 1
+    assert critique.repair_used is True
+    assert critique.repair_path == "deterministic"
+    assert len(runtime.calls) == 1
+
+
+def test_invalid_compressed_text_recovers_from_own_exact_claims():
+    source = "Nhà Trần ba lần đánh bại quân Nguyên Mông."
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_01",
+            "relevance": 1.0,
+            "claims": [source],
+            "compressed_text": "Nhà Trần chiến thắng nhờ sức mạnh quân sự vượt trội.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Có bằng chứng.",
+    })
+    evidence = [{"chunk_id": "ev_01", "text": source, "source_kind": "local"}]
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Nhà Trần kháng chiến chống Nguyên Mông thế nào?", evidence, final_k=1
+    )
+
+    assert critique.selected_evidence[0].compressed_text == source
+    assert contexts[0]["text"] == source
+    assert critique.generation_calls == 1
+    assert critique.repair_path == "deterministic"
+
+
+def test_valid_extractive_output_is_untouched():
+    source = "Ngày 2/9/1945, Hồ Chí Minh đọc Tuyên ngôn Độc lập tại Ba Đình."
+    runtime = FakeRuntime(_canonical(source))
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Hồ Chí Minh đọc Tuyên ngôn Độc lập ở đâu?", [{"chunk_id": "ev_01", "text": source}], final_k=1
+    )
+
+    assert critique.selected_evidence[0].compressed_text == source
+    assert contexts[0]["text"] == source
+    assert critique.repair_used is False
+    assert len(runtime.calls) == 1
+
+
+def test_unrecoverable_output_raises_controlled_error_after_one_repair():
+    source = "Tài liệu chỉ nói về chiến dịch Điện Biên Phủ năm 1954."
+    first = {
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_01",
+            "relevance": 1.0,
+            "claims": ["Chiến thắng này mở ra nền tự chủ lâu dài."],
+            "compressed_text": "Chiến thắng này mở ra nền tự chủ lâu dài.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Sai.",
+    }
+    runtime = FakeRuntime([first, first])
+
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+            [{"chunk_id": "ev_01", "text": source}],
+            final_k=1,
+        )
+
+    assert exc_info.value.code == "grounding_contract_failed"
+    assert exc_info.value.repair_attempted is True
+    assert len(runtime.calls) == 2
+
+
+def test_second_repair_valid_output_is_accepted():
+    source = "Chiến thắng Bạch Đằng năm 938 chấm dứt thời kỳ Bắc thuộc."
+    first = {
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_01",
+            "relevance": 1.0,
+            "claims": ["Nội dung này khẳng định một kết luận khác hẳn."],
+            "compressed_text": "Nội dung này khẳng định một kết luận khác hẳn.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Cần repair.",
+    }
+    runtime = FakeRuntime([first, _canonical(source)])
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
+        [{"chunk_id": "ev_01", "text": source}],
+        final_k=1,
+    )
+
+    assert critique.selected_evidence[0].claims == [source]
+    assert contexts[0]["text"] == source
+    assert critique.generation_calls == 2
+    assert critique.repair_used is True
+    assert critique.repair_path == "model"
+    assert len(runtime.calls) == 2
 
 
 def test_runtime_rejects_conflict_without_two_supplied_ids():
