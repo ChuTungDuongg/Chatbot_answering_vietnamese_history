@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from typing import Any
 
 from pydantic import ValidationError
@@ -11,8 +13,69 @@ from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceM
 from app.agents.evidence_validation import (
     compressed_derived_from_own_claims,
     grounded_in_source,
+    normalize_grounding,
     referenced_evidence_ids,
 )
+
+
+WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
+QUESTION_STOPWORDS = {
+    "ai", "bao", "bi", "cai", "cho", "co", "cua", "da", "duoc", "gi",
+    "khi", "la", "mot", "nam", "nao", "nhu", "nhung", "o", "ra", "sau",
+    "tai", "the", "thi", "theo", "trong", "tu", "va", "ve", "voi",
+}
+EVIDENCE_TEXT_BUDGET = 14_000
+MAX_EVIDENCE_ITEM_CHARS = 3_200
+MIN_EVIDENCE_ITEM_CHARS = 1_200
+
+
+def question_relevant_excerpt(text: str, question: str, *, max_chars: int) -> str:
+    """Choose an extractive window that preserves question-relevant late passages."""
+    text = str(text).strip()
+    if len(text) <= max_chars:
+        return text
+
+    terms = {
+        normalize_grounding(match.group(0))
+        for match in WORD_RE.finditer(str(question))
+        if normalize_grounding(match.group(0)) not in QUESTION_STOPWORDS
+    }
+    tokens = [
+        (normalize_grounding(match.group(0)), match.start(), match.end())
+        for match in WORD_RE.finditer(text)
+    ]
+    matching = [token for token in tokens if token[0] in terms]
+    if not matching:
+        return text[:max_chars].rstrip()
+
+    frequencies = Counter(token for token, _, _ in matching)
+    starts = {0, max(0, len(text) - max_chars)}
+    for _, start, _ in matching:
+        starts.add(max(0, min(start - max_chars // 3, len(text) - max_chars)))
+        starts.add(max(0, min(start - (2 * max_chars) // 3, len(text) - max_chars)))
+
+    def window_score(start: int) -> tuple[float, int]:
+        end = start + max_chars
+        visible = [token for token, left, _ in matching if start <= left < end]
+        unique = set(visible)
+        coverage = sum(
+            (2.0 if token.isdigit() else 1.0) + 1.0 / frequencies[token]
+            for token in unique
+        )
+        density = len(visible) / max(len(matching), 1)
+        return coverage + density, -start
+
+    best_start = max(starts, key=window_score)
+    best_end = min(len(text), best_start + max_chars)
+    if best_start:
+        next_space = text.find(" ", best_start)
+        if 0 <= next_space < best_end:
+            best_start = next_space + 1
+    if best_end < len(text):
+        previous_space = text.rfind(" ", best_start, best_end)
+        if previous_space > best_start:
+            best_end = previous_space
+    return text[best_start:best_end].strip()
 
 
 class EvidenceModelContractError(ValueError):
@@ -40,13 +103,18 @@ class EvidenceCriticAgent:
                     if isinstance(exc, EvidenceModelContractError):
                         raise
                     raise EvidenceModelContractError(f"Evidence model output failed canonical schema validation: {exc}") from exc
-                critique, contexts = self._deterministic_compress(evidence, final_k=final_k)
+                critique, contexts = self._deterministic_compress(
+                    question,
+                    evidence,
+                    final_k=final_k,
+                )
                 critique.warnings.append(f"model_output_invalid_debug_fallback_used:{type(exc).__name__}")
                 return critique, contexts
-        return self._deterministic_compress(evidence, final_k=final_k)
+        return self._deterministic_compress(question, evidence, final_k=final_k)
 
     def _deterministic_compress(
         self,
+        question: str,
         evidence: list[dict[str, Any]],
         *,
         final_k: int,
@@ -89,6 +157,19 @@ class EvidenceCriticAgent:
             compressed_context=compressed_context,
             sufficient=bool(selected),
             warnings=[] if selected else ["no_supported_evidence"],
+            model_input_evidence=[
+                {
+                    "evidence_id": str(chunk.get("chunk_id") or ""),
+                    "title": chunk.get("title"),
+                    "text_preview": question_relevant_excerpt(
+                        str(chunk.get("text") or ""),
+                        question,
+                        max_chars=220,
+                    ),
+                }
+                for chunk in evidence
+                if chunk.get("chunk_id")
+            ],
         )
         return critique, selected
 
@@ -99,7 +180,20 @@ class EvidenceCriticAgent:
         *,
         final_k: int,
     ) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
-        available = {str(item.get("chunk_id")): item for item in evidence if item.get("chunk_id")}
+        # Canonical Evidence SFT contains at most seven candidates. Keep the
+        # production pool close to that distribution and preserve retrieval order.
+        available: dict[str, dict[str, Any]] = {}
+        for item in evidence:
+            chunk_id = str(item.get("chunk_id") or "").strip()
+            if not chunk_id or chunk_id in available:
+                continue
+            available[chunk_id] = item
+            if len(available) >= self.max_contexts:
+                break
+        per_item_limit = min(
+            MAX_EVIDENCE_ITEM_CHARS,
+            max(MIN_EVIDENCE_ITEM_CHARS, EVIDENCE_TEXT_BUDGET // max(len(available), 1)),
+        )
         request = EvidenceAgentRequest.model_validate({
             "question": question,
             "max_selected": min(max(final_k, 1), self.max_contexts),
@@ -110,7 +204,11 @@ class EvidenceCriticAgent:
                     "title": item.get("title"),
                     "url": item.get("url"),
                     "chunk_id": chunk_id,
-                    "text": str(item.get("text", ""))[:1800],
+                    "text": question_relevant_excerpt(
+                        str(item.get("text", "")),
+                        question,
+                        max_chars=per_item_limit,
+                    ),
                     "retrieval_score": item.get("score") or item.get("reranker_score"),
                 }
                 for chunk_id, item in available.items()
@@ -180,5 +278,17 @@ class EvidenceCriticAgent:
             warnings=[],
             missing_information=model_output.missing_information,
             summary=model_output.summary,
+            model_input_evidence=[
+                {
+                    "evidence_id": item.evidence_id,
+                    "title": item.title,
+                    "text_preview": question_relevant_excerpt(
+                        item.text,
+                        question,
+                        max_chars=220,
+                    ),
+                }
+                for item in request.evidence
+            ],
         )
         return critique, contexts

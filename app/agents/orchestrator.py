@@ -25,8 +25,10 @@ class AgentOrchestrator:
         self.research_agent = research_agent
         self.evidence_agent = evidence_agent
         self.answerer = answerer
-        self.prompt_builder = answerer.generator.prompt_builder
-        self.retrieval_history_messages = answerer.generator.retrieval_history_messages
+        self.max_history_messages = research_agent.retrieval_runtime.max_history_messages
+        self.retrieval_history_messages = (
+            research_agent.retrieval_runtime.retrieval_history_messages
+        )
 
     async def run(
         self,
@@ -48,6 +50,7 @@ class AgentOrchestrator:
                 owner_id=owner_id,
                 conversation_id=conversation_id,
             )
+            research_attempts = [research.debug]
             critique, contexts = self.evidence_agent.compress(question, research.evidence, final_k=final_k)
             tool_trace = (
                 ["agent:research"]
@@ -64,6 +67,7 @@ class AgentOrchestrator:
                     owner_id=owner_id,
                     conversation_id=conversation_id,
                 )
+                research_attempts.append(research.debug)
                 critique, contexts = self.evidence_agent.compress(
                     question,
                     research.evidence,
@@ -85,6 +89,45 @@ class AgentOrchestrator:
             self.research_agent.evidence_store.remove_session(session_id)
         result["agentic"] = True
         result["evidence_critique"] = critique.model_dump()
+        result["research_debug"] = {
+            "steps": sum(int(item.get("steps", 0)) for item in research_attempts),
+            "attempts": research_attempts,
+            "tools": [
+                tool
+                for attempt in research_attempts
+                for tool in attempt.get("tools", [])
+            ],
+            "evidence_ids": list(dict.fromkeys(
+                evidence_id
+                for attempt in research_attempts
+                for evidence_id in attempt.get("evidence_ids", [])
+            )),
+            "retrieval_question": research_attempts[0].get("retrieval_question"),
+        }
+        result["evidence_debug"] = {
+            "input_count": len(research.evidence),
+            "input_ids": [str(item.get("chunk_id")) for item in research.evidence],
+            "model_input_evidence": critique.model_input_evidence,
+            "model_output": {
+                "status": critique.status,
+                "selected_evidence": [
+                    item.model_dump() for item in critique.selected_evidence
+                ],
+                "conflicts": critique.conflicts,
+                "missing_information": critique.missing_information,
+                "summary": critique.summary,
+            },
+            "status": critique.status,
+            "selected_ids": critique.selected_ids,
+            "missing_information": critique.missing_information,
+            "summary": critique.summary,
+        }
+        provenance = result.setdefault("answer_provenance", {})
+        provenance.update({
+            "evidence_status": critique.status,
+            "selected_evidence_ids": critique.selected_ids,
+            "research_steps": result["research_debug"]["steps"],
+        })
         result["total_latency_sec"] = time.perf_counter() - started
         logger.info(
             "agent_run_complete",
@@ -94,6 +137,7 @@ class AgentOrchestrator:
                 "agent_step": len(research.tool_trace),
                 "latency_ms": result["total_latency_sec"] * 1000,
                 "evidence_count": len(contexts),
+                "answer_provenance": provenance.get("source"),
             },
         )
         return result

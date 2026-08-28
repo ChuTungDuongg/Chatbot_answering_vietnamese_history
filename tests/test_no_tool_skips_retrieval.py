@@ -41,7 +41,7 @@ def test_no_tool_finish_skips_static_retrieval():
     agent = ResearchAgent(
         registry=registry,
         evidence_store=SessionEvidenceStore(),
-        generator=Generator(retriever),
+        retrieval_runtime=Generator(retriever),
         model_runtime=FinishRuntime(),
     )
     result = asyncio.run(agent.run("Xin chào", final_k=4))

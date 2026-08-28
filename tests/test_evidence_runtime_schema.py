@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.evidence_agent import EvidenceCriticAgent, EvidenceModelContractError
+from app.agents.evidence_agent import (
+    EvidenceCriticAgent,
+    EvidenceModelContractError,
+    question_relevant_excerpt,
+)
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 
 
@@ -120,3 +124,19 @@ def test_runtime_rejects_conflict_without_two_supplied_ids():
     evidence = [{"chunk_id": "ev_41", "text": text, "source_kind": "local"}]
     with pytest.raises(EvidenceModelContractError, match="at least two"):
         EvidenceCriticAgent(model_runtime=runtime).compress("Ngày nào?", evidence, final_k=1)
+
+
+def test_question_relevant_excerpt_keeps_a_relevant_late_section():
+    text = ("Phần đầu chỉ mô tả diễn biến và chiến thuật. " * 100) + (
+        "Ý nghĩa của sự kiện được trình bày ở phần cuối tài liệu."
+    )
+
+    excerpt = question_relevant_excerpt(
+        text,
+        "Sự kiện có ý nghĩa như thế nào?",
+        max_chars=1800,
+    )
+
+    assert len(excerpt) <= 1800
+    assert "Ý nghĩa của sự kiện" in excerpt
+    assert excerpt in text

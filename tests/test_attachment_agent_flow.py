@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from app.agents.evidence_agent import EvidenceCriticAgent
+from app.agents.history_contract import parse_history_training_user_text
 from app.agents.history_answerer import HistoryAnswererAgent
 from app.agents.orchestrator import AgentOrchestrator
 from app.agents.research_agent import ResearchAgent
@@ -66,6 +67,7 @@ class FakeGenerator:
         self.retriever = retriever
         self.prompt_builder = SimpleNamespace(max_history_messages=6)
         self.retrieval_history_messages = 6
+        self.max_history_messages = 6
 
     def normalize_history(self, history, current_question):
         return history or []
@@ -76,17 +78,16 @@ class FakeGenerator:
     def temporary_context_is_relevant(self, question, contexts):
         return bool(contexts)
 
-    def answer_from_retrieval(self, *, question, retrieval, history=None):
-        contexts = retrieval["final_context"]
-        return {
-            "question": question,
-            "answer": contexts[0]["text"] if contexts else "Không đủ dữ kiện.",
-            "status": "ok" if contexts else "insufficient",
-            "source_ids": [row["chunk_id"] for row in contexts],
-            "source_chunks": contexts,
-            "retrieval": retrieval,
-            "tool_trace": [],
-        }
+
+
+class FakeHistoryRuntime:
+    def generate_text(self, **kwargs):
+        _, evidence = parse_history_training_user_text(kwargs["messages"][0]["content"])
+        first = evidence[0]
+        return (
+            f"Nguồn được dùng: [{first['chunk_id']}]\n\n"
+            f"Trả lời:\n{first['text']}"
+        )
 
 
 def build_orchestrator(temporary_retriever):
@@ -99,12 +100,12 @@ def build_orchestrator(temporary_retriever):
     research_agent = ResearchAgent(
         registry=registry,
         evidence_store=evidence_store,
-        generator=generator,
+        retrieval_runtime=generator,
     )
     return AgentOrchestrator(
         research_agent=research_agent,
         evidence_agent=EvidenceCriticAgent(),
-        answerer=HistoryAnswererAgent(generator),
+        answerer=HistoryAnswererAgent(model_runtime=FakeHistoryRuntime()),
     )
 
 

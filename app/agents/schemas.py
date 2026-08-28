@@ -21,6 +21,7 @@ class ResearchResult(BaseModel):
     is_ood: bool = False
     ood_reason: str = ""
     analysis: dict[str, Any] = Field(default_factory=dict)
+    debug: dict[str, Any] = Field(default_factory=dict)
 
 
 class SelectedEvidence(BaseModel):
@@ -103,6 +104,7 @@ class EvidenceCritique(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     summary: str = ""
+    model_input_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_disjoint_ids(self):

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.history_answerer import HistoryAnswererAgent
+from app.agents.history_answerer import HistoryAnswererAgent, LegacyRAGHistoryAnswerer
 from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
 from app.agents.model_registry import SHARED_BASE_MODEL_ID
 from app.agents.orchestrator import AgentOrchestrator
@@ -14,7 +14,7 @@ from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
-from app.rag.generation import RAGGenerator
+from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
 from app.services.rag_service import RAGService
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     agent_model_runtime = None
     attachment_service = None
     temporary_retriever = None
+    research_runtime = None
 
     try:
         service.load()
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
                 store=chat_store,
                 rag_service=service,
             )
+            research_runtime = ResearchRetrievalRuntime(service, retriever)
 
         if settings.should_load_model:
             if retriever is None:
@@ -102,12 +104,25 @@ async def lifespan(app: FastAPI):
                     dtype=settings.dtype,
                 )
 
-            generator = RAGGenerator(
-                service=service,
-                retriever=retriever,
-                temporary_retriever=temporary_retriever,
-                model_runtime=agent_model_runtime if settings.uses_shared_backend else None,
-            )
+            if research_runtime is None:
+                raise RuntimeError("Full mode requires the Research retrieval runtime.")
+
+            if settings.uses_shared_backend:
+                if agent_model_runtime is None:
+                    raise RuntimeError("Shared backend did not initialize the role model runtime.")
+                answerer = HistoryAnswererAgent(model_runtime=agent_model_runtime)
+            else:
+                # Benchmark-only Qwen2.5/static-RAG compatibility path.  Importing
+                # legacy generation is intentionally deferred out of active Qwen3.
+                from app.rag.generation import RAGGenerator
+
+                generator = RAGGenerator(
+                    service=service,
+                    retriever=retriever,
+                    temporary_retriever=temporary_retriever,
+                    model_runtime=None,
+                )
+                answerer = LegacyRAGHistoryAnswerer(generator)
 
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
@@ -130,14 +145,14 @@ async def lifespan(app: FastAPI):
                 research_agent=ResearchAgent(
                     registry=tool_registry,
                     evidence_store=evidence_store,
-                    generator=generator,
+                    retrieval_runtime=research_runtime,
                     model_runtime=agent_model_runtime,
                     max_steps=settings.max_agent_steps,
                     max_web_searches=settings.max_web_searches,
                     max_page_fetches=settings.max_page_fetches,
                 ),
                 evidence_agent=EvidenceCriticAgent(model_runtime=agent_model_runtime),
-                answerer=HistoryAnswererAgent(generator),
+                answerer=answerer,
             )
 
         app.state.rag_service = service

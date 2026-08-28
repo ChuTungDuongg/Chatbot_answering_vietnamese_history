@@ -132,6 +132,10 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
     retrieval = result.get("retrieval") or {}
 
     return {
+        "answer_provenance": result.get("answer_provenance", {}),
+        "research": result.get("research_debug", {}),
+        "evidence": result.get("evidence_debug", {}),
+        "history": result.get("history_debug", {}),
         "analysis": result.get("analysis"),
         "tool_trace": result.get("tool_trace", []),
         "prompt_budget": result.get("prompt_budget"),
@@ -168,8 +172,8 @@ def _execute_chat(
 ) -> dict[str, Any]:
     conversation_id = str(payload.conversation_id)
     history_limit = max(
-        generator.prompt_builder.max_history_messages,
-        generator.retrieval_history_messages,
+        int(getattr(generator, "max_history_messages", 6)),
+        int(getattr(generator, "retrieval_history_messages", 4)),
         6,
     )
 
