@@ -21,8 +21,12 @@ from app.tools.registry import ToolRegistry
 
 QUESTION = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?"
 BACH_DANG_ID = "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68"
+BACH_DANG_FOREIGN_ID = "hf_wikipedia_trận_bạch_đằng_938_0003_cf59d98b5f8d"
 LATE_RELEVANT_PASSAGE = (
     "Ý nghĩa của chiến thắng Bạch Đằng năm 938 là chấm dứt hơn 1000 năm Bắc thuộc và mở ra thời kỳ độc lập tự chủ."
+)
+BACH_DANG_FOREIGN_PASSAGE = (
+    "Đến khi tiến binh trên Bạch Đằng, quả thấy trên không có tiếng xe ngựa, trận ấy quả được đại tiệp."
 )
 
 
@@ -43,9 +47,9 @@ class RegressionRetriever:
                 "final_retrieval_score": 1.08,
             },
             {
-                "chunk_id": "bach_dang_distractor",
-                "title": "Bãi cọc Bạch Đằng",
-                "text": "Đoạn nhiễu chỉ mô tả cấu tạo của bãi cọc.",
+                "chunk_id": BACH_DANG_FOREIGN_ID,
+                "title": "Trận Bạch Đằng (938)",
+                "text": BACH_DANG_FOREIGN_PASSAGE,
                 "source_kind": "history",
                 "final_retrieval_score": 0.7,
             },
@@ -94,8 +98,8 @@ class FakeSharedRoleRuntime:
                 {
                     "evidence_id": BACH_DANG_ID,
                     "relevance": 1.0,
-                    "claims": ["Chiến thắng này giúp dân tộc giành lại nền tự chủ lâu dài."],
-                    "compressed_text": "Chiến thắng này giúp dân tộc giành lại nền tự chủ lâu dài.",
+                    "claims": [LATE_RELEVANT_PASSAGE, BACH_DANG_FOREIGN_PASSAGE],
+                    "compressed_text": f"{LATE_RELEVANT_PASSAGE} {BACH_DANG_FOREIGN_PASSAGE}",
                 }
             ],
             "conflicts": [],
@@ -108,10 +112,11 @@ class FakeSharedRoleRuntime:
         assert adapter == "history"
         prompt = messages[0]["content"]
         assert f"[{BACH_DANG_ID}]" in prompt
+        assert f"[{BACH_DANG_FOREIGN_ID}]" in prompt
         assert LATE_RELEVANT_PASSAGE in prompt
-        assert "bach_dang_distractor" not in prompt
+        assert BACH_DANG_FOREIGN_PASSAGE in prompt
         return (
-            f"Nguồn được dùng: [{BACH_DANG_ID}]\n\n"
+            f"Nguồn được dùng: [{BACH_DANG_ID}] [{BACH_DANG_FOREIGN_ID}]\n\n"
             "Trả lời:\nCâu trả lời được tạo từ evidence đã chọn."
         )
 
@@ -144,8 +149,8 @@ def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter()
 
     assert retriever.queries[0]["query"] == QUESTION
     assert all(term in retriever.queries[0]["query"] for term in ("Bạch Đằng", "938", "ý nghĩa"))
-    assert result["evidence_critique"]["selected_ids"] == [BACH_DANG_ID]
-    assert result["source_ids"] == [BACH_DANG_ID]
+    assert result["evidence_critique"]["selected_ids"] == [BACH_DANG_ID, BACH_DANG_FOREIGN_ID]
+    assert result["source_ids"] == [BACH_DANG_ID, BACH_DANG_FOREIGN_ID]
     assert result["answer_provenance"]["source"] == "history_adapter"
     assert result["answer_provenance"]["history_generation_calls"] == 1
     assert result["answer_provenance"]["guard_override"] is False
@@ -156,7 +161,7 @@ def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter()
     debug = _build_debug(result)
     assert debug["research"]["tools"][0]["arguments"]["query"] == QUESTION
     assert debug["evidence"]["status"] == "sufficient"
-    assert debug["evidence"]["repair_path"] == "deterministic"
-    assert debug["history"]["input_evidence_ids"] == [BACH_DANG_ID]
+    assert debug["evidence"]["repair_path"] == "deterministic_rebucket"
+    assert debug["history"]["input_evidence_ids"] == [BACH_DANG_ID, BACH_DANG_FOREIGN_ID]
     assert LATE_RELEVANT_PASSAGE in debug["history"]["input_evidence_preview"][0]["text_preview"]
     assert debug["answer_provenance"]["source"] == "history_adapter"

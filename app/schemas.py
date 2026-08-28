@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 MessageRole = Literal["user", "assistant"]
+InferenceMode = Literal["hybrid_rag", "agentic_rag"]
 AttachmentStatus = Literal[
     "processing",
     "ready",
@@ -72,6 +73,8 @@ class RetrievalContextItem(BaseModel):
     source_kind: Literal[
         "history",
         "attachment",
+        "wikipedia",
+        "web",
     ] = "history"
 
     attachment_id: UUID | None = None
@@ -121,6 +124,8 @@ class SourceItem(BaseModel):
     source_kind: Literal[
         "history",
         "attachment",
+        "wikipedia",
+        "web",
     ] = "history"
 
     attachment_id: UUID | None = None
@@ -234,6 +239,8 @@ class ChatRequest(BaseModel):
         le=10,
     )
 
+    mode: InferenceMode | None = None
+
     debug: bool = False
 
 
@@ -243,6 +250,7 @@ class ChatResponse(BaseModel):
 
     answer: str
     status: str
+    mode: InferenceMode
 
     sources: list[SourceItem] = Field(
         default_factory=list,

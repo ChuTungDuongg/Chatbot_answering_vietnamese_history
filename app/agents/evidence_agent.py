@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.model_runtime import RoleLLMBackend
+from app.agents.model_registry import ROLE_MODELS
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceModelOutput, SelectedEvidence
 from app.agents.evidence_validation import (
@@ -184,6 +185,13 @@ class EvidenceValidationIssue:
         if self.evidence_id is not None:
             payload["evidence_id"] = self.evidence_id
         return payload
+
+
+@dataclass(frozen=True)
+class EvidenceRebucketResult:
+    output: EvidenceModelOutput
+    moved_claim_count: int
+    destination_evidence_ids: list[str]
 
 
 class EvidenceCriticAgent:
@@ -473,6 +481,77 @@ class EvidenceCriticAgent:
         except ValidationError:
             return None
 
+    def _rebucket_cross_id_claims(
+        self,
+        model_output: EvidenceModelOutput,
+        visible_sources: dict[str, str],
+    ) -> EvidenceRebucketResult | None:
+        grouped: dict[str, SelectedEvidence] = {}
+        moved_claim_count = 0
+        destination_ids: list[str] = []
+
+        for item in model_output.selected_evidence:
+            if item.evidence_id not in visible_sources:
+                return None
+            source_text = visible_sources[item.evidence_id]
+            for claim in item.claims:
+                target_id = item.evidence_id
+                if not grounded_in_source(claim, source_text):
+                    matches = [
+                        evidence_id
+                        for evidence_id, other_text in visible_sources.items()
+                        if grounded_in_source(claim, other_text)
+                    ]
+                    if len(matches) != 1 or matches[0] == item.evidence_id:
+                        return None
+                    target_id = matches[0]
+                    moved_claim_count += 1
+                    destination_ids.append(target_id)
+
+                if target_id not in grouped:
+                    grouped[target_id] = SelectedEvidence(
+                        evidence_id=target_id,
+                        relevance=item.relevance,
+                        claims=[],
+                        compressed_text="",
+                    )
+                grouped_item = grouped[target_id]
+                grouped_item.relevance = max(grouped_item.relevance, item.relevance)
+                grouped_item.claims = _dedupe_preserve_order([*grouped_item.claims, claim])
+
+        if moved_claim_count == 0:
+            return None
+
+        selected: list[SelectedEvidence] = []
+        for item in grouped.values():
+            claims = _dedupe_preserve_order(item.claims)
+            if not claims:
+                continue
+            selected.append(SelectedEvidence(
+                evidence_id=item.evidence_id,
+                relevance=item.relevance,
+                claims=claims,
+                compressed_text=" ".join(claims),
+            ))
+        if not selected:
+            return None
+
+        try:
+            output = EvidenceModelOutput(
+                status=model_output.status,
+                selected_evidence=selected,
+                conflicts=model_output.conflicts,
+                missing_information=model_output.missing_information,
+                summary=model_output.summary,
+            )
+        except ValidationError:
+            return None
+        return EvidenceRebucketResult(
+            output=output,
+            moved_claim_count=moved_claim_count,
+            destination_evidence_ids=_dedupe_preserve_order(destination_ids),
+        )
+
     def _repair_messages(
         self,
         *,
@@ -630,7 +709,7 @@ class EvidenceCriticAgent:
         output = self.model_runtime.generate_json(
             adapter="evidence",
             messages=self._evidence_messages(request),
-            max_new_tokens=768,
+            max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
             repair=False,
         )
         log_event(
@@ -664,103 +743,97 @@ class EvidenceCriticAgent:
                     recoverable=issue.recoverable,
                 )
             self._log_validation_failed(request_id, issues, repair_path)
+            if any(issue.code == "cross_id_claim" for issue in issues):
+                telemetry = current_request_telemetry()
+                if telemetry is not None:
+                    telemetry.evidence_rebucket_attempted = True
+                log_event(
+                    "EVIDENCE_REBUCKET_START",
+                    request_id=request_id,
+                    issue_codes=[issue.code for issue in issues],
+                )
+                rebucketed = self._rebucket_cross_id_claims(model_output, visible_sources)
+                rebucket_issues = self._contract_issues(rebucketed.output, visible_sources) if rebucketed else issues
+                rebucket_success = bool(rebucketed and not rebucket_issues)
+                if telemetry is not None:
+                    telemetry.evidence_rebucket_succeeded = telemetry.evidence_rebucket_succeeded or rebucket_success
+                    telemetry.evidence_rebucket_moved_claim_count += (
+                        rebucketed.moved_claim_count if rebucketed else 0
+                    )
+                    if rebucketed:
+                        telemetry.evidence_rebucket_destination_ids = _dedupe_preserve_order([
+                            *telemetry.evidence_rebucket_destination_ids,
+                            *rebucketed.destination_evidence_ids,
+                        ])
+                    telemetry.evidence_final_validation_result = "pass" if rebucket_success else "fail"
+                log_event(
+                    "EVIDENCE_REBUCKET_END",
+                    request_id=request_id,
+                    attempted=True,
+                    success=rebucket_success,
+                    moved_claim_count=rebucketed.moved_claim_count if rebucketed else 0,
+                    destination_evidence_ids=rebucketed.destination_evidence_ids if rebucketed else [],
+                    final_validation_result="pass" if rebucket_success else "fail",
+                    remaining_issue_codes=[issue.code for issue in rebucket_issues],
+                )
+                if rebucket_success and rebucketed is not None:
+                    model_output = rebucketed.output
+                    repair_used = True
+                    repair_path = "deterministic_rebucket"
+                    if telemetry is not None:
+                        telemetry.evidence_recovery_used = True
+                    issues = []
+                elif rebucket_issues:
+                    self._log_validation_failed(request_id, rebucket_issues, "failed_after_rebucket")
+                    self._raise_contract_error(rebucket_issues, repair_attempted=False)
+
             if not all(issue.recoverable for issue in issues):
                 self._raise_contract_error(issues, repair_attempted=False)
 
-            recovery_started = time.perf_counter()
-            log_event("EVIDENCE_RECOVERY_START", request_id=request_id, issue_count=len(issues))
-            recovered = self._recover_extractive_output(question, model_output, visible_sources)
-            recovered_issues = self._contract_issues(recovered, visible_sources) if recovered else issues
-            if recovered:
-                original_by_id = {item.evidence_id: item for item in model_output.selected_evidence}
-                for item in recovered.selected_evidence:
-                    before = len(original_by_id.get(item.evidence_id, item).claims)
-                    log_event(
-                        "EVIDENCE_RECOVERY_ITEM",
-                        request_id=request_id,
-                        evidence_id=item.evidence_id,
-                        claims_before=before,
-                        claims_recovered=len(item.claims),
-                        success=bool(item.claims),
-                    )
-            log_event(
-                "EVIDENCE_RECOVERY_END",
-                request_id=request_id,
-                elapsed_ms=(time.perf_counter() - recovery_started) * 1000,
-                success=bool(recovered and not recovered_issues),
-                remaining_issue_codes=[issue.code for issue in recovered_issues],
-            )
-            logger.info(
-                "evidence_extractive_recovery",
-                extra={
-                    "request_id": request_id,
-                    "success": bool(recovered and not recovered_issues),
-                    "recovered_claim_count": sum(len(item.claims) for item in recovered.selected_evidence) if recovered else 0,
-                },
-            )
+            if any(issue.code == "claim_not_extractive" for issue in issues):
+                self._raise_contract_error(issues, repair_attempted=False)
 
-            if recovered and not recovered_issues:
-                model_output = recovered
-                repair_used = True
-                repair_path = "deterministic"
-                if telemetry is not None:
-                    telemetry.evidence_recovery_used = True
-            else:
-                generation_calls = 2
-                repair_used = True
-                repair_path = "model"
-                if telemetry is not None:
-                    telemetry.evidence_recovery_used = True
-                    telemetry.evidence_repair_used = True
-                repair_started = time.perf_counter()
+            if issues:
+                recovery_started = time.perf_counter()
+                log_event("EVIDENCE_RECOVERY_START", request_id=request_id, issue_count=len(issues))
+                recovered = self._recover_extractive_output(question, model_output, visible_sources)
+                recovered_issues = self._contract_issues(recovered, visible_sources) if recovered else issues
+                if recovered:
+                    original_by_id = {item.evidence_id: item for item in model_output.selected_evidence}
+                    for item in recovered.selected_evidence:
+                        before = len(original_by_id.get(item.evidence_id, item).claims)
+                        log_event(
+                            "EVIDENCE_RECOVERY_ITEM",
+                            request_id=request_id,
+                            evidence_id=item.evidence_id,
+                            claims_before=before,
+                            claims_recovered=len(item.claims),
+                            success=bool(item.claims),
+                        )
                 log_event(
-                    "EVIDENCE_MODEL_REPAIR_START",
+                    "EVIDENCE_RECOVERY_END",
                     request_id=request_id,
-                    issue_codes=[issue.code for issue in recovered_issues],
+                    elapsed_ms=(time.perf_counter() - recovery_started) * 1000,
+                    success=bool(recovered and not recovered_issues),
+                    remaining_issue_codes=[issue.code for issue in recovered_issues],
                 )
                 logger.info(
-                    "evidence_repair_generation_start",
+                    "evidence_extractive_recovery",
                     extra={
                         "request_id": request_id,
-                        "generation_call": generation_calls,
-                        "input_evidence_count": len(request.evidence),
-                        "selected_candidate_count": selected_candidate_count,
+                        "success": bool(recovered and not recovered_issues),
+                        "recovered_claim_count": sum(len(item.claims) for item in recovered.selected_evidence) if recovered else 0,
                     },
                 )
-                repair_output = self.model_runtime.generate_json(
-                    adapter="evidence",
-                    messages=self._repair_messages(
-                        request=request,
-                        invalid_output=output,
-                        validation_errors=[issue.as_dict() for issue in recovered_issues],
-                    ),
-                    max_new_tokens=768,
-                    repair=False,
-                )
-                logger.info(
-                    "evidence_repair_generation_end",
-                    extra={
-                        "request_id": request_id,
-                        "elapsed_ms": (time.perf_counter() - repair_started) * 1000,
-                        "output_tokens": len(json.dumps(repair_output, ensure_ascii=False).split()),
-                    },
-                )
-                log_event(
-                    "EVIDENCE_MODEL_REPAIR_END",
-                    request_id=request_id,
-                    elapsed_ms=(time.perf_counter() - repair_started) * 1000,
-                )
-                model_output = self._parse_model_output(repair_output, repair_attempted=True)
-                repair_issues = self._contract_issues(model_output, visible_sources)
-                if repair_issues:
-                    log_event(
-                        "EVIDENCE_REPAIR_FAILED",
-                        request_id=request_id,
-                        final_issue_codes=[issue.code for issue in repair_issues],
-                    )
-                    self._log_validation_failed(request_id, repair_issues, "failed_after_model_repair")
-                    self._raise_contract_error(repair_issues, repair_attempted=True)
-                log_event("EVIDENCE_REPAIR_SUCCESS", request_id=request_id)
+
+                if recovered and not recovered_issues:
+                    model_output = recovered
+                    repair_used = True
+                    repair_path = "deterministic"
+                    if telemetry is not None:
+                        telemetry.evidence_recovery_used = True
+                else:
+                    self._raise_contract_error(recovered_issues, repair_attempted=False)
 
         critique, contexts = self._critique_from_output(
             model_output,
@@ -788,14 +861,18 @@ class EvidenceCriticAgent:
         if telemetry is not None:
             telemetry.evidence_ms += elapsed_ms
             telemetry.evidence_repair_used = telemetry.evidence_repair_used or repair_path == "model"
-            telemetry.evidence_recovery_used = telemetry.evidence_recovery_used or repair_path in {"deterministic", "model"}
+            telemetry.evidence_recovery_used = telemetry.evidence_recovery_used or repair_path in {
+                "deterministic",
+                "deterministic_rebucket",
+                "model",
+            }
         log_event(
             "EVIDENCE_COMPLETE",
             request_id=request_id,
             attempt=telemetry.evidence_attempts if telemetry is not None else None,
             status=critique.status,
             actual_llm_calls=actual_calls,
-            recovery_used=repair_path in {"deterministic", "model"},
+            recovery_used=repair_path in {"deterministic", "deterministic_rebucket", "model"},
             repair_used=repair_path == "model",
             selected_count=len(contexts),
             elapsed_ms=elapsed_ms,

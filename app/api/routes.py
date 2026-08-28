@@ -14,10 +14,12 @@ from fastapi.responses import StreamingResponse
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.agents.evidence_agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
+from app.config import settings
 from app.telemetry import RequestTelemetry, log_event, reset_request_telemetry, set_request_telemetry
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    InferenceMode,
     RetrieveRequest,
     RetrieveResponse,
     RetrievalContextItem,
@@ -36,6 +38,10 @@ router = APIRouter(prefix="/api/v1", tags=["RAG"])
 def _source_kind(chunk: dict[str, Any]) -> str:
     if chunk.get("source_kind") == "attachment":
         return "attachment"
+    if chunk.get("source_kind") == "wikipedia":
+        return "wikipedia"
+    if chunk.get("source_kind") == "web":
+        return "web"
 
     if str(chunk.get("chunk_id", "")).startswith("temp:"):
         return "attachment"
@@ -127,10 +133,22 @@ def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
         yield "".join(pieces[index:index + words_per_chunk])
 
 
-def _get_generation_runtime(request: Request) -> tuple[Any, Any]:
+def _resolve_inference_mode(payload: ChatRequest) -> InferenceMode:
+    return payload.mode or settings.default_inference_mode
+
+
+def _get_generation_runtime(
+    request: Request,
+    payload: ChatRequest | None = None,
+) -> tuple[Any, Any] | tuple[Any, Any, InferenceMode]:
     service = request.app.state.rag_service
+    selected_mode = _resolve_inference_mode(payload) if payload is not None else settings.default_inference_mode
+    if selected_mode == "hybrid_rag":
+        runtime = getattr(request.app.state, "hybrid_orchestrator", None)
+    else:
+        runtime = getattr(request.app.state, "agentic_orchestrator", None) or getattr(request.app.state, "orchestrator", None)
     generator = getattr(request.app.state, "generator", None)
-    runtime = getattr(request.app.state, "orchestrator", None) or generator
+    runtime = runtime or generator
 
     if runtime is None:
         raise HTTPException(
@@ -149,13 +167,16 @@ def _get_generation_runtime(request: Request) -> tuple[Any, Any]:
             detail="Generation model is not ready.",
         )
 
-    return service, runtime
+    if payload is None:
+        return service, runtime
+    return service, runtime, selected_mode
 
 
 def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
     retrieval = result.get("retrieval") or {}
 
     return {
+        "mode": result.get("inference_mode"),
         "answer_provenance": result.get("answer_provenance", {}),
         "research": result.get("research_debug", {}),
         "evidence": result.get("evidence_debug", {}),
@@ -215,9 +236,11 @@ def _execute_chat(
     owner_id: str,
     payload: ChatRequest,
     request_id: str,
+    selected_mode: InferenceMode,
 ) -> dict[str, Any]:
     telemetry = RequestTelemetry(
         request_id=request_id,
+        inference_mode=selected_mode,
         deployment_id=getattr(service, "deployment_id", None),
         gpu=_gpu_name(),
         cold_start_included=False,
@@ -250,6 +273,8 @@ def _execute_chat(
             conversation_id=conversation_id,
             request_id=request_id,
         )
+        result.setdefault("inference_mode", selected_mode)
+        result.setdefault("answer_provenance", {})["mode"] = selected_mode
 
         sources = _result_sources(service, result)
         stored_sources = [source.model_dump(mode="json") for source in sources]
@@ -358,7 +383,7 @@ async def chat(
     owner_id: OwnerId,
     store: StoreDependency,
 ) -> ChatResponse:
-    service, generator = _get_generation_runtime(request)
+    service, generator, selected_mode = _get_generation_runtime(request, payload)
     await require_conversation(store, owner_id, payload.conversation_id)
     request_id = str(uuid.uuid4())
 
@@ -373,6 +398,7 @@ async def chat(
             owner_id,
             payload,
             request_id,
+            selected_mode,
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -412,6 +438,7 @@ async def chat(
         message_id=result["message_id"],
         answer=result["answer"],
         status=result["status"],
+        mode=selected_mode,
         sources=_result_sources(service, result),
         latency_ms=latency_ms,
         rewrite_used=result.get("rewrite_used", False),
@@ -430,26 +457,35 @@ async def chat_stream(
     owner_id: OwnerId,
     store: StoreDependency,
 ) -> StreamingResponse:
-    service, generator = _get_generation_runtime(request)
+    service, generator, selected_mode = _get_generation_runtime(request, payload)
     await require_conversation(store, owner_id, payload.conversation_id)
     request_id = str(uuid.uuid4())
     log_event(
         "CHAT_STREAM_START",
         request_id=request_id,
         deployment_id=getattr(service, "deployment_id", None),
+        inference_mode=selected_mode,
     )
 
     async def event_stream():
         stream_started = time.perf_counter()
         task: asyncio.Task | None = None
 
-        yield _sse(
-            "status",
-            {
-                "stage": "processing",
-                "message": "Retrieving evidence, generating and validating answer.",
-            },
+        status_messages = (
+            [
+                ("agentic_analyzing", "Đang phân tích câu hỏi..."),
+                ("agentic_local_search", "Đang tìm trong kho sử liệu..."),
+                ("agentic_external_check", "Đang kiểm tra thêm nguồn ngoài..."),
+                ("agentic_evidence_check", "Đang đối chiếu bằng chứng..."),
+                ("agentic_answering", "Đang soạn câu trả lời..."),
+            ]
+            if selected_mode == "agentic_rag"
+            else [
+                ("hybrid_retrieval", "Đang truy xuất kho sử liệu..."),
+                ("hybrid_answering", "Đang soạn câu trả lời..."),
+            ]
         )
+        yield _sse("status", {"stage": status_messages[0][0], "message": status_messages[0][1], "mode": selected_mode})
 
         task = asyncio.create_task(
             asyncio.to_thread(
@@ -460,6 +496,7 @@ async def chat_stream(
                 owner_id,
                 payload,
                 request_id,
+                selected_mode,
             )
         )
         task.add_done_callback(_consume_task_exception)
@@ -471,6 +508,18 @@ async def chat_stream(
                 try:
                     await asyncio.wait_for(asyncio.shield(task), timeout=8.0)
                 except asyncio.TimeoutError:
+                    status_index = min(
+                        int((time.perf_counter() - stream_started) // 8),
+                        len(status_messages) - 1,
+                    )
+                    yield _sse(
+                        "status",
+                        {
+                            "stage": status_messages[status_index][0],
+                            "message": status_messages[status_index][1],
+                            "mode": selected_mode,
+                        },
+                    )
                     yield _sse("ping", {"timestamp": time.time()})
 
             if not task.done():
@@ -535,6 +584,7 @@ async def chat_stream(
                 "stage": "validated",
                 "status": result.get("status"),
                 "rewrite_used": result.get("rewrite_used", False),
+                "mode": selected_mode,
             },
         )
 
@@ -584,6 +634,7 @@ async def chat_stream(
                 "message_id": result["message_id"],
                 "user_message_id": result["user_message_id"],
                 "status": result.get("status"),
+                "mode": selected_mode,
                 "latency_ms": elapsed_ms,
                 "rewrite_used": result.get("rewrite_used", False),
             },

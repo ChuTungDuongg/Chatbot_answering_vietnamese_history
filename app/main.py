@@ -6,10 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.history_answerer import HistoryAnswererAgent, LegacyRAGHistoryAnswerer
+from app.agents.history_answerer import HistoryAnswererAgent
 from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
 from app.agents.model_registry import SHARED_BASE_MODEL_ID
-from app.agents.orchestrator import AgentOrchestrator
+from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
 from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
@@ -25,6 +25,7 @@ from app.tools.local_search import SearchHistoryTool
 from app.tools.page_fetcher import FetchPageTool
 from app.tools.registry import ToolRegistry
 from app.tools.web_search import SearchWebTool, build_web_search_provider
+from app.tools.wikipedia import FetchWikipediaPageTool, SearchWikipediaTool
 
 
 # ============================================================
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
     retriever = None
     generator = None
     orchestrator = None
+    hybrid_orchestrator = None
     agent_model_runtime = None
     attachment_service = None
     temporary_retriever = None
@@ -100,37 +102,15 @@ async def lifespan(app: FastAPI):
                     )
                 service.tokenizer = agent_model_runtime.tokenizer
                 service.external_generation_backend = True
-            elif settings.agent_controller == "model":
-                if settings.research_agent_model != settings.evidence_agent_model:
-                    raise ValueError("Legacy controller requires matching Research/Evidence base model IDs.")
-                if settings.research_agent_adapter_path is None or settings.evidence_agent_adapter_path is None:
-                    raise ValueError("Model agent controller requires both Research and Evidence adapter paths.")
-                agent_model_runtime = SharedAgentModelRuntime(
-                    model_id=settings.research_agent_model,
-                    research_adapter=settings.research_agent_adapter_path,
-                    evidence_adapter=settings.evidence_agent_adapter_path,
-                    dtype=settings.dtype,
-                )
+            else:
+                raise ValueError("Full production mode requires the shared Qwen3 role backend.")
 
             if research_runtime is None:
                 raise RuntimeError("Full mode requires the Research retrieval runtime.")
 
-            if settings.uses_shared_backend:
-                if agent_model_runtime is None:
-                    raise RuntimeError("Shared backend did not initialize the role model runtime.")
-                answerer = HistoryAnswererAgent(model_runtime=agent_model_runtime)
-            else:
-                # Benchmark-only Qwen2.5/static-RAG compatibility path.  Importing
-                # legacy generation is intentionally deferred out of active Qwen3.
-                from app.rag.generation import RAGGenerator
-
-                generator = RAGGenerator(
-                    service=service,
-                    retriever=retriever,
-                    temporary_retriever=temporary_retriever,
-                    model_runtime=None,
-                )
-                answerer = LegacyRAGHistoryAnswerer(generator)
+            if agent_model_runtime is None:
+                raise RuntimeError("Shared backend did not initialize the role model runtime.")
+            answerer = HistoryAnswererAgent(model_runtime=agent_model_runtime)
 
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
@@ -139,6 +119,8 @@ async def lifespan(app: FastAPI):
                 tool_registry.register(SearchUploadedDocumentsTool(temporary_retriever))
             tool_registry.register(RetrieveEvidenceTool(evidence_store))
             tool_registry.register(InspectEvidenceTool(evidence_store))
+            tool_registry.register(SearchWikipediaTool())
+            tool_registry.register(FetchWikipediaPageTool())
             tool_registry.register(
                 SearchWebTool(
                     build_web_search_provider(
@@ -156,16 +138,24 @@ async def lifespan(app: FastAPI):
                     retrieval_runtime=research_runtime,
                     model_runtime=agent_model_runtime,
                     max_steps=settings.max_agent_steps,
+                    max_wikipedia_searches=settings.max_wikipedia_searches,
                     max_web_searches=settings.max_web_searches,
                     max_page_fetches=settings.max_page_fetches,
                 ),
                 evidence_agent=EvidenceCriticAgent(model_runtime=agent_model_runtime),
                 answerer=answerer,
             )
+            hybrid_orchestrator = HybridRAGOrchestrator(
+                retriever=retriever,
+                retrieval_runtime=research_runtime,
+                answerer=answerer,
+            )
 
         app.state.rag_service = service
         app.state.retriever = retriever
         app.state.generator = generator
+        app.state.agentic_orchestrator = orchestrator
+        app.state.hybrid_orchestrator = hybrid_orchestrator
         app.state.orchestrator = orchestrator
         app.state.agent_model_runtime = agent_model_runtime
         app.state.chat_store = chat_store
@@ -219,6 +209,7 @@ async def root():
             "conversation_memory": settings.should_load_model,
             "attachment_retrieval": settings.should_load_retrieval,
             "agentic_rag": bool(getattr(app.state, "orchestrator", None)),
+            "hybrid_rag": bool(getattr(app.state, "hybrid_orchestrator", None)),
         },
     }
 

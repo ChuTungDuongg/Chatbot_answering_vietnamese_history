@@ -15,6 +15,89 @@ from app.telemetry import current_request_telemetry, log_event
 logger = logging.getLogger(__name__)
 
 
+class HybridRAGOrchestrator:
+    def __init__(
+        self,
+        *,
+        retriever: Any,
+        retrieval_runtime: Any,
+        answerer: HistoryAnswererAgent,
+    ):
+        self.retriever = retriever
+        self.retrieval_runtime = retrieval_runtime
+        self.answerer = answerer
+        self.max_history_messages = retrieval_runtime.max_history_messages
+        self.retrieval_history_messages = retrieval_runtime.retrieval_history_messages
+
+    def chat(
+        self,
+        question: str,
+        final_k: int | None = None,
+        history: list[dict[str, str]] | None = None,
+        owner_id: str | None = None,
+        conversation_id: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        del owner_id, conversation_id
+        started = time.perf_counter()
+        selected_final_k = max(1, int(final_k or getattr(self.retriever, "final_context_k", 6)))
+        normalized_history = self.retrieval_runtime.normalize_history(
+            history,
+            current_question=question,
+        )
+        retrieval_question, history_used = self.retrieval_runtime.build_retrieval_question(
+            question,
+            normalized_history,
+        )
+        retrieval_started = time.perf_counter()
+        retrieval = self.retriever.retrieve(retrieval_question, final_k=selected_final_k)
+        retrieval_elapsed_ms = (time.perf_counter() - retrieval_started) * 1000
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.retrieval_ms += retrieval_elapsed_ms
+        contexts = list(retrieval.get("final_context", []))
+        analysis = self.retriever.analyze_question(question)
+        retrieval.update({
+            "question": question,
+            "analysis": analysis,
+            "retrieval_question": retrieval_question,
+            "history_used_for_retrieval": history_used,
+            "global_final_context": contexts,
+            "global_context_count": sum(item.get("source_kind") != "attachment" for item in contexts),
+            "temporary_context_count": sum(item.get("source_kind") == "attachment" for item in contexts),
+            "temporary_context_relevant": False,
+            "context_title_diversity": self.retriever.context_title_diversity(contexts),
+        })
+        tool_trace = [
+            *retrieval.get("tool_trace", []),
+            "mode:hybrid_rag",
+            "hybrid:retriever",
+        ]
+        result = self.answerer.answer(
+            question=question,
+            contexts=contexts if not retrieval.get("is_ood") else [],
+            analysis=analysis,
+            tool_trace=tool_trace,
+            is_ood=bool(retrieval.get("is_ood")),
+            ood_reason=str(retrieval.get("ood_reason") or ""),
+            history=None,
+            request_id=request_id,
+        )
+        result["inference_mode"] = "hybrid_rag"
+        result["agentic"] = False
+        result["retrieval"] = retrieval
+        result["retrieval_latency_sec"] = retrieval_elapsed_ms / 1000
+        result["total_latency_sec"] = time.perf_counter() - started
+        provenance = result.setdefault("answer_provenance", {})
+        provenance.update({
+            "mode": "hybrid_rag",
+            "research_generation_calls": 0,
+            "evidence_generation_calls": 0,
+            "total_llm_calls": int(provenance.get("history_generation_calls") or 0),
+        })
+        return result
+
+
 class AgentOrchestrator:
     def __init__(
         self,
@@ -105,6 +188,7 @@ class AgentOrchestrator:
         finally:
             self.research_agent.evidence_store.remove_session(session_id)
         result["agentic"] = True
+        result["inference_mode"] = "agentic_rag"
         result["evidence_critique"] = critique.model_dump()
         result["research_debug"] = {
             "steps": sum(int(item.get("steps", 0)) for item in research_attempts),
@@ -158,6 +242,7 @@ class AgentOrchestrator:
             else research_generation_calls + evidence_generation_calls + history_generation_calls
         )
         provenance.update({
+            "mode": "agentic_rag",
             "evidence_status": critique.status,
             "selected_evidence_ids": critique.selected_ids,
             "research_steps": result["research_debug"]["steps"],

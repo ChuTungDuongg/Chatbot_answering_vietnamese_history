@@ -55,11 +55,12 @@ def test_request_summary_success_is_emitted_without_prompt(caplog, tmp_path):
     )
 
     with caplog.at_level(logging.INFO):
-        _execute_chat(store, SuccessfulGenerator(), _service(), owner_id, payload, "req-success")
+        _execute_chat(store, SuccessfulGenerator(), _service(), owner_id, payload, "req-success", "agentic_rag")
 
     summaries = [record for record in caplog.records if record.message == "REQUEST_SUMMARY"]
     assert len(summaries) == 1
     assert getattr(summaries[0], "result") == "success"
+    assert getattr(summaries[0], "inference_mode") == "agentic_rag"
     assert getattr(summaries[0], "deployment_id") == "qwen3-test"
     assert "VERY_PRIVATE_PROMPT" not in caplog.text
 
@@ -74,7 +75,7 @@ def test_request_summary_failure_is_emitted_without_evidence_text(caplog, tmp_pa
 
     with caplog.at_level(logging.INFO):
         with pytest.raises(EvidenceModelContractError):
-            _execute_chat(store, FailingGenerator(), _service(), owner_id, payload, "req-fail")
+            _execute_chat(store, FailingGenerator(), _service(), owner_id, payload, "req-fail", "agentic_rag")
 
     summaries = [record for record in caplog.records if record.message == "REQUEST_SUMMARY"]
     assert len(summaries) == 1

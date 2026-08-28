@@ -8,6 +8,11 @@ function ChatMessage({ message, isStreaming = false, onShowSources }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const sourceCount = message.sources?.length ?? 0;
+  const modeLabel = message.mode === "hybrid_rag"
+    ? "Hybrid RAG — Fast"
+    : message.mode === "agentic_rag"
+      ? "Agentic RAG — Deep Research"
+      : "";
 
   const copyMessage = async () => {
     if (!message.content) return;
@@ -28,7 +33,10 @@ function ChatMessage({ message, isStreaming = false, onShowSources }) {
       </div>
 
       <div className="message-body">
-        <div className="message-author">{isUser ? "Bạn" : "Sử Việt AI"}</div>
+        <div className="message-author">
+          <span>{isUser ? "Bạn" : "Sử Việt AI"}</span>
+          {!isUser && modeLabel && <small>{modeLabel}</small>}
+        </div>
 
         <div className="message-content">
           {isUser ? (

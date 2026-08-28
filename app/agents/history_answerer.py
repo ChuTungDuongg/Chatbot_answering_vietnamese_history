@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from app.agents.history_contract import (
     SAFE_INSUFFICIENT_ANSWER,
@@ -11,10 +11,6 @@ from app.agents.history_contract import (
 )
 from app.agents.model_runtime import RoleLLMBackend
 from app.telemetry import current_request_telemetry, log_event
-
-if TYPE_CHECKING:
-    from app.rag.generation import RAGGenerator
-
 
 class HistoryAnswererAgent:
     """Active Qwen3 History role, matching the canonical History SFT contract."""
@@ -251,46 +247,3 @@ class HistoryAnswererAgent:
                 "conversation_history_used": False,
             },
         }
-
-
-class LegacyRAGHistoryAnswerer:
-    """Compatibility wrapper for the benchmark-only merged/static-RAG backend."""
-
-    def __init__(self, generator: RAGGenerator):
-        self.generator = generator
-
-    def answer(
-        self,
-        *,
-        question: str,
-        contexts: list[dict[str, Any]],
-        analysis: dict[str, Any],
-        tool_trace: list[str],
-        is_ood: bool = False,
-        ood_reason: str = "",
-        history: list[dict[str, str]] | None = None,
-    ) -> dict[str, Any]:
-        retrieval = HistoryAnswererAgent._retrieval_payload(
-            question=question,
-            contexts=contexts,
-            analysis=analysis,
-            tool_trace=tool_trace,
-            is_ood=is_ood,
-            ood_reason=ood_reason,
-        )
-        result = self.generator.answer_from_retrieval(
-            question=question,
-            retrieval=retrieval,
-            history=history,
-        )
-        result["tool_trace"] = tool_trace + result.get("tool_trace", [])
-        blocked = str(result.get("status") or "").startswith("blocked_")
-        result["answer_provenance"] = {
-            "source": "legacy_static_rag",
-            "history_adapter_called": False,
-            "history_generation_calls": None,
-            "guard_short_circuit": blocked,
-            "guard_name": result.get("status") if blocked else None,
-            "guard_override": blocked,
-        }
-        return result

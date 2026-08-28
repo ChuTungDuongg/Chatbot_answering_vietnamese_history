@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 
 SHARED_BASE_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
-LEGACY_HISTORY_BASE_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 RoleName = Literal["research", "evidence", "history"]
 
 
@@ -26,39 +25,30 @@ ROLE_MODELS: dict[RoleName, RoleModelSpec] = {
         model_name="research",
         adapter_path="adapters/research",
         expected_base_model_id=SHARED_BASE_MODEL_ID,
-        generation={"max_new_tokens": 384, "temperature": 0.0, "top_p": 1.0},
+        generation={"max_new_tokens": 256, "temperature": 0.0, "top_p": 1.0},
     ),
     "evidence": RoleModelSpec(
         role="evidence",
         model_name="evidence",
         adapter_path="adapters/evidence",
         expected_base_model_id=SHARED_BASE_MODEL_ID,
-        generation={"max_new_tokens": 768, "temperature": 0.0, "top_p": 1.0},
+        generation={"max_new_tokens": 640, "temperature": 0.0, "top_p": 1.0},
     ),
     "history": RoleModelSpec(
         role="history",
         model_name="history",
         adapter_path="adapters/history",
         expected_base_model_id=SHARED_BASE_MODEL_ID,
-        generation={"max_new_tokens": 512, "temperature": 0.0, "top_p": 1.0},
+        generation={"max_new_tokens": 1536, "temperature": 0.0, "top_p": 1.0},
     ),
 }
-
-LEGACY_MODELS = {
-    "qwen25_history": {
-        "base_model_id": LEGACY_HISTORY_BASE_MODEL_ID,
-        "legacy_only": True,
-        "purpose": "benchmark_baseline",
-    }
-}
-
 
 def registry_manifest() -> dict[str, Any]:
     return {
         "shared_base_model_id": SHARED_BASE_MODEL_ID,
         "tokenizer_model_id": SHARED_BASE_MODEL_ID,
         "roles": {name: asdict(spec) for name, spec in ROLE_MODELS.items()},
-        "legacy_models": LEGACY_MODELS,
+        "legacy_models": {},
     }
 
 
@@ -82,9 +72,8 @@ def validate_role_adapter(role: RoleName, adapter_path: str | Path) -> str:
     actual = adapter_declared_base(adapter_path)
     expected = ROLE_MODELS[role].expected_base_model_id
     if actual != expected:
-        legacy_note = " (legacy History adapter is benchmark-only)" if actual == LEGACY_HISTORY_BASE_MODEL_ID else ""
         raise ValueError(
-            f"{role} adapter/base mismatch: expected {expected!r}, found {actual!r}{legacy_note}"
+            f"{role} adapter/base mismatch: expected {expected!r}, found {actual!r}"
         )
     return actual
 
@@ -98,4 +87,3 @@ def validate_active_role_names() -> None:
 
 
 validate_active_role_names()
-

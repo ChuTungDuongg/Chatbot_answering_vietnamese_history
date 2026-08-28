@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from app.agents.model_runtime import RoleLLMBackend
+from app.agents.model_registry import ROLE_MODELS
 from app.agents.policy_schema import (
     RESEARCH_AGENT_SYSTEM,
     FinishDecision,
@@ -39,6 +40,7 @@ class ResearchAgent:
         retrieval_runtime: Any,
         model_runtime: RoleLLMBackend | None = None,
         max_steps: int = 6,
+        max_wikipedia_searches: int = 2,
         max_web_searches: int = 3,
         max_page_fetches: int = 5,
     ):
@@ -47,6 +49,7 @@ class ResearchAgent:
         self.retrieval_runtime = retrieval_runtime
         self.model_runtime = model_runtime
         self.max_steps = max_steps
+        self.max_wikipedia_searches = max_wikipedia_searches
         self.max_web_searches = max_web_searches
         self.max_page_fetches = max_page_fetches
 
@@ -217,6 +220,8 @@ class ResearchAgent:
         trace: list[str] = []
         policy_steps: list[dict[str, Any]] = []
         observations: list[dict[str, Any]] = []
+        seen_tool_requests: set[str] = set()
+        wikipedia_searches = 0
         web_searches = 0
         page_fetches = 0
         tools = [
@@ -264,7 +269,7 @@ class ResearchAgent:
                     },
                     {"role": "user", "content": serialize_policy_state(state)},
                 ],
-                max_new_tokens=384,
+                max_new_tokens=int(ROLE_MODELS["research"].generation["max_new_tokens"]),
             )
             telemetry = current_request_telemetry()
             calls_after_policy = telemetry.total_llm_calls if telemetry is not None else calls_before + 1
@@ -320,6 +325,20 @@ class ResearchAgent:
             assert isinstance(decision, ToolDecision)
             tool_name = decision.tool_name
             arguments = dict(decision.arguments)
+            request_fingerprint = json.dumps(
+                {"tool_name": tool_name, "arguments": arguments},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            if request_fingerprint in seen_tool_requests:
+                observations.append({"tool": tool_name, "error": "duplicate_tool_request_skipped"})
+                continue
+            seen_tool_requests.add(request_fingerprint)
+            if tool_name == "search_wikipedia":
+                if wikipedia_searches >= self.max_wikipedia_searches:
+                    observations.append({"tool": tool_name, "error": "wikipedia_search_budget_exhausted"})
+                    continue
+                wikipedia_searches += 1
             if tool_name == "search_web":
                 if web_searches >= self.max_web_searches:
                     observations.append({"tool": tool_name, "error": "web_search_budget_exhausted"})
@@ -347,8 +366,15 @@ class ResearchAgent:
             telemetry = current_request_telemetry()
             if telemetry is not None:
                 telemetry.tool_calls += 1
+                telemetry.tool_calls_by_type[tool_name] = telemetry.tool_calls_by_type.get(tool_name, 0) + 1
                 if tool_name == "search_history":
                     telemetry.retrieval_ms += tool_elapsed_ms
+                if tool_name in {"search_wikipedia", "fetch_wikipedia_page"}:
+                    telemetry.wikipedia_calls += 1
+                    telemetry.wikipedia_ms += tool_elapsed_ms
+                if tool_name in {"search_web", "fetch_web_page"}:
+                    telemetry.generic_web_calls += 1
+                    telemetry.generic_web_ms += tool_elapsed_ms
             log_event(
                 "RESEARCH_TOOL_END",
                 request_id=request_id,
@@ -507,6 +533,8 @@ class ResearchAgent:
             source_kind = {
                 "search_history": "history",
                 "search_uploaded_documents": "attachment",
+                "search_wikipedia": "wikipedia",
+                "fetch_wikipedia_page": "wikipedia",
             }.get(tool_name, "web")
             item.setdefault("source_kind", source_kind)
             normalized.append(item)

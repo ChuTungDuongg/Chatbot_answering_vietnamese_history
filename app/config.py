@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     artifact_root: Path = Path("./artifacts/vn_history_deployment")
     device: Literal["cpu", "cuda"] = "cpu"
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
-    llm_backend: Literal["legacy-merged", "transformers", "vllm"] = "transformers"
+    llm_backend: Literal["transformers", "vllm"] = "transformers"
     shared_base_model_id: str = SHARED_BASE_MODEL_ID
     research_agent_model: str = SHARED_BASE_MODEL_ID
     research_agent_adapter_path: Path | None = None
@@ -36,11 +36,12 @@ class Settings(BaseSettings):
     vllm_api_key: str | None = None
     history_model_path: Path | None = None
     max_agent_steps: int = 6
+    max_wikipedia_searches: int = 2
     max_web_searches: int = 3
     max_page_fetches: int = 5
     web_search_provider: str = "local-only"
     web_search_api_key: str | None = None
-    agent_controller: Literal["deterministic", "model"] = "deterministic"
+    default_inference_mode: Literal["hybrid_rag", "agentic_rag"] = "agentic_rag"
 
     # ========================================================
     # Conversation storage
@@ -130,10 +131,7 @@ class Settings(BaseSettings):
     def model_path(self) -> Path:
         if self.history_model_path is not None:
             return self.history_model_path
-        new_layout = self.artifact_root / "history_answerer" / "model"
-        if new_layout.exists():
-            return new_layout
-        return self.artifact_root / "model" / "qwen2_5_3b_vnhistory_stage12_merged"
+        return self.artifact_root / "history_answerer" / "model"
 
     @property
     def corpus_path(self) -> Path:
@@ -180,9 +178,7 @@ class Settings(BaseSettings):
 
     def required_full_paths(self) -> list[Path]:
         paths = [*self.required_retrieval_paths()]
-        if self.llm_backend == "legacy-merged":
-            paths.append(self.model_path)
-        elif self.llm_backend == "transformers":
+        if self.llm_backend == "transformers":
             if self.research_agent_adapter_path is not None:
                 paths.append(self.research_agent_adapter_path)
             if self.evidence_agent_adapter_path is not None:

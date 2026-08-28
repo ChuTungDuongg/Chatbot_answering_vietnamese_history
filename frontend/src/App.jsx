@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BookOpenText,
+  Gauge,
   Landmark,
+  Microscope,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -39,6 +41,10 @@ const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"
 const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_FILES_PER_UPLOAD = 5;
+const INFERENCE_MODES = [
+  { value: "hybrid_rag", label: "Hybrid RAG — Fast", icon: Gauge },
+  { value: "agentic_rag", label: "Agentic RAG — Deep Research", icon: Microscope },
+];
 
 const SUGGESTIONS = [
   {
@@ -118,6 +124,7 @@ function App() {
   const [sources, setSources] = useState([]);
   const [debugData, setDebugData] = useState(null);
   const [question, setQuestion] = useState("");
+  const [inferenceMode, setInferenceMode] = useState("agentic_rag");
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
@@ -343,6 +350,7 @@ function App() {
       await streamChat({
         conversationId,
         question: trimmedQuestion,
+        mode: inferenceMode,
         finalK: 6,
         debug: import.meta.env.DEV,
         signal: controller.signal,
@@ -350,7 +358,7 @@ function App() {
           if (eventName === "status") {
             const nextStatus = typeof data === "string" ? data : data?.stage ?? "processing";
             setStatus(nextStatus);
-            updateMessage(assistantMessageId, { status: nextStatus });
+            updateMessage(assistantMessageId, { status: nextStatus, mode: data?.mode ?? inferenceMode });
             return;
           }
 
@@ -631,6 +639,21 @@ function App() {
               onDelete={handleDeleteAttachment}
               disabled={isRunning}
             />
+            <div className="mode-selector" aria-label="Chọn chế độ trả lời">
+              {INFERENCE_MODES.map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={inferenceMode === value ? "is-active" : ""}
+                  onClick={() => setInferenceMode(value)}
+                  disabled={isRunning}
+                  title={label}
+                >
+                  <Icon />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
             <ChatInput
               question={question}
               onQuestionChange={setQuestion}

@@ -30,10 +30,11 @@ image = modal.Image.from_dockerfile("Dockerfile", context_dir=".").env(
         "EVIDENCE_AGENT_ADAPTER_PATH": "/artifacts/adapters/evidence",
         "HISTORY_AGENT_ADAPTER_PATH": "/artifacts/adapters/history",
         "MAX_AGENT_STEPS": "6",
+        "MAX_WIKIPEDIA_SEARCHES": "2",
         "MAX_WEB_SEARCHES": "3",
         "MAX_PAGE_FETCHES": "5",
         "WEB_SEARCH_PROVIDER": "local-only",
-        "AGENT_CONTROLLER": "model",
+        "DEFAULT_INFERENCE_MODE": "agentic_rag",
         "CHAT_DATABASE_PATH": "/data/chat.sqlite3",
         "HF_HOME": "/hf-cache",
         "CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
@@ -157,6 +158,7 @@ def _build_runtime_stack() -> tuple[Any, Any, Any]:
     from app.tools.page_fetcher import FetchPageTool
     from app.tools.registry import ToolRegistry
     from app.tools.web_search import SearchWebTool, build_web_search_provider
+    from app.tools.wikipedia import FetchWikipediaPageTool, SearchWikipediaTool
 
     service = RAGService()
     service.load()
@@ -176,6 +178,8 @@ def _build_runtime_stack() -> tuple[Any, Any, Any]:
     registry.register(SearchHistoryTool(retriever))
     registry.register(RetrieveEvidenceTool(evidence_store))
     registry.register(InspectEvidenceTool(evidence_store))
+    registry.register(SearchWikipediaTool())
+    registry.register(FetchWikipediaPageTool())
     registry.register(
         SearchWebTool(
             build_web_search_provider(settings.web_search_provider, settings.web_search_api_key)
@@ -189,6 +193,7 @@ def _build_runtime_stack() -> tuple[Any, Any, Any]:
             retrieval_runtime=research_runtime,
             model_runtime=agent_model_runtime,
             max_steps=settings.max_agent_steps,
+            max_wikipedia_searches=settings.max_wikipedia_searches,
             max_web_searches=settings.max_web_searches,
             max_page_fetches=settings.max_page_fetches,
         ),

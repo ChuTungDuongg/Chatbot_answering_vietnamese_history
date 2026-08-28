@@ -100,7 +100,7 @@ def test_runtime_rejects_legacy_list_of_ids_with_clear_diagnostic():
         EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=1)
 
 
-def test_runtime_rejects_claim_attributed_to_the_wrong_evidence_id():
+def test_runtime_rebuckets_claim_attributed_to_one_unique_wrong_evidence_id():
     runtime = FakeRuntime({
         "status": "sufficient",
         "selected_evidence": [{
@@ -117,8 +117,218 @@ def test_runtime_rejects_claim_attributed_to_the_wrong_evidence_id():
         {"chunk_id": "ev_31", "text": "Câu A thuộc ev_31.", "source_kind": "local"},
         {"chunk_id": "ev_32", "text": "Câu chỉ có trong ev_32.", "source_kind": "local"},
     ]
-    with pytest.raises(EvidenceModelContractError, match="same evidence source"):
-        EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress("Câu hỏi?", evidence, final_k=2)
+
+    assert critique.selected_ids == ["ev_32"]
+    assert critique.selected_evidence[0].claims == ["Câu chỉ có trong ev_32."]
+    assert contexts[0]["chunk_id"] == "ev_32"
+    assert critique.repair_used is True
+    assert critique.repair_path == "deterministic_rebucket"
+    assert len(runtime.calls) == 1
+
+
+def test_runtime_rebuckets_mixed_bach_dang_claims_and_preserves_own_source_claims():
+    own_claim_1 = "Chiến thắng Bạch Đằng năm 938 chấm dứt hơn một nghìn năm Bắc thuộc."
+    own_claim_2 = "Sau chiến thắng này, Ngô Quyền xưng vương và đóng đô ở Cổ Loa."
+    foreign_claim = (
+        "Đến khi tiến binh trên Bạch Đằng, quả thấy trên không có tiếng xe ngựa, "
+        "trận ấy quả được đại tiệp."
+    )
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68",
+            "relevance": 1.0,
+            "claims": [own_claim_1, foreign_claim, own_claim_2],
+            "compressed_text": f"{own_claim_1} {foreign_claim} {own_claim_2}",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Bằng chứng đủ để trả lời ý nghĩa chiến thắng Bạch Đằng.",
+    })
+    evidence = [
+        {
+            "chunk_id": "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68",
+            "text": f"{own_claim_1} {own_claim_2}",
+            "source_kind": "history",
+        },
+        {
+            "chunk_id": "hf_wikipedia_trận_bạch_đằng_938_0003_cf59d98b5f8d",
+            "text": foreign_claim,
+            "source_kind": "history",
+        },
+    ]
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?", evidence, final_k=2
+    )
+
+    assert critique.selected_ids == [
+        "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68",
+        "hf_wikipedia_trận_bạch_đằng_938_0003_cf59d98b5f8d",
+    ]
+    assert critique.selected_evidence[0].claims == [own_claim_1, own_claim_2]
+    assert critique.selected_evidence[0].compressed_text == f"{own_claim_1} {own_claim_2}"
+    assert critique.selected_evidence[1].claims == [foreign_claim]
+    assert critique.selected_evidence[1].compressed_text == foreign_claim
+    assert [context["chunk_id"] for context in contexts] == critique.selected_ids
+    assert critique.repair_path == "deterministic_rebucket"
+    assert len(runtime.calls) == 1
+
+
+def test_runtime_rebuckets_multiple_wrong_claims_to_different_sources():
+    claim_a = "Nguồn A nêu dữ kiện A."
+    claim_b = "Nguồn B nêu dữ kiện B."
+    claim_c = "Nguồn C nêu dữ kiện C."
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_a",
+            "relevance": 0.8,
+            "claims": [claim_a, claim_b, claim_c],
+            "compressed_text": f"{claim_a} {claim_b} {claim_c}",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Có đủ dữ kiện.",
+    })
+
+    critique, _ = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Câu hỏi?",
+        [
+            {"chunk_id": "ev_a", "text": claim_a},
+            {"chunk_id": "ev_b", "text": claim_b},
+            {"chunk_id": "ev_c", "text": claim_c},
+        ],
+        final_k=3,
+    )
+
+    assert critique.selected_ids == ["ev_a", "ev_b", "ev_c"]
+    assert [item.claims for item in critique.selected_evidence] == [[claim_a], [claim_b], [claim_c]]
+    assert critique.repair_path == "deterministic_rebucket"
+
+
+def test_runtime_rebuckets_into_existing_destination_and_deduplicates_claims():
+    claim_a = "Nguồn A nêu dữ kiện A."
+    claim_b = "Nguồn B nêu dữ kiện B."
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [
+            {
+                "evidence_id": "ev_a",
+                "relevance": 0.8,
+                "claims": [claim_a, claim_b],
+                "compressed_text": f"{claim_a} {claim_b}",
+            },
+            {
+                "evidence_id": "ev_b",
+                "relevance": 0.9,
+                "claims": [claim_b],
+                "compressed_text": claim_b,
+            },
+        ],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Có đủ dữ kiện.",
+    })
+
+    critique, _ = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Câu hỏi?",
+        [
+            {"chunk_id": "ev_a", "text": claim_a},
+            {"chunk_id": "ev_b", "text": claim_b},
+        ],
+        final_k=2,
+    )
+
+    assert critique.selected_ids == ["ev_a", "ev_b"]
+    assert critique.selected_evidence[0].claims == [claim_a]
+    assert critique.selected_evidence[1].claims == [claim_b]
+    assert critique.selected_evidence[1].compressed_text == claim_b
+    assert critique.repair_path == "deterministic_rebucket"
+
+
+def test_runtime_keeps_ambiguous_cross_id_claim_as_failure():
+    claim = "Câu xuất hiện trong hai nguồn."
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_a",
+            "relevance": 1.0,
+            "claims": [claim],
+            "compressed_text": claim,
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Không an toàn.",
+    })
+
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Câu hỏi?",
+            [
+                {"chunk_id": "ev_a", "text": "Nguồn A không chứa claim."},
+                {"chunk_id": "ev_b", "text": claim},
+                {"chunk_id": "ev_c", "text": claim},
+            ],
+            final_k=3,
+        )
+
+    assert exc_info.value.code == "cross_id_claim"
+    assert exc_info.value.repair_attempted is False
+    assert len(runtime.calls) == 1
+
+
+def test_runtime_keeps_no_source_cross_id_claim_as_failure_after_existing_recovery_path():
+    runtime = FakeRuntime({
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "ev_a",
+            "relevance": 1.0,
+            "claims": ["Câu không nằm trong bất kỳ nguồn nào."],
+            "compressed_text": "Câu không nằm trong bất kỳ nguồn nào.",
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Không an toàn.",
+    })
+
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Câu hỏi?",
+            [{"chunk_id": "ev_a", "text": "Điện Biên Phủ kết thúc năm 1954."}],
+            final_k=1,
+        )
+
+    assert exc_info.value.code == "grounding_contract_failed"
+    assert exc_info.value.repair_attempted is False
+
+
+def test_runtime_keeps_invalid_conflict_semantics_as_failure_after_rebucket_attempt():
+    claim_a = "Nguồn A nêu dữ kiện A."
+    claim_b = "Nguồn B nêu dữ kiện B."
+    runtime = FakeRuntime({
+        "status": "conflicting",
+        "selected_evidence": [{
+            "evidence_id": "ev_a",
+            "relevance": 1.0,
+            "claims": [claim_b],
+            "compressed_text": claim_b,
+        }],
+        "conflicts": ["Có mâu thuẫn nhưng không nêu đủ ID."],
+        "missing_information": ["Cần đối chiếu."],
+        "summary": "Có mâu thuẫn.",
+    })
+
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Câu hỏi?",
+            [{"chunk_id": "ev_a", "text": claim_a}, {"chunk_id": "ev_b", "text": claim_b}],
+            final_k=2,
+        )
+
+    assert exc_info.value.code == "conflict_requires_two_ids"
     assert len(runtime.calls) == 1
 
 
@@ -156,7 +366,7 @@ def test_runtime_rejects_invented_id_without_repair():
     assert len(runtime.calls) == 1
 
 
-def test_paraphrased_claim_recovers_to_same_source_extractive_span():
+def test_paraphrased_claim_without_exact_source_match_remains_failure():
     source = "Chiến thắng Bạch Đằng năm 938 mở ra thời kỳ độc lập tự chủ."
     runtime = FakeRuntime({
         "status": "sufficient",
@@ -172,15 +382,13 @@ def test_paraphrased_claim_recovers_to_same_source_extractive_span():
     })
     evidence = [{"chunk_id": "ev_01", "text": source, "source_kind": "local"}]
 
-    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
-        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?", evidence, final_k=1
-    )
+    with pytest.raises(EvidenceModelContractError) as exc_info:
+        EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?", evidence, final_k=1
+        )
 
-    assert critique.selected_evidence[0].claims == [source]
-    assert contexts[0]["text"] == source
-    assert critique.generation_calls == 1
-    assert critique.repair_used is True
-    assert critique.repair_path == "deterministic"
+    assert exc_info.value.code == "grounding_contract_failed"
+    assert exc_info.value.repair_attempted is False
     assert len(runtime.calls) == 1
 
 
@@ -224,7 +432,7 @@ def test_valid_extractive_output_is_untouched():
     assert len(runtime.calls) == 1
 
 
-def test_unrecoverable_output_raises_controlled_error_after_one_repair():
+def test_unrecoverable_output_raises_controlled_error_without_model_repair():
     source = "Tài liệu chỉ nói về chiến dịch Điện Biên Phủ năm 1954."
     first = {
         "status": "sufficient",
@@ -248,11 +456,11 @@ def test_unrecoverable_output_raises_controlled_error_after_one_repair():
         )
 
     assert exc_info.value.code == "grounding_contract_failed"
-    assert exc_info.value.repair_attempted is True
-    assert len(runtime.calls) == 2
+    assert exc_info.value.repair_attempted is False
+    assert len(runtime.calls) == 1
 
 
-def test_second_repair_valid_output_is_accepted():
+def test_claim_not_extractive_does_not_use_second_model_repair():
     source = "Chiến thắng Bạch Đằng năm 938 chấm dứt thời kỳ Bắc thuộc."
     first = {
         "status": "sufficient",
@@ -271,23 +479,20 @@ def test_second_repair_valid_output_is_accepted():
     telemetry = RequestTelemetry(request_id="req-evidence")
     token = set_request_telemetry(telemetry)
     try:
-        critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
-            "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
-            [{"chunk_id": "ev_01", "text": source}],
-            final_k=1,
-            request_id="req-evidence",
-        )
+        with pytest.raises(EvidenceModelContractError) as exc_info:
+            EvidenceCriticAgent(model_runtime=runtime).compress(
+                "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
+                [{"chunk_id": "ev_01", "text": source}],
+                final_k=1,
+                request_id="req-evidence",
+            )
     finally:
         reset_request_telemetry(token)
 
-    assert critique.selected_evidence[0].claims == [source]
-    assert contexts[0]["text"] == source
-    assert critique.generation_calls == 2
-    assert critique.repair_used is True
-    assert critique.repair_path == "model"
-    assert len(runtime.calls) == 2
-    assert telemetry.evidence_generation_calls == 2
-    assert telemetry.evidence_repair_used is True
+    assert exc_info.value.code == "grounding_contract_failed"
+    assert len(runtime.calls) == 1
+    assert telemetry.evidence_generation_calls == 1
+    assert telemetry.evidence_repair_used is False
 
 
 def test_runtime_rejects_conflict_without_two_supplied_ids():

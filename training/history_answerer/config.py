@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from training.common.qlora import LoRASettings
-from app.agents.model_registry import LEGACY_HISTORY_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.agents.model_registry import SHARED_BASE_MODEL_ID
 
 
 # Active Phase-6/History Answerer training starts fresh from Qwen3.  The old
 # Qwen2.5 identity is retained only for Phase-1 compatibility and benchmarks.
 BASE_MODEL_ID = SHARED_BASE_MODEL_ID
-LEGACY_BASE_MODEL_ID = LEGACY_HISTORY_BASE_MODEL_ID
+LEGACY_BASE_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 
 
 @dataclass(frozen=True)

@@ -786,10 +786,22 @@ summary:focus-visible {
 }
 
 .message-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 2px 0 7px;
   color: var(--text);
   font-size: 12px;
   font-weight: 760;
+}
+
+.message-author small {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .message-content {
@@ -1041,6 +1053,55 @@ summary:focus-visible {
   margin-bottom: 8px;
   padding: 2px 1px;
   overflow-x: auto;
+}
+
+.mode-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mode-selector button {
+  min-width: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.mode-selector button:hover:not(:disabled),
+.mode-selector button.is-active {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.mode-selector button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.mode-selector svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.mode-selector span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-item {
@@ -1832,6 +1893,10 @@ summary:focus-visible {
 
   .composer-shell {
     padding: 7px 8px 9px;
+  }
+
+  .mode-selector {
+    grid-template-columns: 1fr;
   }
 
   .chat-composer {

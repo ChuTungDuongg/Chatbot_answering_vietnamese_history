@@ -161,8 +161,17 @@ def default_research_tool_definitions(*, include_attachment: bool = False) -> li
     from app.tools.local_search import SearchHistoryTool
     from app.tools.page_fetcher import FetchPageTool
     from app.tools.web_search import SearchWebTool
+    from app.tools.wikipedia import FetchWikipediaPageTool, SearchWikipediaTool
 
-    classes = [SearchHistoryTool, SearchWebTool, FetchPageTool, RetrieveEvidenceTool, InspectEvidenceTool]
+    classes = [
+        SearchHistoryTool,
+        SearchWikipediaTool,
+        FetchWikipediaPageTool,
+        SearchWebTool,
+        FetchPageTool,
+        RetrieveEvidenceTool,
+        InspectEvidenceTool,
+    ]
     if include_attachment:
         from app.tools.attachment_search import SearchUploadedDocumentsTool
 

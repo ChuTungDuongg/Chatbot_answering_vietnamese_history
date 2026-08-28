@@ -142,6 +142,7 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
 export async function streamChat({
   conversationId,
   question,
+  mode = "agentic_rag",
   finalK = 6,
   debug = false,
   onEvent,
@@ -162,6 +163,7 @@ export async function streamChat({
     body: JSON.stringify({
       conversation_id: conversationId,
       question: normalizedQuestion,
+      mode,
       final_k: finalK,
       debug,
     }),

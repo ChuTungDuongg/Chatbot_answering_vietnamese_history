@@ -28,6 +28,7 @@ class GenerationMetric:
 @dataclass
 class RequestTelemetry:
     request_id: str
+    inference_mode: str | None = None
     deployment_id: str | None = None
     gpu: str | None = None
     started: float = field(default_factory=time.perf_counter)
@@ -39,11 +40,21 @@ class RequestTelemetry:
     research_ms: float = 0.0
     research_json_repairs: int = 0
     tool_calls: int = 0
+    tool_calls_by_type: dict[str, int] = field(default_factory=dict)
     retrieval_ms: float = 0.0
+    wikipedia_calls: int = 0
+    wikipedia_ms: float = 0.0
+    generic_web_calls: int = 0
+    generic_web_ms: float = 0.0
     evidence_attempts: int = 0
     evidence_ms: float = 0.0
     evidence_recovery_used: bool = False
     evidence_repair_used: bool = False
+    evidence_rebucket_attempted: bool = False
+    evidence_rebucket_succeeded: bool = False
+    evidence_rebucket_moved_claim_count: int = 0
+    evidence_rebucket_destination_ids: list[str] = field(default_factory=list)
+    evidence_final_validation_result: str | None = None
     history_ms: float = 0.0
     history_generation_calls: int = 0
     generation_metrics: list[GenerationMetric] = field(default_factory=list)
@@ -87,6 +98,7 @@ class RequestTelemetry:
     def summary(self, *, result: str) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
+            "inference_mode": self.inference_mode,
             "deployment_id": self.deployment_id,
             "gpu": self.gpu,
             "result": result,
@@ -100,12 +112,22 @@ class RequestTelemetry:
             "research_llm_calls": self.research_llm_calls,
             "research_json_repairs": self.research_json_repairs,
             "tool_calls": self.tool_calls,
+            "tool_calls_by_type": self.tool_calls_by_type,
             "retrieval_ms": self.retrieval_ms,
+            "wikipedia_calls": self.wikipedia_calls,
+            "wikipedia_ms": self.wikipedia_ms,
+            "generic_web_calls": self.generic_web_calls,
+            "generic_web_ms": self.generic_web_ms,
             "evidence_attempts": self.evidence_attempts,
             "evidence_ms": self.evidence_ms,
             "evidence_generation_calls": self.evidence_generation_calls,
             "evidence_recovery_used": self.evidence_recovery_used,
             "evidence_repair_used": self.evidence_repair_used,
+            "evidence_rebucket_attempted": self.evidence_rebucket_attempted,
+            "evidence_rebucket_succeeded": self.evidence_rebucket_succeeded,
+            "evidence_rebucket_moved_claim_count": self.evidence_rebucket_moved_claim_count,
+            "evidence_rebucket_destination_ids": self.evidence_rebucket_destination_ids,
+            "evidence_final_validation_result": self.evidence_final_validation_result,
             "history_ms": self.history_ms,
             "history_generation_calls": self.history_generation_calls,
             "total_llm_calls": self.total_llm_calls,

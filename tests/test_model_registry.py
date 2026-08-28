@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
+from app.config import Settings
 from app.agents.model_runtime import VLLMOpenAIBackend
 from app.agents.model_registry import (
-    LEGACY_HISTORY_BASE_MODEL_ID,
     ROLE_MODELS,
     SHARED_BASE_MODEL_ID,
     registry_manifest,
@@ -15,20 +16,28 @@ from app.agents.model_registry import (
 from training.history_answerer.merge_adapter import merge_lora_adapter
 
 
+WRONG_BASE_MODEL_ID = "Example/NonCanonical-History-Base"
+
+
 def test_all_active_roles_use_one_qwen3_base_and_unique_adapters():
     assert set(ROLE_MODELS) == {"research", "evidence", "history"}
     assert {item.expected_base_model_id for item in ROLE_MODELS.values()} == {SHARED_BASE_MODEL_ID}
     assert len({item.model_name for item in ROLE_MODELS.values()}) == 3
     assert len({item.adapter_path for item in ROLE_MODELS.values()}) == 3
     manifest = registry_manifest()
-    assert manifest["legacy_models"]["qwen25_history"]["legacy_only"] is True
+    assert manifest["legacy_models"] == {}
+
+
+def test_active_settings_reject_legacy_merged_backend():
+    with pytest.raises(ValidationError):
+        Settings(llm_backend="legacy-merged")
 
 
 def test_adapter_base_mismatch_fails_early(tmp_path):
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     (adapter / "adapter_config.json").write_text(
-        json.dumps({"base_model_name_or_path": LEGACY_HISTORY_BASE_MODEL_ID}), encoding="utf-8"
+        json.dumps({"base_model_name_or_path": WRONG_BASE_MODEL_ID}), encoding="utf-8"
     )
     with pytest.raises(ValueError, match="adapter/base mismatch"):
         validate_role_adapter("history", adapter)
@@ -47,7 +56,7 @@ def test_merge_rejects_qwen25_adapter_for_qwen3_before_loading_weights(tmp_path)
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     (adapter / "adapter_config.json").write_text(
-        json.dumps({"base_model_name_or_path": LEGACY_HISTORY_BASE_MODEL_ID}), encoding="utf-8"
+        json.dumps({"base_model_name_or_path": WRONG_BASE_MODEL_ID}), encoding="utf-8"
     )
     with pytest.raises(ValueError, match="cannot merge adapter"):
         merge_lora_adapter(
