@@ -1,5 +1,6 @@
 import gc
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,12 @@ import torch
 from sentence_transformers import CrossEncoder, SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from app.artifact_contract import validate_artifact_lock
 from app.config import settings
+from app.telemetry import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 class RAGService:
@@ -20,6 +26,9 @@ class RAGService:
         self.loaded: bool = False
         self.runtime_mode: str = settings.app_mode
         self.runtime_device: str | None = None
+        self.deployment_id: str | None = None
+        self.startup_timings_ms: dict[str, float] = {}
+        self.artifact_lock: dict[str, Any] | None = None
 
         # Deployment config / manifest
         self.config: dict[str, Any] | None = None
@@ -55,6 +64,7 @@ class RAGService:
         print("=" * 70)
         print(f"Runtime mode : {settings.app_mode}")
         print(f"Target device: {settings.device}")
+        self._log_gpu_profile()
 
         # MODE 1 — API ONLY
         if settings.is_api_only:
@@ -68,17 +78,19 @@ class RAGService:
 
         # MODE 2 / 3 — retrieval-only OR full
         if settings.should_load_retrieval:
-            self._validate_artifacts()
-            self._load_config()
-            self._load_corpus()
-            self._load_faiss()
-            self._load_bm25()
-            self._load_embedder()
-            self._load_reranker()
+            self._time_stage("artifact_path_validation", self._validate_artifacts)
+            self._time_stage("config_load", self._load_config)
+            if settings.is_full and settings.llm_backend == "transformers":
+                self._time_stage("artifact_lock_validation", self._validate_artifact_lock)
+            self._time_stage("corpus_load", self._load_corpus)
+            self._time_stage("faiss_load", self._load_faiss)
+            self._time_stage("bm25_load", self._load_bm25)
+            self._time_stage("embedder_loaded", self._load_embedder)
+            self._time_stage("reranker_loaded", self._load_reranker)
 
         # MODE 3 — FULL
         if settings.should_load_model and not settings.uses_shared_backend:
-            self._load_generation_model()
+            self._time_stage("legacy_generation_model_loaded", self._load_generation_model)
 
         self.loaded = True
         self.started_at = time.time()
@@ -122,8 +134,19 @@ class RAGService:
         self.loaded = False
         self.started_at = None
         self.runtime_device = None
+        self.deployment_id = None
+        self.startup_timings_ms = {}
+        self.artifact_lock = None
 
         print("✅ RAG service shutdown complete.")
+
+    def _time_stage(self, stage: str, func) -> None:
+        started = time.perf_counter()
+        func()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self.startup_timings_ms[stage] = elapsed_ms
+        log_event("STARTUP_STAGE", stage=stage, elapsed_ms=elapsed_ms)
+        self._log_gpu_memory_stage(stage)
 
     # ========================================================
     # Device helpers
@@ -154,6 +177,39 @@ class RAGService:
             f"Unsupported DEVICE={settings.device!r}. Expected 'cpu' or 'cuda'."
         )
 
+    def _log_gpu_profile(self) -> None:
+        profile = {
+            "gpu_name": None,
+            "compute_capability": None,
+            "total_vram_gb": None,
+            "torch_version": getattr(torch, "__version__", None),
+            "cuda_version": getattr(torch.version, "cuda", None),
+            "bnb_4bit": True,
+        }
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            profile.update({
+                "gpu_name": props.name,
+                "compute_capability": ".".join(map(str, torch.cuda.get_device_capability(0))),
+                "total_vram_gb": props.total_memory / 1024**3,
+            })
+        log_event("GPU_PROFILE", **profile)
+
+    def _log_gpu_memory_stage(self, stage: str) -> None:
+        payload = {
+            "stage": stage,
+            "allocated_gb": None,
+            "reserved_gb": None,
+            "peak_gb": None,
+        }
+        if torch.cuda.is_available():
+            payload.update({
+                "allocated_gb": torch.cuda.memory_allocated() / 1024**3,
+                "reserved_gb": torch.cuda.memory_reserved() / 1024**3,
+                "peak_gb": torch.cuda.max_memory_allocated() / 1024**3,
+            })
+        log_event("GPU_MEMORY_STAGE", **payload)
+
     # ========================================================
     # Artifact validation
     # ========================================================
@@ -175,6 +231,23 @@ class RAGService:
             )
 
         print("✅ Deployment artifacts found.")
+
+    def _validate_artifact_lock(self) -> None:
+        lock = validate_artifact_lock(settings.artifact_root)
+        self.artifact_lock = lock
+        self.deployment_id = str(lock["deployment_id"])
+        log_event(
+            "ARTIFACT_DEPLOYMENT",
+            deployment_id=self.deployment_id,
+            shared_base=lock["shared_base_model_id"],
+            research_sha=lock["roles"]["research"]["adapter_model_sha256"][:12],
+            evidence_sha=lock["roles"]["evidence"]["adapter_model_sha256"][:12],
+            history_sha=lock["roles"]["history"]["adapter_model_sha256"][:12],
+            corpus_count=lock["corpus"]["count"],
+            faiss_count=lock["faiss"]["ntotal"],
+            bm25_count=lock["bm25"]["count"],
+            validation="PASS",
+        )
 
     # ========================================================
     # Deployment config

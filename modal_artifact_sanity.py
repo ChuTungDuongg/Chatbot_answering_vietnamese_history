@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -19,10 +20,42 @@ ROLE_ADAPTERS = {
     "evidence": ROOT / "adapters" / "evidence",
     "history": ROOT / "adapters" / "history",
 }
+EXPECTED_WEIGHT_HASHES = {
+    "research": "0d36e09fb947a6b077ee493f3589a36bf68dba0403f7eac91f684d070d399086",
+    "evidence": "39385ca7c82b57b5ff8c9a531b5359509ea185b15e5a0adb0724626c58ed7ff6",
+    "history": "70d873e15c48f5802e26d0c32eab7c63ea7b83f713be3192092476a0dac746a3",
+}
 
 
 def size_mb(path: Path) -> float:
     return round(path.stat().st_size / 1024**2, 2)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@app.function(volumes={"/artifacts": volume})
+def inventory_json():
+    files = []
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        files.append(
+            {
+                "path": "/" + str(path.relative_to(ROOT)).replace("\\", "/"),
+                "size": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+        )
+    return {
+        "root": str(ROOT),
+        "files": files,
+    }
 
 
 @app.function(volumes={"/artifacts": volume})
@@ -38,8 +71,10 @@ def sanity_check():
 
     required_paths = {
         "deployment manifest": ROOT / "manifest.json",
+        "artifact lock": ROOT / "artifact_lock.json",
         "export success marker": ROOT / "EXPORT_SUCCESS.txt",
         "inference config": ROOT / "config" / "inference_config.json",
+        "model registry": ROOT / "config" / "model_registry.json",
         "corpus": ROOT / "corpus" / "vn_history_rag_chunks_enriched.jsonl",
         "FAISS index": ROOT / "retrieval" / "faiss" / "chunks.index",
         "FAISS manifest": ROOT / "retrieval" / "faiss" / "manifest.json",
@@ -61,6 +96,7 @@ def sanity_check():
     print()
 
     manifest_path = required_paths["deployment manifest"]
+    artifact_lock = None
 
     print("[2] DEPLOYMENT MANIFEST")
 
@@ -71,6 +107,7 @@ def sanity_check():
 
             print("PASS  manifest.json parsed successfully")
             print("Keys :", list(manifest.keys()))
+            print("Deployment ID:", manifest.get("deployment_id"))
 
             manifest_base = manifest.get("shared_base_model_id")
             if manifest_base == EXPECTED_SHARED_BASE:
@@ -97,6 +134,25 @@ def sanity_check():
         except Exception as exc:
             print("FAIL  manifest.json could not be parsed:", exc)
             failures.append("Invalid deployment manifest")
+
+    print()
+
+    lock_path = required_paths["artifact lock"]
+
+    print("[2b] ARTIFACT LOCK")
+
+    if lock_path.exists():
+        try:
+            with lock_path.open("r", encoding="utf-8") as file:
+                artifact_lock = json.load(file)
+            print("PASS  artifact_lock.json parsed successfully")
+            print("Deployment ID:", artifact_lock.get("deployment_id"))
+            print("Base:", artifact_lock.get("shared_base_model_id"))
+            if artifact_lock.get("shared_base_model_id") != EXPECTED_SHARED_BASE:
+                failures.append("Artifact lock shared base does not match Qwen3")
+        except Exception as exc:
+            print("FAIL  artifact_lock.json could not be parsed:", exc)
+            failures.append("Invalid artifact lock")
 
     print()
 
@@ -228,7 +284,7 @@ def sanity_check():
 
     for role, adapter_dir in ROLE_ADAPTERS.items():
         config_file = adapter_dir / "adapter_config.json"
-        weights = sorted(adapter_dir.glob("adapter_model*.safetensors"))
+        weights = [adapter_dir / "adapter_model.safetensors"]
 
         if not config_file.is_file():
             failures.append(f"Missing {role} adapter_config.json: {config_file}")
@@ -250,10 +306,26 @@ def sanity_check():
             )
             continue
 
-        total_bytes = sum(path.stat().st_size for path in weights)
+        total_bytes = sum(path.stat().st_size for path in weights if path.exists())
+        weight_hash = sha256_file(weights[0])
+        expected_hash = EXPECTED_WEIGHT_HASHES[role]
+        hash_status = "MATCH" if weight_hash == expected_hash else "MISMATCH"
+        if hash_status != "MATCH":
+            failures.append(
+                f"{role} adapter weight hash {weight_hash} != expected {expected_hash}"
+            )
+        if artifact_lock is not None:
+            locked_hash = (
+                artifact_lock.get("roles", {})
+                .get(role, {})
+                .get("adapter_model_sha256")
+            )
+            if locked_hash and locked_hash != weight_hash:
+                failures.append(f"{role} remote hash does not match artifact lock")
         print(
             f"PASS  {role}: base={declared_base}, "
-            f"weights={len(weights)}, size={round(total_bytes / 1024**2, 2)} MB"
+            f"weights={len(weights)}, size={round(total_bytes / 1024**2, 2)} MB, "
+            f"sha256={weight_hash}, status={hash_status}"
         )
 
     legacy_model = ROOT / "legacy" / "qwen25_history" / "model"
@@ -303,5 +375,10 @@ def sanity_check():
 
 
 @app.local_entrypoint()
-def main():
+def main(inventory_json_output: bool = False):
+    if inventory_json_output:
+        print("REMOTE_INVENTORY_JSON_BEGIN")
+        print(json.dumps(inventory_json.remote(), ensure_ascii=False, sort_keys=True))
+        print("REMOTE_INVENTORY_JSON_END")
+        return
     sanity_check.remote()

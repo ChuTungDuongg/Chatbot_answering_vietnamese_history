@@ -34,6 +34,7 @@ class ToolExecutionContext:
     owner_id: str | None = None
     conversation_id: str | None = None
     session_id: str = "default"
+    request_id: str | None = None
 
 
 class ToolRegistry:
@@ -79,20 +80,28 @@ class ToolRegistry:
                 result = tool.run(parsed)
             else:
                 run_with_context = getattr(tool, "run_with_context", None)
-                if not callable(run_with_context):
-                    raise TypeError(f"Tool does not accept execution context: {name}")
-                result = run_with_context(parsed, context)
+                result = run_with_context(parsed, context) if callable(run_with_context) else tool.run(parsed)
             if inspect.isawaitable(result):
                 result = await result
             count = len(result) if hasattr(result, "__len__") else None
             logger.info(
                 "agent_tool_call",
-                extra={"tool_name": name, "latency_ms": (time.perf_counter() - started) * 1000},
+                extra={
+                    "request_id": context.request_id if context is not None else None,
+                    "tool_name": name,
+                    "latency_ms": (time.perf_counter() - started) * 1000,
+                    "result_count": count,
+                },
             )
             return result, ToolCallRecord(name=name, arguments=parsed.model_dump(), result_count=count)
         except Exception as exc:
             logger.warning(
                 "agent_tool_error",
-                extra={"tool_name": name, "latency_ms": (time.perf_counter() - started) * 1000},
+                extra={
+                    "request_id": context.request_id if context is not None else None,
+                    "tool_name": name,
+                    "latency_ms": (time.perf_counter() - started) * 1000,
+                    "error_type": type(exc).__name__,
+                },
             )
             return None, ToolCallRecord(name=name, arguments=dict(arguments), error=str(exc))

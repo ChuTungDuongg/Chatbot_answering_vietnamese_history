@@ -14,6 +14,7 @@ from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
+from app.telemetry import log_event
 from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
@@ -83,6 +84,13 @@ async def lifespan(app: FastAPI):
                         evidence_adapter=settings.evidence_agent_adapter_path,
                         history_adapter=settings.history_agent_adapter_path,
                         dtype=settings.dtype,
+                    )
+                    service._log_gpu_memory_stage("qwen_base_loaded")
+                    service._log_gpu_memory_stage("adapters_loaded")
+                    log_event(
+                        "MODEL_PLACEMENT",
+                        embedder_device=str(getattr(getattr(service.embedder, "_target_device", None), "type", None)),
+                        reranker_device=str(getattr(service.reranker, "device", None)),
                     )
                 else:
                     agent_model_runtime = VLLMOpenAIBackend(

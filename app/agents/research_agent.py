@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 from typing import Any
 
 from app.agents.model_runtime import RoleLLMBackend
@@ -16,6 +18,14 @@ from app.agents.policy_schema import (
 from app.agents.schemas import ResearchResult
 from app.tools.evidence_tools import SessionEvidenceStore
 from app.tools.registry import ToolExecutionContext, ToolRegistry
+from app.telemetry import current_request_telemetry, log_event
+
+
+logger = logging.getLogger(__name__)
+
+
+def owner_context_ready(context: ToolExecutionContext) -> bool:
+    return bool(context.owner_id and context.conversation_id)
 
 
 class ResearchAgent:
@@ -49,7 +59,12 @@ class ResearchAgent:
         session_id: str = "default",
         owner_id: str | None = None,
         conversation_id: str | None = None,
+        request_id: str | None = None,
     ) -> ResearchResult:
+        attempt_started = time.perf_counter()
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.research_attempts += 1
         normalized_history = self.retrieval_runtime.normalize_history(
             history,
             current_question=question,
@@ -59,11 +74,12 @@ class ResearchAgent:
             normalized_history,
         )
         tool_context = None
-        if owner_id and conversation_id:
+        if owner_id or conversation_id or request_id:
             tool_context = ToolExecutionContext(
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 session_id=session_id,
+                request_id=request_id,
             )
         if self.model_runtime is not None:
             tool_trace, policy_steps = await self._run_model_policy(
@@ -71,6 +87,7 @@ class ResearchAgent:
                 retrieval_question=retrieval_question,
                 session_id=session_id,
                 tool_context=tool_context,
+                request_id=request_id,
             )
         else:
             tool_trace, policy_steps = await self._run_fallback(
@@ -80,6 +97,10 @@ class ResearchAgent:
                 final_k=final_k,
                 tool_context=tool_context,
             )
+        elapsed_ms = (time.perf_counter() - attempt_started) * 1000
+        if telemetry is not None:
+            telemetry.research_steps += len(policy_steps)
+            telemetry.research_ms += elapsed_ms
         analysis = self.retrieval_runtime.retriever.analyze_question(question)
         classifier = getattr(self.retrieval_runtime.retriever, "classify_question", None)
         classification = classifier(question) if callable(classifier) else {}
@@ -109,7 +130,13 @@ class ResearchAgent:
             },
             debug={
                 "steps": len(policy_steps),
-                "generation_calls": len(policy_steps) if self.model_runtime is not None else 0,
+                "generation_calls": (
+                    sum(int(step.get("actual_generation_calls", 0)) for step in policy_steps)
+                    if self.model_runtime is not None
+                    else 0
+                ),
+                "json_repairs": sum(int(step.get("json_repairs", 0)) for step in policy_steps),
+                "elapsed_ms": elapsed_ms,
                 "tools": policy_steps,
                 "evidence_ids": [str(item.get("chunk_id")) for item in evidence],
                 "retrieval_question": retrieval_question,
@@ -185,6 +212,7 @@ class ResearchAgent:
         retrieval_question: str,
         session_id: str,
         tool_context: ToolExecutionContext | None,
+        request_id: str | None,
     ) -> tuple[list[str], list[dict[str, Any]]]:
         trace: list[str] = []
         policy_steps: list[dict[str, Any]] = []
@@ -194,10 +222,21 @@ class ResearchAgent:
         tools = [
             tool
             for tool in self.registry.describe()
-            if tool["name"] != "search_uploaded_documents" or tool_context is not None
+            if tool["name"] != "search_uploaded_documents" or (tool_context is not None and owner_context_ready(tool_context))
         ]
         available_tools = {tool["name"] for tool in tools}
         for step in range(1, self.max_steps + 1):
+            step_started = time.perf_counter()
+            telemetry = current_request_telemetry()
+            calls_before = telemetry.total_llm_calls if telemetry is not None else 0
+            repairs_before = telemetry.research_json_repairs if telemetry is not None else 0
+            log_event(
+                "RESEARCH_STEP_START",
+                request_id=request_id,
+                attempt=telemetry.research_attempts if telemetry is not None else None,
+                step=step,
+                max_steps=self.max_steps,
+            )
             state = ResearchPolicyState.model_validate({
                 "question": question,
                 "retrieval_question": retrieval_question,
@@ -227,24 +266,55 @@ class ResearchAgent:
                 ],
                 max_new_tokens=384,
             )
+            telemetry = current_request_telemetry()
+            calls_after_policy = telemetry.total_llm_calls if telemetry is not None else calls_before + 1
+            repairs_after_policy = telemetry.research_json_repairs if telemetry is not None else repairs_before
             try:
                 decision = validate_runtime_decision(raw_decision, tool_names=available_tools)
             except (TypeError, ValueError) as exc:
+                elapsed_ms = (time.perf_counter() - step_started) * 1000
+                log_event(
+                    "RESEARCH_POLICY_RESULT",
+                    request_id=request_id,
+                    attempt=telemetry.research_attempts if telemetry is not None else None,
+                    step=step,
+                    decision_type="invalid",
+                    tool_name=None,
+                    actual_generation_calls_for_step=calls_after_policy - calls_before,
+                    elapsed_ms=elapsed_ms,
+                )
                 observations.append({"tool": "policy", "error": f"invalid_decision: {exc}"})
                 trace.append("agent:invalid_decision")
                 policy_steps.append({
                     "step": step,
                     "action": "invalid",
                     "error": f"invalid_decision:{type(exc).__name__}",
+                    "actual_generation_calls": calls_after_policy - calls_before,
+                    "json_repairs": repairs_after_policy - repairs_before,
+                    "elapsed_ms": elapsed_ms,
                 })
                 continue
             if isinstance(decision, FinishDecision):
+                elapsed_ms = (time.perf_counter() - step_started) * 1000
+                log_event(
+                    "RESEARCH_POLICY_RESULT",
+                    request_id=request_id,
+                    attempt=telemetry.research_attempts if telemetry is not None else None,
+                    step=step,
+                    decision_type="finish",
+                    tool_name=None,
+                    actual_generation_calls_for_step=calls_after_policy - calls_before,
+                    elapsed_ms=elapsed_ms,
+                )
                 trace.append(f"agent:finish:{step}")
                 policy_steps.append({
                     "step": step,
                     "action": "finish",
                     "sufficient": decision.sufficient,
                     "missing_information": decision.missing_information,
+                    "actual_generation_calls": calls_after_policy - calls_before,
+                    "json_repairs": repairs_after_policy - repairs_before,
+                    "elapsed_ms": elapsed_ms,
                 })
                 break
             assert isinstance(decision, ToolDecision)
@@ -262,13 +332,44 @@ class ResearchAgent:
                 page_fetches += 1
             if tool_name in {"retrieve_evidence", "inspect_evidence"}:
                 arguments["session_id"] = session_id
+            tool_started = time.perf_counter()
+            log_event(
+                "RESEARCH_TOOL_START",
+                request_id=request_id,
+                tool_name=tool_name,
+            )
             result, record = await self.registry.call(
                 tool_name,
                 arguments,
-                context=tool_context if tool_name == "search_uploaded_documents" else None,
+                context=tool_context,
+            )
+            tool_elapsed_ms = (time.perf_counter() - tool_started) * 1000
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.tool_calls += 1
+                if tool_name == "search_history":
+                    telemetry.retrieval_ms += tool_elapsed_ms
+            log_event(
+                "RESEARCH_TOOL_END",
+                request_id=request_id,
+                tool_name=tool_name,
+                elapsed_ms=tool_elapsed_ms,
+                result_count=record.result_count,
+                error_type=type(record.error).__name__ if record.error else None,
             )
             trace.append(f"{record.name}:{record.result_count}" if not record.error else f"{record.name}:error")
             if record.error:
+                elapsed_ms = (time.perf_counter() - step_started) * 1000
+                log_event(
+                    "RESEARCH_POLICY_RESULT",
+                    request_id=request_id,
+                    attempt=telemetry.research_attempts if telemetry is not None else None,
+                    step=step,
+                    decision_type="tool",
+                    tool_name=tool_name,
+                    actual_generation_calls_for_step=calls_after_policy - calls_before,
+                    elapsed_ms=elapsed_ms,
+                )
                 observations.append({"tool": tool_name, "error": record.error})
                 policy_steps.append({
                     "step": step,
@@ -281,6 +382,9 @@ class ResearchAgent:
                     "result_count": 0,
                     "error": record.error,
                     "evidence": [],
+                    "actual_generation_calls": calls_after_policy - calls_before,
+                    "json_repairs": repairs_after_policy - repairs_before,
+                    "elapsed_ms": elapsed_ms,
                 })
                 continue
             rows = self._evidence_rows(tool_name, result)
@@ -294,6 +398,17 @@ class ResearchAgent:
                 rows = []
                 trace.append("attachment_relevant:false")
             self.evidence_store.add_documents(session_id, rows)
+            elapsed_ms = (time.perf_counter() - step_started) * 1000
+            log_event(
+                "RESEARCH_POLICY_RESULT",
+                request_id=request_id,
+                attempt=telemetry.research_attempts if telemetry is not None else None,
+                step=step,
+                decision_type="tool",
+                tool_name=tool_name,
+                actual_generation_calls_for_step=calls_after_policy - calls_before,
+                elapsed_ms=elapsed_ms,
+            )
             policy_steps.append({
                 "step": step,
                 "action": "tool",
@@ -305,6 +420,9 @@ class ResearchAgent:
                 "result_count": len(rows),
                 "error": None,
                 "evidence": [self._evidence_preview(item) for item in rows[:10]],
+                "actual_generation_calls": calls_after_policy - calls_before,
+                "json_repairs": repairs_after_policy - repairs_before,
+                "elapsed_ms": elapsed_ms,
             })
             observations.append(
                 {
@@ -313,6 +431,18 @@ class ResearchAgent:
                     "evidence_ids": [row.get("chunk_id") for row in rows[:10]],
                 }
             )
+        telemetry = current_request_telemetry()
+        log_event(
+            "RESEARCH_COMPLETE",
+            request_id=request_id,
+            attempt=telemetry.research_attempts if telemetry is not None else None,
+            steps=len(policy_steps),
+            actual_llm_calls=sum(int(step.get("actual_generation_calls", 0)) for step in policy_steps),
+            json_repairs=sum(int(step.get("json_repairs", 0)) for step in policy_steps),
+            tool_calls=sum(1 for step in policy_steps if step.get("action") == "tool"),
+            evidence_count=len(self.evidence_store.all(session_id)),
+            elapsed_ms=sum(float(step.get("elapsed_ms", 0.0)) for step in policy_steps),
+        )
         return trace, policy_steps
 
     async def _collect_attachment_evidence(
@@ -324,7 +454,11 @@ class ResearchAgent:
         final_k: int,
         tool_context: ToolExecutionContext | None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        if tool_context is None or "search_uploaded_documents" not in self.registry.names():
+        if (
+            tool_context is None
+            or not owner_context_ready(tool_context)
+            or "search_uploaded_documents" not in self.registry.names()
+        ):
             return [], []
 
         result, record = await self.registry.call(

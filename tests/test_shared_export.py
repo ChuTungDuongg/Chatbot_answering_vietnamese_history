@@ -22,8 +22,13 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
     (retrieval / "faiss").mkdir(parents=True)
     (retrieval / "bm25s_index").mkdir()
     (retrieval / "faiss" / "chunks.index").write_bytes(b"idx")
+    (retrieval / "faiss" / "manifest.json").write_text('{"count":1}', encoding="utf-8")
     (retrieval / "bm25s_index" / "index").write_bytes(b"idx")
+    (retrieval / "bm25s_index" / "phase9_manifest.json").write_text('{"count":1}', encoding="utf-8")
     output = tmp_path / "deployment"
+    (output / "stale.txt").parent.mkdir(parents=True)
+    (output / "stale.txt").write_text("old", encoding="utf-8")
+    (output / "adapters" / "research" / "checkpoint-1").mkdir(parents=True)
 
     assert main([
         "--research-agent", str(adapters["research"]),
@@ -38,4 +43,6 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
     assert manifest["base_weights_bundled"] is False
     assert set(manifest["roles"]) == {"research", "evidence", "history"}
     assert all((output / "adapters" / role / "adapter_config.json").is_file() for role in manifest["roles"])
-
+    assert (output / "artifact_lock.json").is_file()
+    assert not (output / "stale.txt").exists()
+    assert not (output / "adapters" / "research" / "checkpoint-1").exists()

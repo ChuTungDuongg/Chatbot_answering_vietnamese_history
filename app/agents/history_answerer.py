@@ -10,6 +10,7 @@ from app.agents.history_contract import (
     parse_history_answer_output,
 )
 from app.agents.model_runtime import RoleLLMBackend
+from app.telemetry import current_request_telemetry, log_event
 
 if TYPE_CHECKING:
     from app.rag.generation import RAGGenerator
@@ -107,6 +108,7 @@ class HistoryAnswererAgent:
         is_ood: bool = False,
         ood_reason: str = "",
         history: list[dict[str, str]] | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         del history  # History SFT has no conversation-history input.
         started = time.perf_counter()
@@ -124,8 +126,27 @@ class HistoryAnswererAgent:
             is_ood=is_ood,
             ood_reason=ood_reason,
         )
+        input_ids = [str(item["chunk_id"]) for item in contexts]
+        log_event(
+            "HISTORY_START",
+            request_id=request_id,
+            input_evidence_count=len(contexts),
+            input_evidence_ids=input_ids,
+        )
 
         if is_ood and not contexts:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.history_ms += elapsed_ms
+            log_event(
+                "HISTORY_COMPLETE",
+                request_id=request_id,
+                actual_llm_calls=0,
+                elapsed_ms=elapsed_ms,
+                cited_count=0,
+                invalid_citation_count=0,
+            )
             return self._guard_result(
                 question=question,
                 retrieval=retrieval,
@@ -136,6 +157,18 @@ class HistoryAnswererAgent:
                 guard_name="off_topic_no_evidence",
             )
         if not contexts:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.history_ms += elapsed_ms
+            log_event(
+                "HISTORY_COMPLETE",
+                request_id=request_id,
+                actual_llm_calls=0,
+                elapsed_ms=elapsed_ms,
+                cited_count=0,
+                invalid_citation_count=0,
+            )
             return self._guard_result(
                 question=question,
                 retrieval=retrieval,
@@ -146,17 +179,33 @@ class HistoryAnswererAgent:
                 guard_name="no_selected_evidence",
             )
 
-        input_ids = [str(item["chunk_id"]) for item in contexts]
+        telemetry = current_request_telemetry()
+        calls_before = telemetry.total_llm_calls if telemetry is not None else 0
         messages = build_history_answerer_messages(question, contexts)
         raw_output = self.model_runtime.generate_text(
             adapter="history",
             messages=messages,
         )
+        telemetry = current_request_telemetry()
+        actual_calls = (telemetry.total_llm_calls - calls_before) if telemetry is not None else 1
         parsed = parse_history_answer_output(raw_output, allowed_source_ids=input_ids)
         by_id = {str(item["chunk_id"]): item for item in contexts}
         source_chunks = [by_id[source_id] for source_id in parsed.source_ids]
         status = "ok" if parsed.source_ids else "insufficient"
 
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        invalid_citation_count = len(set(parsed.source_ids) - set(input_ids))
+        if telemetry is not None:
+            telemetry.history_ms += elapsed_ms
+            telemetry.history_generation_calls += actual_calls
+        log_event(
+            "HISTORY_COMPLETE",
+            request_id=request_id,
+            actual_llm_calls=actual_calls,
+            elapsed_ms=elapsed_ms,
+            cited_count=len(parsed.source_ids),
+            invalid_citation_count=invalid_citation_count,
+        )
         return {
             "question": question,
             "answer": parsed.answer,
@@ -179,7 +228,7 @@ class HistoryAnswererAgent:
             "initial_quality_issues": [],
             "history_message_count": 0,
             "tool_trace": [*tool_trace, "history:adapter", "history:citation_validation"],
-            "latency_sec": time.perf_counter() - started,
+            "latency_sec": elapsed_ms / 1000,
             "answer_provenance": {
                 "source": "history_adapter",
                 "history_adapter_called": True,

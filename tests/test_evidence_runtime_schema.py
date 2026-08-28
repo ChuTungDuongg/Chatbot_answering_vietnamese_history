@@ -9,6 +9,7 @@ from app.agents.evidence_agent import (
 )
 from app.agents.evidence_validation import grounded_in_source
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
+from app.telemetry import GenerationMetric, RequestTelemetry, reset_request_telemetry, set_request_telemetry
 
 
 class FakeRuntime:
@@ -18,6 +19,16 @@ class FakeRuntime:
 
     def generate_json(self, **kwargs):
         self.calls.append(kwargs)
+        telemetry = __import__("app.telemetry", fromlist=["current_request_telemetry"]).current_request_telemetry()
+        if telemetry is not None:
+            telemetry.add_generation(
+                GenerationMetric(
+                    adapter=str(kwargs.get("adapter")),
+                    input_tokens=1,
+                    output_tokens=1,
+                    max_new_tokens=int(kwargs.get("max_new_tokens") or 0),
+                )
+            )
         index = min(len(self.calls) - 1, len(self.outputs) - 1)
         return self.outputs[index]
 
@@ -257,11 +268,17 @@ def test_second_repair_valid_output_is_accepted():
     }
     runtime = FakeRuntime([first, _canonical(source)])
 
-    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
-        "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
-        [{"chunk_id": "ev_01", "text": source}],
-        final_k=1,
-    )
+    telemetry = RequestTelemetry(request_id="req-evidence")
+    token = set_request_telemetry(telemetry)
+    try:
+        critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
+            [{"chunk_id": "ev_01", "text": source}],
+            final_k=1,
+            request_id="req-evidence",
+        )
+    finally:
+        reset_request_telemetry(token)
 
     assert critique.selected_evidence[0].claims == [source]
     assert contexts[0]["text"] == source
@@ -269,6 +286,8 @@ def test_second_repair_valid_output_is_accepted():
     assert critique.repair_used is True
     assert critique.repair_path == "model"
     assert len(runtime.calls) == 2
+    assert telemetry.evidence_generation_calls == 2
+    assert telemetry.evidence_repair_used is True
 
 
 def test_runtime_rejects_conflict_without_two_supplied_ids():

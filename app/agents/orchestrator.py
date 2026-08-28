@@ -9,6 +9,7 @@ from typing import Any
 from app.agents.evidence_agent import EvidenceCriticAgent
 from app.agents.history_answerer import HistoryAnswererAgent
 from app.agents.research_agent import ResearchAgent
+from app.telemetry import current_request_telemetry, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,10 @@ class AgentOrchestrator:
         history: list[dict[str, str]] | None = None,
         owner_id: str | None = None,
         conversation_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
-        session_id = f"{conversation_id or 'anonymous'}:{uuid.uuid4()}"
+        session_id = request_id or f"{conversation_id or 'anonymous'}:{uuid.uuid4()}"
         try:
             research = await self.research_agent.run(
                 question,
@@ -49,6 +51,7 @@ class AgentOrchestrator:
                 session_id=session_id,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
+                request_id=request_id,
             )
             research_attempts = [research.debug]
             critique, contexts = self.evidence_agent.compress(
@@ -63,6 +66,12 @@ class AgentOrchestrator:
                 + ["agent:evidence_critic", f"evidence_selected:{len(contexts)}"]
             )
             if not critique.sufficient and self.research_agent.model_runtime is not None:
+                log_event(
+                    "ORCHESTRATOR_RETRY",
+                    request_id=request_id,
+                    reason="evidence_insufficient",
+                    missing_information_count=len(critique.missing_information),
+                )
                 follow_up = " ".join(critique.missing_information) or question
                 research = await self.research_agent.run(
                     follow_up,
@@ -71,6 +80,7 @@ class AgentOrchestrator:
                     session_id=session_id,
                     owner_id=owner_id,
                     conversation_id=conversation_id,
+                    request_id=request_id,
                 )
                 research_attempts.append(research.debug)
                 critique, contexts = self.evidence_agent.compress(
@@ -90,6 +100,7 @@ class AgentOrchestrator:
                 is_ood=research.is_ood and not contexts,
                 ood_reason=research.ood_reason,
                 history=history,
+                request_id=request_id,
             )
         finally:
             self.research_agent.evidence_store.remove_session(session_id)
@@ -133,18 +144,29 @@ class AgentOrchestrator:
             "summary": critique.summary,
         }
         provenance = result.setdefault("answer_provenance", {})
-        research_generation_calls = result["research_debug"]["generation_calls"]
-        evidence_generation_calls = critique.generation_calls
+        telemetry = current_request_telemetry()
+        research_generation_calls = (
+            telemetry.research_llm_calls if telemetry is not None else result["research_debug"]["generation_calls"]
+        )
+        evidence_generation_calls = (
+            telemetry.evidence_generation_calls if telemetry is not None else critique.generation_calls
+        )
         history_generation_calls = int(provenance.get("history_generation_calls") or 0)
+        total_llm_calls = (
+            telemetry.total_llm_calls
+            if telemetry is not None
+            else research_generation_calls + evidence_generation_calls + history_generation_calls
+        )
         provenance.update({
             "evidence_status": critique.status,
             "selected_evidence_ids": critique.selected_ids,
             "research_steps": result["research_debug"]["steps"],
             "research_generation_calls": research_generation_calls,
+            "research_json_repairs": sum(int(item.get("json_repairs", 0)) for item in research_attempts),
             "evidence_generation_calls": evidence_generation_calls,
             "evidence_repair_used": critique.repair_used,
             "history_generation_calls": history_generation_calls,
-            "total_llm_calls": research_generation_calls + evidence_generation_calls + history_generation_calls,
+            "total_llm_calls": total_llm_calls,
         })
         result["total_latency_sec"] = time.perf_counter() - started
         logger.info(
@@ -167,6 +189,7 @@ class AgentOrchestrator:
         history: list[dict[str, str]] | None = None,
         owner_id: str | None = None,
         conversation_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         selected_final_k = max(1, int(final_k or 6))
         return asyncio.run(
@@ -176,5 +199,6 @@ class AgentOrchestrator:
                 history=history,
                 owner_id=owner_id,
                 conversation_id=conversation_id,
+                request_id=request_id,
             )
         )

@@ -1,4 +1,5 @@
 import re
+import time
 import unicodedata
 from collections import Counter, defaultdict
 from typing import Any
@@ -7,6 +8,7 @@ import bm25s
 import numpy as np
 
 from app.services.rag_service import RAGService
+from app.telemetry import current_request_telemetry, log_event
 
 
 # ============================================================
@@ -792,6 +794,14 @@ class HybridRetriever:
         question: str,
         final_k: int | None = None,
     ) -> dict[str, Any]:
+        retrieve_started = time.perf_counter()
+        telemetry = current_request_telemetry()
+        request_id = telemetry.request_id if telemetry is not None else None
+        embedding_ms = 0.0
+        faiss_ms = 0.0
+        bm25_ms = 0.0
+        fusion_ms = 0.0
+        reranker_ms = 0.0
         self._ensure_ready()
 
         question = clean_text(question)
@@ -819,7 +829,7 @@ class HybridRetriever:
             intent["explicit_ood"]
             and intent["margin"] < self.ood_anchor_margin
         ):
-            return {
+            result = {
                 "question": question,
                 "is_ood": True,
                 "ood_reason": "explicit_ood+anchor_guard",
@@ -844,11 +854,32 @@ class HybridRetriever:
         runs = []
 
         for query in query_variants:
+            embedding_started = time.perf_counter()
+            embedding = self.service.embedder.encode(
+                [query_for_embedding(query)],
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            ).astype("float32")
+            embedding_ms += (time.perf_counter() - embedding_started) * 1000
+            faiss_started = time.perf_counter()
+            scores, indexes = self.service.faiss_index.search(
+                embedding,
+                min(self.dense_fetch_k, self.service.faiss_index.ntotal),
+            )
+            dense = [
+                (int(index), float(score))
+                for index, score in zip(indexes[0], scores[0])
+                if int(index) >= 0
+            ]
+            faiss_ms += (time.perf_counter() - faiss_started) * 1000
+            bm25_started = time.perf_counter()
+            bm25 = self.bm25_search(query)
+            bm25_ms += (time.perf_counter() - bm25_started) * 1000
             runs.append(
                 {
                     "query": query,
-                    "dense": self.dense_search(query),
-                    "bm25": self.bm25_search(query),
+                    "dense": dense,
+                    "bm25": bm25,
                 }
             )
 
@@ -868,7 +899,7 @@ class HybridRetriever:
             intent["margin"] < self.secondary_ood_margin
             and max_dense < self.secondary_min_dense
         ):
-            return {
+            result = {
                 "question": question,
                 "is_ood": True,
                 "ood_reason": "weak_history_retrieval+anchor_guard",
@@ -886,18 +917,48 @@ class HybridRetriever:
                     "ood_guard:block",
                 ],
             }
+            log_event(
+                "RETRIEVAL_COMPLETE",
+                request_id=request_id,
+                embedding_ms=embedding_ms,
+                faiss_ms=faiss_ms,
+                bm25_ms=bm25_ms,
+                fusion_ms=fusion_ms,
+                reranker_ms=reranker_ms,
+                total_ms=(time.perf_counter() - retrieve_started) * 1000,
+                candidate_count=0,
+                reranker_pair_count=0,
+                final_count=0,
+            )
+            return result
+            log_event(
+                "RETRIEVAL_COMPLETE",
+                request_id=request_id,
+                embedding_ms=embedding_ms,
+                faiss_ms=faiss_ms,
+                bm25_ms=bm25_ms,
+                fusion_ms=fusion_ms,
+                reranker_ms=reranker_ms,
+                total_ms=(time.perf_counter() - retrieve_started) * 1000,
+                candidate_count=0,
+                reranker_pair_count=0,
+                final_count=0,
+            )
+            return result
 
         # ----------------------------------------------------
         # RRF
         # ----------------------------------------------------
 
+        fusion_started = time.perf_counter()
         candidates = self.multi_query_rrf(
             runs,
             top_k=self.rrf_top_k,
         )
+        fusion_ms = (time.perf_counter() - fusion_started) * 1000
 
         if not candidates:
-            return {
+            result = {
                 "question": question,
                 "is_ood": False,
                 "ood_reason": "",
@@ -914,6 +975,20 @@ class HybridRetriever:
                     "multi_query_retrieval:no_candidates",
                 ],
             }
+            log_event(
+                "RETRIEVAL_COMPLETE",
+                request_id=request_id,
+                embedding_ms=embedding_ms,
+                faiss_ms=faiss_ms,
+                bm25_ms=bm25_ms,
+                fusion_ms=fusion_ms,
+                reranker_ms=reranker_ms,
+                total_ms=(time.perf_counter() - retrieve_started) * 1000,
+                candidate_count=0,
+                reranker_pair_count=0,
+                final_count=0,
+            )
+            return result
 
         # ----------------------------------------------------
         # Cross-encoder reranking
@@ -930,6 +1005,7 @@ class HybridRetriever:
             for chunk in candidates
         ]
 
+        reranker_started = time.perf_counter()
         reranker_scores = np.asarray(
             self.service.reranker.predict(
                 pairs,
@@ -938,6 +1014,7 @@ class HybridRetriever:
                 convert_to_numpy=True,
             )
         ).reshape(-1).astype(float)
+        reranker_ms = (time.perf_counter() - reranker_started) * 1000
 
         reranker_norm = self.minmax(reranker_scores.tolist())
 
@@ -989,7 +1066,7 @@ class HybridRetriever:
             final_k,
         )
 
-        return {
+        result = {
             "question": question,
             "is_ood": False,
             "ood_reason": "",
@@ -1012,3 +1089,17 @@ class HybridRetriever:
                 "evidence_diversity",
             ],
         }
+        log_event(
+            "RETRIEVAL_COMPLETE",
+            request_id=request_id,
+            embedding_ms=embedding_ms,
+            faiss_ms=faiss_ms,
+            bm25_ms=bm25_ms,
+            fusion_ms=fusion_ms,
+            reranker_ms=reranker_ms,
+            total_ms=(time.perf_counter() - retrieve_started) * 1000,
+            candidate_count=len(candidates),
+            reranker_pair_count=len(pairs),
+            final_count=len(final_context),
+        )
+        return result

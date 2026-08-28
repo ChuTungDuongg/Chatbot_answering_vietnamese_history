@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from contextlib import suppress
 from typing import Any, Iterator
 from uuid import UUID
@@ -13,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.agents.evidence_agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
+from app.telemetry import RequestTelemetry, log_event, reset_request_telemetry, set_request_telemetry
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -185,55 +187,98 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gpu_name() -> str | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_name(0)
+    except Exception:
+        return None
+    return None
+
+
+def _failure_stage(exc: Exception) -> str:
+    if isinstance(exc, LookupError):
+        return "conversation"
+    if isinstance(exc, ValueError):
+        return "request"
+    if isinstance(exc, RuntimeError):
+        return "runtime"
+    return "unknown"
+
+
 def _execute_chat(
     store: ConversationStore,
     generator: Any,
     service: Any,
     owner_id: str,
     payload: ChatRequest,
+    request_id: str,
 ) -> dict[str, Any]:
+    telemetry = RequestTelemetry(
+        request_id=request_id,
+        deployment_id=getattr(service, "deployment_id", None),
+        gpu=_gpu_name(),
+        cold_start_included=False,
+    )
+    token = set_request_telemetry(telemetry)
+    result_status = "failed"
     conversation_id = str(payload.conversation_id)
-    history_limit = max(
-        int(getattr(generator, "max_history_messages", 6)),
-        int(getattr(generator, "retrieval_history_messages", 4)),
-        6,
-    )
+    try:
+        history_limit = max(
+            int(getattr(generator, "max_history_messages", 6)),
+            int(getattr(generator, "retrieval_history_messages", 4)),
+            6,
+        )
 
-    history = store.get_recent_history(owner_id, conversation_id, limit=history_limit)
+        history = store.get_recent_history(owner_id, conversation_id, limit=history_limit)
 
-    user_message = store.add_message(
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        role="user",
-        content=payload.question,
-        status="done",
-    )
+        user_message = store.add_message(
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            role="user",
+            content=payload.question,
+            status="done",
+        )
 
-    result = generator.chat(
-        question=payload.question,
-        final_k=payload.final_k,
-        history=history,
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-    )
+        result = generator.chat(
+            question=payload.question,
+            final_k=payload.final_k,
+            history=history,
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+        )
 
-    sources = _result_sources(service, result)
-    stored_sources = [source.model_dump(mode="json") for source in sources]
+        sources = _result_sources(service, result)
+        stored_sources = [source.model_dump(mode="json") for source in sources]
 
-    assistant_message = store.add_message(
-        owner_id=owner_id,
-        conversation_id=conversation_id,
-        role="assistant",
-        content=result["answer"],
-        sources=stored_sources,
-        status="done",
-    )
+        assistant_message = store.add_message(
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=result["answer"],
+            sources=stored_sources,
+            status="done",
+        )
 
-    result["conversation_id"] = conversation_id
-    result["message_id"] = str(assistant_message["id"])
-    result["user_message_id"] = str(user_message["id"])
-
-    return result
+        result["conversation_id"] = conversation_id
+        result["message_id"] = str(assistant_message["id"])
+        result["user_message_id"] = str(user_message["id"])
+        result_status = "success"
+        return result
+    except EvidenceModelContractError as exc:
+        telemetry.failed_stage = exc.stage
+        telemetry.failure_code = exc.code
+        raise
+    except Exception as exc:
+        telemetry.failed_stage = _failure_stage(exc)
+        telemetry.failure_code = type(exc).__name__
+        raise
+    finally:
+        log_event("REQUEST_SUMMARY", **telemetry.summary(result=result_status))
+        reset_request_telemetry(token)
 
 
 # ============================================================
@@ -315,6 +360,7 @@ async def chat(
 ) -> ChatResponse:
     service, generator = _get_generation_runtime(request)
     await require_conversation(store, owner_id, payload.conversation_id)
+    request_id = str(uuid.uuid4())
 
     started = time.perf_counter()
 
@@ -326,6 +372,7 @@ async def chat(
             service,
             owner_id,
             payload,
+            request_id,
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -385,6 +432,12 @@ async def chat_stream(
 ) -> StreamingResponse:
     service, generator = _get_generation_runtime(request)
     await require_conversation(store, owner_id, payload.conversation_id)
+    request_id = str(uuid.uuid4())
+    log_event(
+        "CHAT_STREAM_START",
+        request_id=request_id,
+        deployment_id=getattr(service, "deployment_id", None),
+    )
 
     async def event_stream():
         stream_started = time.perf_counter()
@@ -406,6 +459,7 @@ async def chat_stream(
                 service,
                 owner_id,
                 payload,
+                request_id,
             )
         )
         task.add_done_callback(_consume_task_exception)

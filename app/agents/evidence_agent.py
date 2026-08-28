@@ -19,6 +19,7 @@ from app.agents.evidence_validation import (
     normalize_grounding,
     referenced_evidence_ids,
 )
+from app.telemetry import current_request_telemetry, log_event
 
 
 WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
@@ -594,12 +595,26 @@ class EvidenceCriticAgent:
     ) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
         started = time.perf_counter()
         request_id = request_id or "anonymous"
+        telemetry = current_request_telemetry()
+        calls_before = telemetry.total_llm_calls if telemetry is not None else 0
+        if telemetry is not None:
+            telemetry.evidence_attempts += 1
         request, available = self._build_evidence_request(question, evidence, final_k=final_k)
         visible_sources = {item.evidence_id: item.text for item in request.evidence}
         selected_candidate_count = min(max(final_k, 1), self.max_contexts)
         generation_calls = 1
         repair_used = False
         repair_path: str | None = None
+        log_event(
+            "EVIDENCE_START",
+            request_id=request_id,
+            attempt=telemetry.evidence_attempts if telemetry is not None else None,
+            candidate_count=len(evidence),
+            model_visible_count=len(request.evidence),
+            final_k=final_k,
+            per_item_limit=len(request.evidence[0].text) if request.evidence else 0,
+            text_budget=EVIDENCE_TEXT_BUDGET,
+        )
 
         logger.info(
             "evidence_generation_start",
@@ -610,23 +625,71 @@ class EvidenceCriticAgent:
                 "selected_candidate_count": selected_candidate_count,
             },
         )
+        log_event("EVIDENCE_GENERATION_START", request_id=request_id, generation_number=1)
+        generation_started = time.perf_counter()
         output = self.model_runtime.generate_json(
             adapter="evidence",
             messages=self._evidence_messages(request),
             max_new_tokens=768,
             repair=False,
         )
+        log_event(
+            "EVIDENCE_GENERATION_END",
+            request_id=request_id,
+            generation_number=1,
+            elapsed_ms=(time.perf_counter() - generation_started) * 1000,
+        )
         model_output = self._parse_model_output(output)
+        log_event(
+            "EVIDENCE_PARSE_RESULT",
+            request_id=request_id,
+            status=model_output.status,
+            selected_count=len(model_output.selected_evidence),
+            selected_ids=[item.evidence_id for item in model_output.selected_evidence],
+            claim_counts_by_evidence={
+                item.evidence_id: len(item.claims) for item in model_output.selected_evidence
+            },
+        )
         issues = self._contract_issues(model_output, visible_sources)
 
         if issues:
             repair_path = "deterministic" if all(issue.recoverable for issue in issues) else "hard_failure"
+            for issue in issues:
+                log_event(
+                    "EVIDENCE_VALIDATION_ISSUE",
+                    request_id=request_id,
+                    validation_pass=False,
+                    code=issue.code,
+                    evidence_id=issue.evidence_id,
+                    recoverable=issue.recoverable,
+                )
             self._log_validation_failed(request_id, issues, repair_path)
             if not all(issue.recoverable for issue in issues):
                 self._raise_contract_error(issues, repair_attempted=False)
 
+            recovery_started = time.perf_counter()
+            log_event("EVIDENCE_RECOVERY_START", request_id=request_id, issue_count=len(issues))
             recovered = self._recover_extractive_output(question, model_output, visible_sources)
             recovered_issues = self._contract_issues(recovered, visible_sources) if recovered else issues
+            if recovered:
+                original_by_id = {item.evidence_id: item for item in model_output.selected_evidence}
+                for item in recovered.selected_evidence:
+                    before = len(original_by_id.get(item.evidence_id, item).claims)
+                    log_event(
+                        "EVIDENCE_RECOVERY_ITEM",
+                        request_id=request_id,
+                        evidence_id=item.evidence_id,
+                        claims_before=before,
+                        claims_recovered=len(item.claims),
+                        success=bool(item.claims),
+                    )
+            log_event(
+                "EVIDENCE_RECOVERY_END",
+                request_id=request_id,
+                elapsed_ms=(time.perf_counter() - recovery_started) * 1000,
+                success=bool(recovered and not recovered_issues),
+                remaining_issue_codes=[issue.code for issue in recovered_issues],
+            )
             logger.info(
                 "evidence_extractive_recovery",
                 extra={
@@ -640,11 +703,21 @@ class EvidenceCriticAgent:
                 model_output = recovered
                 repair_used = True
                 repair_path = "deterministic"
+                if telemetry is not None:
+                    telemetry.evidence_recovery_used = True
             else:
                 generation_calls = 2
                 repair_used = True
                 repair_path = "model"
+                if telemetry is not None:
+                    telemetry.evidence_recovery_used = True
+                    telemetry.evidence_repair_used = True
                 repair_started = time.perf_counter()
+                log_event(
+                    "EVIDENCE_MODEL_REPAIR_START",
+                    request_id=request_id,
+                    issue_codes=[issue.code for issue in recovered_issues],
+                )
                 logger.info(
                     "evidence_repair_generation_start",
                     extra={
@@ -672,11 +745,22 @@ class EvidenceCriticAgent:
                         "output_tokens": len(json.dumps(repair_output, ensure_ascii=False).split()),
                     },
                 )
+                log_event(
+                    "EVIDENCE_MODEL_REPAIR_END",
+                    request_id=request_id,
+                    elapsed_ms=(time.perf_counter() - repair_started) * 1000,
+                )
                 model_output = self._parse_model_output(repair_output, repair_attempted=True)
                 repair_issues = self._contract_issues(model_output, visible_sources)
                 if repair_issues:
+                    log_event(
+                        "EVIDENCE_REPAIR_FAILED",
+                        request_id=request_id,
+                        final_issue_codes=[issue.code for issue in repair_issues],
+                    )
                     self._log_validation_failed(request_id, repair_issues, "failed_after_model_repair")
                     self._raise_contract_error(repair_issues, repair_attempted=True)
+                log_event("EVIDENCE_REPAIR_SUCCESS", request_id=request_id)
 
         critique, contexts = self._critique_from_output(
             model_output,
@@ -697,5 +781,23 @@ class EvidenceCriticAgent:
                 "repair_used": repair_used,
                 "elapsed_ms": (time.perf_counter() - started) * 1000,
             },
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        telemetry = current_request_telemetry()
+        actual_calls = (telemetry.total_llm_calls - calls_before) if telemetry is not None else generation_calls
+        if telemetry is not None:
+            telemetry.evidence_ms += elapsed_ms
+            telemetry.evidence_repair_used = telemetry.evidence_repair_used or repair_path == "model"
+            telemetry.evidence_recovery_used = telemetry.evidence_recovery_used or repair_path in {"deterministic", "model"}
+        log_event(
+            "EVIDENCE_COMPLETE",
+            request_id=request_id,
+            attempt=telemetry.evidence_attempts if telemetry is not None else None,
+            status=critique.status,
+            actual_llm_calls=actual_calls,
+            recovery_used=repair_path in {"deterministic", "model"},
+            repair_used=repair_path == "model",
+            selected_count=len(contexts),
+            elapsed_ms=elapsed_ms,
         )
         return critique, contexts
