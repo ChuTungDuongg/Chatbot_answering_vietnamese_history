@@ -4,6 +4,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from training.common.sft import (
+    AssistantOnlyTokenStats,
+    build_assistant_only_example_with_stats,
+)
+
 SOURCE_LINE_PREFIX = "Nguồn được dùng:"
 ANSWER_PREFIX = "Trả lời:"
 IGNORE_INDEX = -100
@@ -45,30 +50,62 @@ def build_rag_training_example(
     source_weight: float = 1.6,
     answer_weight: float = 1.0,
 ) -> dict[str, list[int] | list[float]]:
-    source_text, answer_text = _assistant_parts(assistant_text)
-    full_text = _apply_chat_template(tokenizer, user_text, source_text + answer_text)
-    assistant_prefix = _assistant_generation_prefix(tokenizer, user_text)
-    prefix_ids = tokenizer(assistant_prefix, add_special_tokens=False)["input_ids"]
-    encoded = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_length)
-    input_ids = encoded["input_ids"]
-    labels = [IGNORE_INDEX] * len(input_ids)
-    loss_weights = [0.0] * len(input_ids)
+    feature, _ = build_rag_training_example_with_stats(
+        tokenizer,
+        user_text,
+        assistant_text,
+        max_length=max_length,
+        source_weight=source_weight,
+        answer_weight=answer_weight,
+    )
+    return feature
 
-    assistant_start = min(len(prefix_ids), len(input_ids))
-    tail = input_ids[assistant_start:]
+
+def build_rag_training_example_with_stats(
+    tokenizer: Any,
+    user_text: str,
+    assistant_text: str,
+    *,
+    max_length: int = 4096,
+    source_weight: float = 1.6,
+    answer_weight: float = 1.0,
+) -> tuple[dict[str, list[int] | list[float]], AssistantOnlyTokenStats]:
+    """Build target-preserving Phase-6 labels and weighted assistant CE.
+
+    The complete assistant target is identified before truncation.  Only the
+    left side of the user/context prefix may be removed; an oversized target
+    fails instead of silently creating an all--100 sample.
+    """
+    source_text, answer_text = _assistant_parts(assistant_text)
+    messages = [
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "content": source_text + answer_text},
+    ]
+    core, stats = build_assistant_only_example_with_stats(
+        tokenizer, messages, max_length=max_length
+    )
+    input_ids = core["input_ids"]
+    labels = core["labels"]
+    assistant_start = next(
+        (index for index, label in enumerate(labels) if label != IGNORE_INDEX),
+        len(labels),
+    )
+    supervised_tokens = len(labels) - assistant_start
+    if supervised_tokens <= 0:
+        raise ValueError("History Answerer SFT invariant failed: zero supervised assistant tokens")
+    loss_weights = [0.0] * len(input_ids)
     source_ids = tokenizer(source_text, add_special_tokens=False)["input_ids"] if source_text else []
-    source_end = assistant_start + min(len(source_ids), len(tail))
+    source_end = assistant_start + min(len(source_ids), supervised_tokens)
 
     for idx in range(assistant_start, len(input_ids)):
-        labels[idx] = input_ids[idx]
         loss_weights[idx] = source_weight if idx < source_end else answer_weight
 
     return {
         "input_ids": input_ids,
-        "attention_mask": [1] * len(input_ids),
+        "attention_mask": core["attention_mask"],
         "labels": labels,
         "loss_weights": loss_weights,
-    }
+    }, stats
 
 
 def build_instruction_training_example(
@@ -80,14 +117,21 @@ def build_instruction_training_example(
     analysis_weight: float = 0.5,
     final_weight: float = 1.0,
 ) -> dict[str, list[int] | list[float]]:
-    full_text = _apply_chat_template(tokenizer, user_text, assistant_text)
-    assistant_prefix = _assistant_generation_prefix(tokenizer, user_text)
-    prefix_ids = tokenizer(assistant_prefix, add_special_tokens=False)["input_ids"]
-    encoded = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_length)
-    input_ids = encoded["input_ids"]
-    labels = [IGNORE_INDEX] * len(input_ids)
+    core, _ = build_assistant_only_example_with_stats(
+        tokenizer,
+        [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": assistant_text},
+        ],
+        max_length=max_length,
+    )
+    input_ids = core["input_ids"]
+    labels = core["labels"]
     loss_weights = [0.0] * len(input_ids)
-    assistant_start = min(len(prefix_ids), len(input_ids))
+    assistant_start = next(
+        (index for index, label in enumerate(labels) if label != IGNORE_INDEX),
+        len(labels),
+    )
 
     analysis_token = tokenizer("<analysis>", add_special_tokens=False)["input_ids"]
     final_token = tokenizer("<final>", add_special_tokens=False)["input_ids"]
@@ -104,7 +148,6 @@ def build_instruction_training_example(
     final_pos = find_subseq(tail, final_token)
     analysis_pos = find_subseq(tail, analysis_token)
     for idx in range(assistant_start, len(input_ids)):
-        labels[idx] = input_ids[idx]
         relative = idx - assistant_start
         if analysis_pos is not None and (final_pos is None or relative < final_pos):
             loss_weights[idx] = analysis_weight
@@ -113,7 +156,7 @@ def build_instruction_training_example(
 
     return {
         "input_ids": input_ids,
-        "attention_mask": [1] * len(input_ids),
+        "attention_mask": core["attention_mask"],
         "labels": labels,
         "loss_weights": loss_weights,
     }

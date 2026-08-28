@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.agents.model_registry import SHARED_BASE_MODEL_ID
 
 
 class Settings(BaseSettings):
@@ -24,10 +25,15 @@ class Settings(BaseSettings):
     artifact_root: Path = Path("./artifacts/vn_history_deployment")
     device: Literal["cpu", "cuda"] = "cpu"
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
-    research_agent_model: str = "Qwen/Qwen3-4B-Instruct-2507"
+    llm_backend: Literal["legacy-merged", "transformers", "vllm"] = "transformers"
+    shared_base_model_id: str = SHARED_BASE_MODEL_ID
+    research_agent_model: str = SHARED_BASE_MODEL_ID
     research_agent_adapter_path: Path | None = None
-    evidence_agent_model: str = "Qwen/Qwen3-4B-Instruct-2507"
+    evidence_agent_model: str = SHARED_BASE_MODEL_ID
     evidence_agent_adapter_path: Path | None = None
+    history_agent_adapter_path: Path | None = None
+    vllm_base_url: str = "http://127.0.0.1:8001/v1"
+    vllm_api_key: str | None = None
     history_model_path: Path | None = None
     max_agent_steps: int = 6
     max_web_searches: int = 3
@@ -66,6 +72,7 @@ class Settings(BaseSettings):
     @field_validator(
         "research_agent_adapter_path",
         "evidence_agent_adapter_path",
+        "history_agent_adapter_path",
         "history_model_path",
         mode="before",
     )
@@ -110,6 +117,10 @@ class Settings(BaseSettings):
     @property
     def should_load_model(self) -> bool:
         return self.app_mode == "full"
+
+    @property
+    def uses_shared_backend(self) -> bool:
+        return self.should_load_model and self.llm_backend in {"transformers", "vllm"}
 
     # ========================================================
     # Deployment artifact paths
@@ -168,12 +179,16 @@ class Settings(BaseSettings):
         ]
 
     def required_full_paths(self) -> list[Path]:
-        paths = [*self.required_retrieval_paths(), self.model_path]
-        if self.agent_controller == "model":
+        paths = [*self.required_retrieval_paths()]
+        if self.llm_backend == "legacy-merged":
+            paths.append(self.model_path)
+        elif self.llm_backend == "transformers":
             if self.research_agent_adapter_path is not None:
                 paths.append(self.research_agent_adapter_path)
             if self.evidence_agent_adapter_path is not None:
                 paths.append(self.evidence_agent_adapter_path)
+            if self.history_agent_adapter_path is not None:
+                paths.append(self.history_agent_adapter_path)
         return paths
 
 

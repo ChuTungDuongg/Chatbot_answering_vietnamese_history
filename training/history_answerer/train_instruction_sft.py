@@ -9,7 +9,7 @@ from training.history_answerer.config import Phase1Config
 
 def build_parser() -> argparse.ArgumentParser:
     cfg = Phase1Config()
-    parser = argparse.ArgumentParser(description="Phase 1 instruction SFT for Qwen2.5 history answerer.")
+    parser = argparse.ArgumentParser(description="Legacy Phase 1 instruction SFT for the Qwen2.5 baseline.")
     parser.add_argument("--dataset", default="Dataset/merged_jsonl/all_messages.jsonl")
     parser.add_argument("--output-dir", default="artifacts/training/history_answerer/phase1_sft")
     parser.add_argument("--model-id", default=cfg.model_id)

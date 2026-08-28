@@ -8,24 +8,23 @@ Git chỉ giữ tài liệu contract. Model weights, corpus và indexes thật b
 
 ```text
 artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
-├── history_answerer/
-│   ├── model/                         # vanilla Qwen2.5 + merged Phase 6 adapter
-│   └── adapter/                       # optional, không cần nếu model đã merge
-├── research_agent/
-│   └── adapter/                       # Qwen3 Research LoRA
-├── evidence_agent/
-│   └── adapter/                       # Qwen3 Evidence LoRA
+├── adapters/
+│   ├── research/                      # Qwen3 Research LoRA
+│   ├── evidence/                      # Qwen3 Evidence LoRA
+│   └── history/                       # fresh Qwen3 History LoRA
 ├── retrieval/
 │   ├── faiss/chunks.index
 │   ├── faiss/manifest.json
 │   └── bm25s_index/
 ├── corpus/vn_history_rag_chunks_enriched.jsonl
 ├── config/inference_config.json
+├── config/model_registry.json
+├── legacy/qwen25_history/model/       # optional benchmark-only baseline
 ├── manifest.json
 └── EXPORT_SUCCESS.txt
 ```
 
-Trên Modal, Volume được mount trực tiếp ở `/artifacts`; vì vậy `/artifacts/history_answerer/model` là model path, không lồng thêm thư mục `vn_history_deployment`.
+Trên Modal, Volume được mount trực tiếp ở `/artifacts`. Shared Qwen3 base tải/cache một lần ở `/hf-cache`; artifact không chứa ba bản sao base weights.
 
 ## 🧱 Artifact theo mode
 
@@ -33,18 +32,19 @@ Trên Modal, Volume được mount trực tiếp ở `/artifacts`; vì vậy `/a
 |---|---|
 | `api-only` | Không artifact. |
 | `retrieval-only` | corpus, config, manifest, FAISS, BM25S. |
-| `full` + deterministic | retrieval artifacts + History model. |
-| `full` + model | toàn bộ layout ba model. |
+| `full` + `legacy-merged` | retrieval artifacts + legacy History model (baseline only). |
+| `full` + `transformers` | retrieval artifacts + ba Qwen3 adapters. |
+| `full` + `vllm` | retrieval artifacts + endpoint đã phục vụ ba role names. |
 
-Research và Evidence adapter dùng cùng `Qwen/Qwen3-4B-Instruct-2507` base mặc định. Base tải vào `/hf-cache`; không duplicate nó trong artifact Volume.
+Cả Research, Evidence và History adapter phải khai báo cùng `Qwen/Qwen3-4B-Instruct-2507`; exporter/runtime fail sớm khi metadata lệch base.
 
 ## 🏗️ Tạo bundle
 
 ```bash
 python -m training.scripts.export_artifacts \
-  --model-dir outputs/history_answerer/merged \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
+  --history-agent outputs/history-answerer-full/adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -68,7 +68,7 @@ Bỏ `--dry-run` khi danh sách lệnh đúng. CLI validate local path trước 
 modal volume ls vn-history-artifacts
 modal run modal_artifact_sanity.py
 modal run modal_runtime_sanity.py
-modal run full_modal_runtime_sanity.py
+modal run full_modal_runtime_sanity.py  # legacy Qwen2.5 layout only
 ```
 
 Artifact sanity kiểm tra layout, manifest/corpus count, index và ba model roles. Runtime sanity có thể tải model/GPU và phát sinh chi phí.
@@ -79,4 +79,4 @@ Artifact sanity kiểm tra layout, manifest/corpus count, index và ba model rol
 - Không sửa manifest để né validation.
 - Không force-add `.safetensors`, `.index`, corpus lớn hoặc SQLite vào Git.
 - Upload config mới cần restart/redeploy container; runtime không hot-reload config.
-- Sao lưu Volume trước khi dùng `modal_fix.py`; script đó có thể đổi shard files.
+- `modal_fix.py` và `full_modal_runtime_sanity.py` chỉ dành cho legacy merged-Qwen2.5 layout.

@@ -25,6 +25,69 @@ QUESTION_BLOCK_RE = re.compile(
 )
 REFERENCE_ID_RE = re.compile(r"(?m)^\s*\[([^\]\r\n]+)\]")
 
+NO_TOOL_FAMILIES: dict[str, list[str]] = {
+    "greeting": [
+        "Xin chào!", "Chào bạn nhé.", "Hello bạn!", "Chào buổi sáng.",
+        "Chào buổi chiều!", "Rất vui được gặp bạn.", "Có ai ở đây không?", "A lô, chào bạn.",
+    ],
+    "thanks": [
+        "Cảm ơn bạn.", "Cảm ơn nhiều nhé!", "Mình hiểu rồi, cảm ơn.", "Thông tin hữu ích lắm.",
+        "Tuyệt vời, cảm ơn bạn!", "Được rồi, xin cảm ơn.", "Cảm ơn vì đã hỗ trợ.", "Ổn rồi, cảm ơn nhé.",
+    ],
+    "farewell": [
+        "Tạm biệt.", "Hẹn gặp lại!", "Chào nhé, mình đi đây.", "Kết thúc ở đây nhé.",
+        "Bye bạn.", "Hẹn nói chuyện sau.", "Mình không hỏi thêm nữa.", "Chúc bạn một ngày tốt lành.",
+    ],
+    "capability": [
+        "Bạn làm được gì?", "Chatbot này dùng để làm gì?", "Bạn hỗ trợ chủ đề nào?", "Khả năng của bạn là gì?",
+        "Bạn có hỗ trợ câu hỏi lịch sử Việt Nam không?", "Tôi có thể nhờ bạn việc gì?", "Bạn là trợ lý kiểu gì?", "Phạm vi hỗ trợ của chatbot là gì?",
+    ],
+    "usage_help": [
+        "Hãy giải thích cách sử dụng chatbot này.", "Tôi nên đặt câu hỏi như thế nào?", "Cho tôi hướng dẫn sử dụng.", "Tôi có thể hỏi loại câu nào?",
+        "Hướng dẫn tôi cách đặt câu hỏi.", "Làm sao để hỏi cho rõ ý?", "Cho một mẫu câu hỏi phù hợp.", "Cách dùng tính năng tra cứu là gì?",
+    ],
+    "control": [
+        "Dừng lại nhé.", "Bỏ qua câu trước.", "Đừng tra cứu thêm.", "Hãy bắt đầu lại cuộc trò chuyện.",
+        "Chờ một chút.", "Tiếp tục khi tôi hỏi nhé.", "Không cần trả lời nữa.", "Xóa yêu cầu vừa rồi khỏi ngữ cảnh.",
+    ],
+    "acknowledgement": [
+        "Ừ, mình rõ rồi.", "Đồng ý.", "Được.", "OK nhé.",
+        "Mình đã hiểu.", "Rõ rồi.", "Chính xác.", "Tôi ghi nhận.",
+    ],
+    "repeat_reformat": [
+        "Hãy lặp lại câu trả lời vừa rồi.", "Viết ngắn hơn nội dung vừa trả lời.", "Đổi câu trả lời trên thành gạch đầu dòng.", "Diễn đạt lại phần vừa nói cho dễ hiểu.",
+        "Nhắc lại ý chính vừa nêu.", "Rút gọn câu trả lời trước.", "Định dạng lại phần trên.", "Viết lại câu vừa rồi theo cách trang trọng hơn.",
+    ],
+    "ui_help": [
+        "Nút gửi nằm ở đâu?", "Tôi tải tài liệu lên bằng cách nào?", "Làm sao mở cuộc trò chuyện mới?", "Tôi xem lại lịch sử chat ở đâu?",
+        "Làm sao đổi tên cuộc trò chuyện?", "Cách xóa một đoạn chat là gì?", "Tôi có thể đính kèm tệp không?", "Giao diện này có chế độ tối không?",
+    ],
+    "near_empty": [
+        "...", "?", "À.", "Ừm.", "Này.", "Alo?", "Thế nhé.", "OK.",
+    ],
+}
+
+BOUNDARY_FAMILIES: dict[str, list[str]] = {
+    "history_with_greeting": [
+        "Chào bạn, ai là Ngô Quyền?",
+        "Xin chào, Hội nghị Genève năm 1954 bàn về vấn đề gì?",
+        "Chào buổi sáng, chiến dịch Điện Biên Phủ kết thúc ngày nào?",
+        "Hello, khởi nghĩa Hương Khê do ai lãnh đạo?",
+    ],
+    "history_with_thanks": [
+        "Cảm ơn. Cho mình hỏi Điện Biên Phủ kết thúc ngày nào?",
+        "Cảm ơn bạn, nhân tiện Hiệp định Genève được ký khi nào?",
+        "Mình hiểu rồi, cảm ơn; ai chỉ huy trận Bạch Đằng năm 938?",
+        "Thông tin hữu ích lắm. Cho hỏi nhà Trần chống quân nào?",
+    ],
+    "history_with_help_prefix": [
+        "Bạn giúp mình với: Khởi nghĩa Hương Khê do ai lãnh đạo?",
+        "Chatbot này cho tôi biết ai lãnh đạo Điện Biên Phủ?",
+        "Cho tôi hỏi lịch sử: Bạch Đằng năm 938 chống quân nào?",
+        "Bạn có thể cho tôi biết Ngô Quyền sinh năm nào?",
+    ],
+}
+
 
 def extract_question_only(user_text: str) -> str:
     match = QUESTION_BLOCK_RE.search(user_text)
@@ -120,7 +183,8 @@ def _state(*, question: str, step: int, trajectory_class: str,
 
 def _sample(*, sample_id: str, original_id: str, group_id: str, trajectory_id: str,
             state: ResearchPolicyState, target: dict[str, Any], trajectory_class: str,
-            step: int, gold_source_ids: list[str], source_dataset: str = "vn_history_phase6") -> dict[str, Any]:
+            step: int, gold_source_ids: list[str], source_dataset: str = "vn_history_phase6",
+            synthetic: bool = False, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     del gold_source_ids  # Gold IDs may appear only in a post-observation action, never as hidden row metadata.
     return {
         "id": sample_id,
@@ -133,7 +197,8 @@ def _sample(*, sample_id: str, original_id: str, group_id: str, trajectory_id: s
         "trajectory_class": trajectory_class,
         "step": step,
         "grounded": True,
-        "synthetic": False,
+        "synthetic": synthetic,
+        "metadata": metadata or {},
         "messages": policy_messages(state, target),
         "training_prompt": state.model_dump(exclude_none=True),
         "training_target": target,
@@ -204,32 +269,64 @@ def build_trajectory(row: dict[str, Any], index: int = 0) -> dict[str, Any]:
 
 
 def build_no_tool_samples() -> list[dict[str, Any]]:
-    prompts = ["Xin chào!", "Bạn làm được gì?", "Hãy giải thích cách sử dụng chatbot này.", "Cảm ơn bạn."]
     rows = []
-    for index, question in enumerate(prompts, 1):
-        group_id = f"no-tool-{index:03d}"
-        state = _state(question=question, step=1, trajectory_class="no_tool", observations=[], evidence_ids=[])
-        rows.append(_sample(
-            sample_id=f"{group_id}-step-001", original_id=group_id, group_id=group_id,
-            trajectory_id=group_id, state=state,
-            target={"action": "finish", "sufficient": True, "missing_information": []},
-            trajectory_class="no_tool", step=1, gold_source_ids=[], source_dataset="no_tool_seed",
-        ))
+    for category, prompts in NO_TOOL_FAMILIES.items():
+        group_id = f"no-tool-{category.replace('_', '-')}"
+        for index, question in enumerate(prompts, 1):
+            trajectory_id = f"{group_id}-{index:03d}"
+            state = _state(question=question, step=1, trajectory_class="no_tool", observations=[], evidence_ids=[])
+            rows.append(_sample(
+                sample_id=f"{trajectory_id}-step-001", original_id=trajectory_id, group_id=group_id,
+                trajectory_id=trajectory_id, state=state,
+                target={"action": "finish", "sufficient": True, "missing_information": []},
+                trajectory_class="no_tool", step=1, gold_source_ids=[], source_dataset="no_tool_v23",
+                synthetic=True,
+                metadata={"no_tool_category": category, "semantic_group": group_id},
+            ))
     return rows
 
 
-def build_history_dataset(source_rows: list[dict[str, Any]], *, include_no_tool: bool = True) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def build_boundary_samples() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for category, prompts in BOUNDARY_FAMILIES.items():
+        group_id = f"boundary-{category.replace('_', '-')}"
+        for index, question in enumerate(prompts, 1):
+            trajectory_id = f"{group_id}-{index:03d}"
+            state = _state(question=question, step=1, trajectory_class="local_only", observations=[], evidence_ids=[])
+            rows.append(_sample(
+                sample_id=f"{trajectory_id}-step-001", original_id=trajectory_id, group_id=group_id,
+                trajectory_id=trajectory_id, state=state,
+                target={"action": "tool", "tool_name": "search_history", "arguments": {"query": question, "top_k": 8}},
+                trajectory_class="local_only", step=1, gold_source_ids=[], source_dataset="policy_boundary_v23",
+                synthetic=True,
+                metadata={"boundary_category": category, "semantic_group": group_id},
+            ))
+    return rows
+
+
+def build_history_dataset(
+    source_rows: list[dict[str, Any]], *, include_no_tool: bool = True, include_boundaries: bool | None = None
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Build all rows while deduplicating only byte-for-byte-equivalent JSON objects."""
     stats = source_dataset_statistics(source_rows)
+    if include_boundaries is None:
+        include_boundaries = include_no_tool
     seen_source_hashes: set[str] = set()
     seen_trajectory_ids: set[str] = set()
     output: list[dict[str, Any]] = []
+    malformed_source_rows = 0
     for row in source_rows:
         source_hash = stable_source_row_hash(row)
         if source_hash in seen_source_hashes:
             continue
         seen_source_hashes.add(source_hash)
-        samples = build_trajectory_samples(row)
+        try:
+            samples = build_trajectory_samples(row)
+        except ValueError as exc:
+            if "gold source IDs are absent" not in str(exc):
+                raise
+            malformed_source_rows += 1
+            continue
         trajectory_id = str(samples[0]["trajectory_id"])
         if trajectory_id in seen_trajectory_ids:
             raise ValueError(f"deterministic trajectory ID collision: {trajectory_id}")
@@ -242,14 +339,25 @@ def build_history_dataset(source_rows: list[dict[str, Any]], *, include_no_tool:
         if overlap:
             raise ValueError(f"history/no-tool trajectory ID collision: {sorted(overlap)}")
         output.extend(no_tool_rows)
+    if include_boundaries:
+        boundary_rows = build_boundary_samples()
+        boundary_ids = {str(row["trajectory_id"]) for row in boundary_rows}
+        overlap = seen_trajectory_ids & boundary_ids
+        if overlap:
+            raise ValueError(f"history/boundary trajectory ID collision: {sorted(overlap)}")
+        output.extend(boundary_rows)
+    stats["no_tool_rows"] = sum(row["trajectory_class"] == "no_tool" for row in output)
+    stats["boundary_rows"] = sum(row["source_dataset"] == "policy_boundary_v23" for row in output)
+    stats["malformed_source_rows"] = malformed_source_rows
     return output, stats
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Create grounded, unrolled VN-history policy trajectories.")
     parser.add_argument("--input", default="Dataset/merged_jsonl/all_messages.jsonl")
-    parser.add_argument("--output", default="artifacts/training/research_agent/history_trajectories.jsonl")
+    parser.add_argument("--output", default="datasets/research_agent/history_trajectories.jsonl")
     parser.add_argument("--include-no-tool", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--include-boundaries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-source-rows", type=int, default=None)
     return parser
 
@@ -259,7 +367,11 @@ def main(argv: list[str] | None = None) -> int:
     source_rows = load_messages(args.input)
     if args.max_source_rows is not None:
         source_rows = source_rows[: max(args.max_source_rows, 0)]
-    rows, stats = build_history_dataset(source_rows, include_no_tool=args.include_no_tool)
+    rows, stats = build_history_dataset(
+        source_rows,
+        include_no_tool=args.include_no_tool,
+        include_boundaries=args.include_boundaries,
+    )
     print(json.dumps(stats, ensure_ascii=False, sort_keys=True))
     print(f"Wrote {write_jsonl(args.output, rows)} grounded state-action rows to {args.output}")
     return 0

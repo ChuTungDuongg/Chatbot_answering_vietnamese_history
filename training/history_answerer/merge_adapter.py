@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from training.history_answerer.config import BASE_MODEL_ID
+from app.agents.model_registry import adapter_declared_base
 
 
 def merge_lora_adapter(
@@ -14,6 +15,11 @@ def merge_lora_adapter(
     dtype: str = "bfloat16",
     trust_remote_code: bool = True,
 ) -> Path:
+    declared_base = adapter_declared_base(adapter)
+    if declared_base != model_id:
+        raise ValueError(
+            f"cannot merge adapter trained for {declared_base!r} into base {model_id!r}"
+        )
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer

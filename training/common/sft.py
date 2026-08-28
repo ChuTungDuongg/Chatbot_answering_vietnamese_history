@@ -40,7 +40,7 @@ def build_assistant_only_example_with_stats(
     max_length: int,
 ) -> tuple[dict[str, list[int]], AssistantOnlyTokenStats]:
     """Tokenize a chat while preserving the complete final assistant target."""
-    if len(messages) < 3 or messages[-1].get("role") != "assistant":
+    if len(messages) < 2 or messages[-1].get("role") != "assistant":
         raise ValueError("assistant-only SFT requires a final assistant message")
     if max_length <= 0:
         raise ValueError("max_length must be positive")

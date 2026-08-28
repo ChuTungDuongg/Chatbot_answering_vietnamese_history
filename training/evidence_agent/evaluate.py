@@ -12,6 +12,7 @@ from app.agents.evidence_validation import (
 )
 from training.common.jsonl import read_jsonl
 from training.evidence_agent.conflicts import MODEL_VISIBLE_RESERVED_MARKERS
+from training.evidence_agent.coverage import assess_answer_coverage, audit_selected_evidence_set
 
 
 def _payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -48,6 +49,10 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
     grounded_claims = total_claims = 0
     grounded_compressed = total_compressed_grounding = 0
     synthetic_marker_rows = 0
+    coverage_cases = coverage_status_correct = selected_subset_sufficient_correct = 0
+    partial_cases = partial_retained = partial_missing_correct = 0
+    true_multi_cases = true_multi_recalled = 0
+    sufficient_prediction_cases = minimal_sufficient = redundant_selected = 0
 
     for pred_row, gold_row in zip(predictions[:count], gold[:count]):
         gold_output = EvidenceModelOutput.model_validate(_payload(gold_row))
@@ -79,6 +84,52 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
         f1_sum += f1
         predicted_selected += len(pred_ids)
         invented += len(pred_ids - set(candidates))
+
+        gold_answer = str((gold_row.get("metadata") or {}).get("gold_answer") or "")
+        if gold_answer:
+            pred_audit = audit_selected_evidence_set(
+                str(gold_row.get("question") or (gold_row.get("input") or {}).get("question") or ""),
+                gold_answer,
+                {
+                    evidence_id: str(candidates[evidence_id].get("text") or "")
+                    for evidence_id in pred_ids
+                    if evidence_id in candidates
+                },
+            )
+            gold_audit = audit_selected_evidence_set(
+                str(gold_row.get("question") or (gold_row.get("input") or {}).get("question") or ""),
+                gold_answer,
+                {
+                    evidence_id: str(candidates[evidence_id].get("text") or "")
+                    for evidence_id in gold_ids
+                    if evidence_id in candidates
+                },
+            )
+            coverage_cases += 1
+            coverage_status_correct += int(
+                (prediction.status == "sufficient") == pred_audit.complete
+            )
+            selected_subset_sufficient_correct += int(
+                pred_audit.complete == gold_audit.complete
+            )
+            if gold_row.get("behavior") == "partial":
+                partial_cases += 1
+                pred_coverage = assess_answer_coverage(
+                    str(gold_row.get("question") or ""),
+                    gold_answer,
+                    [str(candidates[item].get("text") or "") for item in pred_ids if item in candidates],
+                )
+                partial_retained += int(prediction.status == "insufficient" and pred_coverage.useful)
+                partial_missing_correct += int(
+                    set(prediction.missing_information) == set(gold_output.missing_information)
+                )
+            if len(gold_audit.minimal_ids) >= 2:
+                true_multi_cases += 1
+                true_multi_recalled += int(set(gold_audit.minimal_ids) <= pred_ids)
+            if prediction.status == "sufficient":
+                sufficient_prediction_cases += 1
+                minimal_sufficient += int(pred_audit.complete and not pred_audit.redundant_ids)
+                redundant_selected += int(bool(pred_audit.redundant_ids))
 
         if gold_row.get("behavior") == "duplicate":
             duplicate_cases += 1
@@ -150,6 +201,15 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
         ),
         "synthetic_marker_leakage_rate": ratio(synthetic_marker_rows, count),
         "missing_information_accuracy_proxy": ratio(missing_proxy_correct, count),
+        "answer_slot_coverage_accuracy": ratio(coverage_status_correct, coverage_cases),
+        "selected_subset_sufficiency_accuracy": ratio(
+            selected_subset_sufficient_correct, coverage_cases
+        ),
+        "partial_useful_evidence_retention_rate": ratio(partial_retained, partial_cases),
+        "partial_missing_slot_accuracy": ratio(partial_missing_correct, partial_cases),
+        "true_multi_evidence_recall": ratio(true_multi_recalled, true_multi_cases),
+        "minimal_sufficient_subset_rate": ratio(minimal_sufficient, sufficient_prediction_cases),
+        "redundant_evidence_selection_rate": ratio(redundant_selected, sufficient_prediction_cases),
         "compressed_text_nonempty_rate": ratio(compressed_nonempty, compressed_total),
         "compression_ratio": ratio(compressed_chars, original_chars),
         "semantic_grounding_metric": "normalized extractive containment per evidence_id",

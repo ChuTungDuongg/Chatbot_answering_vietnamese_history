@@ -14,6 +14,8 @@ def test_training_cli_help_smoke():
         "training.history_answerer.evaluate",
         "training.history_answerer.train_instruction_sft",
         "training.history_answerer.prepare_dataset",
+        "training.history_answerer.validate_dataset",
+        "training.history_answerer.preflight",
         "training.research_agent.prepare_dataset",
         "training.research_agent.build_history_trajectories",
         "training.research_agent.train",
@@ -54,6 +56,11 @@ def test_history_rag_sft_starts_from_vanilla_base():
     help_text = run_help("training.history_answerer.train").stdout
     assert "--phase1-adapter" not in help_text
     assert "--merged-base-dir" not in help_text
+
+
+def test_research_exposes_corrective_adapter_mode():
+    help_text = run_help("training.research_agent.train").stdout
+    assert "--init-adapter" in help_text
 
 
 

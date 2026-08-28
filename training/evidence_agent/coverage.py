@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import itertools
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
@@ -67,6 +68,22 @@ class CoverageAssessment:
         }
 
 
+@dataclass(frozen=True)
+class SelectedSetAudit:
+    selected_ids: tuple[str, ...]
+    item_supported_keys: dict[str, tuple[str, ...]]
+    supported_keys: tuple[str, ...]
+    missing_keys: tuple[str, ...]
+    necessary_ids: tuple[str, ...]
+    redundant_ids: tuple[str, ...]
+    irrelevant_ids: tuple[str, ...]
+    minimal_ids: tuple[str, ...]
+    complete: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 def accentfold(text: str) -> str:
     normalized = unicodedata.normalize("NFD", str(text).casefold().replace("đ", "d"))
     return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
@@ -94,6 +111,17 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
     folded = accentfold(question)
     raw = question.casefold()
     slots: list[tuple[str, str, tuple[str, ...]]] = []
+
+    relation_question = bool(
+        re.search(
+            r"\b(?:quan he|lien quan|anh huong|tac dong).{0,80}(?:voi|giua|den)\b|"
+            r"\b(?:khac|giong)\b.{0,80}\bnhu the nao\b",
+            folded,
+        )
+    )
+    if relation_question:
+        slots.append(_slot("relation_context", "bối cảnh hoặc sự kiện được đem ra liên hệ", content_tokens(question)))
+        slots.append(_slot("relation", "mối liên hệ trực tiếp giữa các đối tượng được hỏi", ["quan hệ liên quan dẫn đến bối cảnh tác động ảnh hưởng"]))
 
     impact_match = re.search(r"doi voi\s+(.+?)\s+va\s+(.+?)(?:\?|$)", folded)
     if impact_match:
@@ -128,7 +156,9 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
         slots.append(_slot("cause", "nguyên nhân được hỏi", ["nguyên nhân vì bởi do"] ))
     if not impact_match and re.search(r"\by nghia\b", folded):
         slots.append(_slot("significance", "ý nghĩa được hỏi", ["ý nghĩa tác động vai trò"] ))
-    if re.search(r"\bdien bien\b", folded):
+    # Keep the Vietnamese diacritic here so the question type "diễn biến"
+    # cannot be confused with the proper noun "Điện Biên".
+    if re.search(r"\bdiễn\s+biến\b", raw):
         slots.append(_slot("development", "diễn biến được hỏi", ["diễn biến tiến triển"] ))
     if not impact_match and re.search(r"\bket qua\b", folded):
         slots.append(_slot("result", "kết quả được hỏi", ["kết quả dẫn đến đạt được"] ))
@@ -140,6 +170,12 @@ def question_slots(question: str) -> list[tuple[str, str, tuple[str, ...]]]:
         slots.append(_slot("count", "số lượng được hỏi", ["số lượng bao nhiêu"] ))
     if re.search(r"\b(?:su kien nao|tran nao|chien dich nao)\b", folded):
         slots.append(_slot("event", "sự kiện được hỏi", ["sự kiện trận chiến dịch"] ))
+    if re.search(r"\b(?:ban ve|noi dung gi|van de gi|chu de gi)\b", folded):
+        slots.append(_slot("topic", "nội dung hoặc vấn đề được hỏi", ["bàn về nội dung vấn đề chủ đề"] ))
+    if re.search(r"\b(?:chuc nang|cong dung|dung de lam gi)\b", folded):
+        slots.append(_slot("function", "chức năng hoặc công dụng được hỏi", ["chức năng công dụng dùng để"] ))
+    if re.search(r"\b(?:la ai|la gi|dinh nghia|danh tinh)\b", folded) and not slots:
+        slots.append(_slot("identity", "danh tính hoặc định nghĩa được hỏi", ["là danh tính định nghĩa"] ))
 
     unique: dict[str, tuple[str, str, tuple[str, ...]]] = {}
     for item in slots:
@@ -172,6 +208,14 @@ def _slot_cues(key: str) -> set[str]:
         "position": {"chuc vu", "phong", "giu"},
         "count": {"so luong", "bao nhieu", "quan", "nguoi", "lan"},
         "event": {"su kien", "tran", "chien dich"},
+        "topic": {"ban ve", "noi dung", "van de", "chu de", "hoa binh", "giai quyet"},
+        "function": {"chuc nang", "cong dung", "dung de", "nham"},
+        "identity": {" la ", "duoc goi", "nhan vat"},
+        "relation_context": set(),
+        "relation": {
+            "quan he", "lien quan", "boi canh", "dan den", "tao dieu kien", "tac dong",
+            "anh huong", "sau that bai", "gan voi", "thuc day", "buoc",
+        },
     }.get(key, set())
 
 
@@ -256,6 +300,13 @@ def requirement_supported(
     if not fragment_values:
         fragment_values = content_tokens(requirement.answer_fragment)
     evidence_values = content_tokens(evidence_text)
+    if requirement.key == "relation_context":
+        question_entities = content_tokens(question)
+        return len(question_entities & evidence_values) >= min(2, max(len(question_entities), 1))
+    if requirement.key == "relation":
+        relation_cues = _slot_cues("relation")
+        if not any(cue in padded_evidence for cue in relation_cues):
+            return False
     numeric_values = set(re.findall(r"\b\d{1,4}\b", fragment_folded)) - set(re.findall(r"\b\d{1,4}\b", accentfold(question)))
     if numeric_values and not numeric_values <= set(re.findall(r"\b\d{1,4}\b", evidence_folded)):
         return False
@@ -267,12 +318,75 @@ def requirement_supported(
 
 def assess_answer_coverage(question: str, gold_answer: str, evidence_texts: Iterable[str]) -> CoverageAssessment:
     requirements = extract_answer_requirements(question, gold_answer)
-    combined = "\n".join(str(item) for item in evidence_texts if str(item).strip())
+    texts = [str(item) for item in evidence_texts if str(item).strip()]
     supported = tuple(
-        item.key for item in requirements if requirement_supported(item, question=question, evidence_text=combined)
+        item.key
+        for item in requirements
+        if any(requirement_supported(item, question=question, evidence_text=text) for text in texts)
     )
     missing = tuple(item.key for item in requirements if item.key not in supported)
     return CoverageAssessment(requirements=requirements, supported_keys=supported, missing_keys=missing)
+
+
+def audit_selected_evidence_set(
+    question: str,
+    gold_answer: str,
+    selected: dict[str, str],
+) -> SelectedSetAudit:
+    """Audit collective coverage and find a deterministic minimal sufficient subset."""
+    requirements = extract_answer_requirements(question, gold_answer)
+    requirement_keys = tuple(item.key for item in requirements)
+    item_supported = {
+        evidence_id: tuple(
+            item.key
+            for item in requirements
+            if requirement_supported(item, question=question, evidence_text=text)
+        )
+        for evidence_id, text in selected.items()
+    }
+
+    def coverage(ids: Iterable[str]) -> set[str]:
+        result: set[str] = set()
+        for evidence_id in ids:
+            result.update(item_supported.get(evidence_id, ()))
+        return result
+
+    selected_ids = tuple(selected)
+    full_coverage = coverage(selected_ids)
+    required = set(requirement_keys)
+    complete = bool(required) and required <= full_coverage
+    irrelevant = tuple(evidence_id for evidence_id in selected_ids if not item_supported[evidence_id])
+    necessary: list[str] = []
+    redundant: list[str] = []
+    if complete:
+        for evidence_id in selected_ids:
+            if required <= coverage(item for item in selected_ids if item != evidence_id):
+                redundant.append(evidence_id)
+            else:
+                necessary.append(evidence_id)
+
+    minimal = selected_ids
+    if complete:
+        for size in range(1, len(selected_ids) + 1):
+            candidates = [
+                subset
+                for subset in itertools.combinations(selected_ids, size)
+                if required <= coverage(subset)
+            ]
+            if candidates:
+                minimal = min(candidates)
+                break
+    return SelectedSetAudit(
+        selected_ids=selected_ids,
+        item_supported_keys=item_supported,
+        supported_keys=tuple(key for key in requirement_keys if key in full_coverage),
+        missing_keys=tuple(key for key in requirement_keys if key not in full_coverage),
+        necessary_ids=tuple(necessary),
+        redundant_ids=tuple(redundant),
+        irrelevant_ids=irrelevant,
+        minimal_ids=minimal,
+        complete=complete,
+    )
 
 
 def specific_missing_information(assessment: CoverageAssessment) -> list[str]:

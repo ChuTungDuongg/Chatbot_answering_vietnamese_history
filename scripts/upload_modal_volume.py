@@ -14,11 +14,11 @@ class Upload:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate and upload the three agent models plus retrieval artifacts to Modal Volume."
+        description="Validate and upload three Qwen3 role adapters plus retrieval artifacts to Modal Volume."
     )
     parser.add_argument("--volume", required=True, help="Existing Modal Volume name.")
-    parser.add_argument("--history-model", help="Merged History Answerer model directory.")
-    parser.add_argument("--history-adapter", help="Optional unmerged History Answerer adapter directory.")
+    parser.add_argument("--history-model", help="Optional legacy Qwen2.5 benchmark model directory.")
+    parser.add_argument("--history-adapter", help="Fresh Qwen3 History Answerer adapter directory.")
     parser.add_argument("--research-agent", help="Research Agent LoRA adapter directory.")
     parser.add_argument("--evidence-agent", help="Evidence Agent LoRA adapter directory.")
     parser.add_argument("--retrieval-dir", help="Directory containing faiss/ and bm25s_index/.")
@@ -67,7 +67,7 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
         ]
 
     required = {
-        "--history-model": args.history_model,
+        "--history-adapter": args.history_adapter,
         "--research-agent": args.research_agent,
         "--evidence-agent": args.evidence_agent,
         "--retrieval-dir": args.retrieval_dir,
@@ -80,9 +80,9 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
         raise ValueError(f"Missing component upload flags: {', '.join(missing)}")
 
     uploads = [
-        Upload(_validated(args.history_model, label="history model", directory=True), "/history_answerer/model"),
-        Upload(_validated(args.research_agent, label="research adapter", directory=True), "/research_agent/adapter"),
-        Upload(_validated(args.evidence_agent, label="evidence adapter", directory=True), "/evidence_agent/adapter"),
+        Upload(_validated(args.history_adapter, label="history adapter", directory=True), "/adapters/history"),
+        Upload(_validated(args.research_agent, label="research adapter", directory=True), "/adapters/research"),
+        Upload(_validated(args.evidence_agent, label="evidence adapter", directory=True), "/adapters/evidence"),
         Upload(_validated(args.retrieval_dir, label="retrieval directory", directory=True), "/retrieval"),
         Upload(_validated(args.corpus, label="corpus", directory=False), "/corpus/vn_history_rag_chunks_enriched.jsonl"),
         Upload(_validated(args.config_dir, label="config directory", directory=True), "/config"),
@@ -91,9 +91,9 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
     success_marker = Path(args.manifest).expanduser().resolve().with_name("EXPORT_SUCCESS.txt")
     if success_marker.is_file():
         uploads.append(Upload(success_marker, "/EXPORT_SUCCESS.txt"))
-    if args.history_adapter:
+    if args.history_model:
         uploads.append(
-            Upload(_validated(args.history_adapter, label="history adapter", directory=True), "/history_answerer/adapter")
+            Upload(_validated(args.history_model, label="legacy history model", directory=True), "/legacy/qwen25_history/model")
         )
     return uploads
 

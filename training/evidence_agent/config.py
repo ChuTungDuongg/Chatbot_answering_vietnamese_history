@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from training.common.qlora import LoRASettings
+from app.agents.model_registry import SHARED_BASE_MODEL_ID
 
 
 @dataclass(frozen=True)
 class EvidenceAgentConfig:
-    model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_id: str = SHARED_BASE_MODEL_ID
     max_length: int = 4096
     epochs: int = 3
     train_batch_size: int = 4

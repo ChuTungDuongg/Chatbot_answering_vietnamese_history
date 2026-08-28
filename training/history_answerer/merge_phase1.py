@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from training.history_answerer.config import BASE_MODEL_ID
+from training.history_answerer.config import LEGACY_BASE_MODEL_ID
 from training.history_answerer.merge_adapter import merge_lora_adapter
 
 
@@ -20,7 +20,7 @@ def merge_phase1_adapter(*, model_id, phase1_adapter, output_dir, dtype="bfloat1
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Legacy: merge a Phase 1 LoRA adapter.")
-    parser.add_argument("--model-id", default=BASE_MODEL_ID)
+    parser.add_argument("--model-id", default=LEGACY_BASE_MODEL_ID)
     parser.add_argument("--phase1-adapter", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])

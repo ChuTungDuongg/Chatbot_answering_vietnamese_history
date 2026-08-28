@@ -13,7 +13,8 @@ Nguồn dữ liệu được tách stage rõ ràng:
 - xLAM → `generic_tool_use`: function calling tổng quát; converter đọc đúng `query/tools/answers` JSON strings và giữ toàn bộ parallel calls.
 - AgentInstruct → `multi_step_agent`: chỉ subset có environment mapping chắc chắn. Hiện hỗ trợ split `os` với action `bash`; split khác bị skip và report, không suy diễn tool call.
 - VN History Phase 6 → `history_policy`: câu hỏi được tách khỏi `Tài liệu tham khảo`, recorded IDs chỉ xuất hiện sau observation thật, trajectory được unroll theo từng state → action.
-- no-tool seed → greeting, capability, usage và thanks; false-premise history question không được xem là no-tool.
+- no-tool V2.3 → 10 semantic families (greeting, thanks, farewell, capability, usage help, control, acknowledgement, reformat/repeat, UI help, near-empty) được group để paraphrase không cross split.
+- policy boundary V2.3 → greeting/thanks/help prefix đi kèm câu hỏi lịch sử vẫn bắt buộc `search_history`; false-premise history question cũng không được xem là no-tool.
 
 Khuyến nghị train hai stage thay vì trộn ngầm:
 
@@ -49,7 +50,7 @@ python -m training.research_agent.build_history_trajectories \
   --output datasets/research_agent/history_trajectories.jsonl
 ```
 
-Builder không gọi web. Vì vậy nó không tạo fake web success/conflict; recorded Phase-6 references được dùng như kết quả local retrieval đã quan sát. `false_premise` vẫn đi qua `search_history` để kiểm chứng.
+Builder không gọi web. Nó thêm 80 no-tool rows và 12 conversational-prefix hard negatives, nhưng giữ recorded Phase-6 state machine `search → inspect → finish`. Các source row có gold ID vắng khỏi input bị loại thay vì remap.
 
 ## Pre-training validation
 
@@ -58,7 +59,8 @@ python -m training.research_agent.validate_dataset \
   --dataset datasets/research_agent/history_trajectories.jsonl
 
 python -m training.research_agent.preflight \
-  --dataset datasets/research_agent/history_trajectories.jsonl
+  --dataset datasets/research_agent/history_trajectories.jsonl \
+  --tokenizer-id Qwen/Qwen3-4B-Instruct-2507
 
 python -m training.research_agent.train \
   --dataset datasets/research_agent/history_trajectories.jsonl \
@@ -67,7 +69,7 @@ python -m training.research_agent.train \
   --dry-run
 ```
 
-Validator trả exit code 2 khi JSONL/schema/action/tool/argument/evidence causality/ID/trajectory ordering sai. Dry-run deterministic-shuffle theo group trước khi `--max-samples`, split toàn trajectory/question group cùng partition và ghi `split_manifest.json`. Nó không tải model.
+Validator còn báo no-tool percentage/category, boundary hard negatives, per-split no-tool, semantic-family overlap và group leakage. Preflight/dry-run tải tokenizer nhưng không tải Qwen weights; cả hai fail nếu target rỗng hoặc zero-supervised.
 
 ## Precision trên Colab
 
@@ -95,6 +97,8 @@ python -m training.research_agent.train \
 
 QLoRA dùng NF4 4-bit, double quantization và LoRA attention/MLP. Research Agent dùng assistant-only CE utility trong `training/common/sft.py`, không phụ thuộc History Answerer loss.
 
+Vì policy lịch sử hiện tại đã giữ tốt factual search, false-premise và `search → inspect → finish`, lựa chọn mặc định cho đợt sửa no-tool là corrective run từ Research adapter hiện có, trộn toàn bộ history trajectories với 80 no-tool + 12 boundary rows, LR khởi điểm `2e-5`, 1–2 epochs. Dùng `--init-adapter` để nạp PEFT weights với optimizer/scheduler mới; không dùng cùng `--resume-from-checkpoint`. Theo dõi riêng search recall và no-tool F1 để chống quên hành vi retrieval tốt.
+
 ## Evaluation
 
 ```bash
@@ -103,4 +107,4 @@ python -m training.research_agent.evaluate \
   --predictions predictions/research_agent.jsonl
 ```
 
-Report gồm parse rate, tool selection, argument validity, unknown tool, finish/no-tool accuracy, unnecessary web search, budget violation, exact sequence và trajectory success theo class. `trajectory_success_rate` hiện là offline proxy; environment success thật cần integration evaluation riêng.
+Report gồm action accuracy, no-tool precision/recall/F1, history-search recall, conversational-prefix accuracy, meta no-tool, false-premise initial search, search→inspect, inspect→finish, schema validity và exact trajectory proxy.

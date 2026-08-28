@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.model_runtime import RoleLLMBackend
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceModelOutput, SelectedEvidence
 from app.agents.evidence_validation import (
@@ -24,7 +24,7 @@ class EvidenceCriticAgent:
         self,
         *,
         max_contexts: int = 8,
-        model_runtime: SharedAgentModelRuntime | None = None,
+        model_runtime: RoleLLMBackend | None = None,
         allow_model_fallback: bool = False,
     ):
         self.max_contexts = max_contexts

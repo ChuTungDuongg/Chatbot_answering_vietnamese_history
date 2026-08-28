@@ -3,14 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from training.common.qlora import LoRASettings
+from app.agents.model_registry import LEGACY_HISTORY_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 
 
-BASE_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+# Active Phase-6/History Answerer training starts fresh from Qwen3.  The old
+# Qwen2.5 identity is retained only for Phase-1 compatibility and benchmarks.
+BASE_MODEL_ID = SHARED_BASE_MODEL_ID
+LEGACY_BASE_MODEL_ID = LEGACY_HISTORY_BASE_MODEL_ID
 
 
 @dataclass(frozen=True)
 class Phase1Config:
-    model_id: str = BASE_MODEL_ID
+    model_id: str = LEGACY_BASE_MODEL_ID
     max_length: int = 1024
     max_samples: int | None = 100_000
     train_ratio: float = 0.90
@@ -33,13 +37,15 @@ class Phase1Config:
 class Phase6Config:
     model_id: str = BASE_MODEL_ID
     max_length: int = 4096
-    train_ratio: float = 0.90
-    eval_ratio: float = 0.05
-    epochs: int = 5
+    # Three whole groups per holdout are the minimum needed for all four
+    # Phase-6 behavior types under the canonical source grouping.
+    train_ratio: float = 0.85
+    eval_ratio: float = 0.075
+    epochs: int = 3
     train_batch_size: int = 2
     eval_batch_size: int = 2
     gradient_accumulation_steps: int = 8
-    learning_rate: float = 1.5e-4
+    learning_rate: float = 1.0e-4
     weight_decay: float = 0.01
     warmup_ratio: float = 0.05
     logging_steps: int = 10

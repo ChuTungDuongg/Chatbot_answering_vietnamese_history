@@ -14,6 +14,7 @@ from training.common.datasets import first_user_assistant, load_messages
 from training.common.jsonl import write_jsonl
 from training.evidence_agent.coverage import (
     CoverageAssessment,
+    audit_selected_evidence_set,
     assess_answer_coverage,
     evidence_relevance,
     specific_missing_information,
@@ -34,6 +35,71 @@ GENERIC_SUMMARIES = {
     "Evidence đã được lọc từ context huấn luyện.",
     "Evidence không đủ.",
 }
+
+
+def v23_source_fixtures() -> list[dict[str, Any]]:
+    """Small grounded fixtures for coverage boundaries absent from legacy Phase-6 data."""
+
+    def row(
+        row_id: str,
+        question: str,
+        evidence: list[tuple[str, str, str]],
+        selected_ids: list[str],
+        answer: str,
+    ) -> dict[str, Any]:
+        context = "\n\n".join(f"[{evidence_id}] {title}\n{text}" for evidence_id, title, text in evidence)
+        citations = " ".join(f"[{evidence_id}]" for evidence_id in selected_ids)
+        return {
+            "id": row_id,
+            "type": "grounded_qa",
+            "source_dataset": "evidence_v23_fixture",
+            "messages": [
+                {"role": "user", "content": f"Câu hỏi:\n{question}\n\nTài liệu tham khảo:\n{context}"},
+                {"role": "assistant", "content": f"Nguồn được dùng: {citations}\n\nTrả lời:\n{answer}"},
+            ],
+        }
+
+    return [
+        row(
+            "v23-date-topic",
+            "Chiến dịch Điện Biên Phủ kết thúc vào ngày nào và Hội nghị Genève năm 1954 bàn về vấn đề gì?",
+            [
+                ("ev_31f9a040", "Điện Biên Phủ", "Chiến dịch Điện Biên Phủ kết thúc thắng lợi ngày 7 tháng 5 năm 1954."),
+                ("ev_31f9a041", "Hội nghị Genève", "Hội nghị Genève năm 1954 bàn về việc lập lại hòa bình ở Đông Dương."),
+            ],
+            ["ev_31f9a040", "ev_31f9a041"],
+            "Chiến dịch Điện Biên Phủ kết thúc ngày 7 tháng 5 năm 1954. Hội nghị Genève năm 1954 bàn về việc lập lại hòa bình ở Đông Dương.",
+        ),
+        row(
+            "v23-leader-opponent",
+            "Ai lãnh đạo cuộc khởi nghĩa X và cuộc khởi nghĩa đó chống lực lượng nào?",
+            [
+                ("ev_82b16d20", "Lãnh đạo", "Cuộc khởi nghĩa X do Nguyễn Văn A lãnh đạo."),
+                ("ev_82b16d21", "Đối phương", "Cuộc khởi nghĩa X chống lại lực lượng B."),
+            ],
+            ["ev_82b16d20", "ev_82b16d21"],
+            "Cuộc khởi nghĩa X do Nguyễn Văn A lãnh đạo. Cuộc khởi nghĩa này chống lại lực lượng B.",
+        ),
+        row(
+            "v23-one-source-multi",
+            "Khởi nghĩa Hương Khê do ai lãnh đạo và chống lực lượng nào?",
+            [
+                ("ev_b2d67010", "Khởi nghĩa Hương Khê", "Khởi nghĩa Hương Khê do Phan Đình Phùng lãnh đạo và chống lại thực dân Pháp."),
+            ],
+            ["ev_b2d67010"],
+            "Khởi nghĩa Hương Khê do Phan Đình Phùng lãnh đạo và chống lại thực dân Pháp.",
+        ),
+        row(
+            "v23-explicit-relation",
+            "Chiến thắng Điện Biên Phủ có quan hệ như thế nào với Hội nghị Genève năm 1954?",
+            [
+                ("ev_d194c210", "Bối cảnh Điện Biên Phủ", "Quân đội Việt Nam giành chiến thắng Điện Biên Phủ, khiến Pháp chịu thất bại quân sự lớn."),
+                ("ev_d194c211", "Quan hệ với Genève", "Hội nghị Genève năm 1954 diễn ra trong bối cảnh Pháp thất bại tại Điện Biên Phủ, tạo điều kiện cho việc đàm phán lập lại hòa bình ở Đông Dương."),
+            ],
+            ["ev_d194c211"],
+            "Thất bại của Pháp tại Điện Biên Phủ tạo bối cảnh và điều kiện cho Hội nghị Genève năm 1954 đàm phán lập lại hòa bình ở Đông Dương.",
+        ),
+    ]
 
 
 class InvalidSourceRowError(ValueError):
@@ -529,12 +595,65 @@ def _propose_partial(
     ), audit
 
 
+def _propose_leave_one_out_partials(
+    record: dict[str, Any],
+) -> list[tuple[str, tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]]]:
+    """Generate one verified partial for every necessary item in a true multi-source set."""
+    selected = list(record["output"].selected_evidence)
+    if len(selected) < 2:
+        return []
+    variants: list[tuple[str, tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]]] = []
+    for removed in selected:
+        retained = [item for item in selected if item.evidence_id != removed.evidence_id]
+        evidence, retained, assessment = _partial_candidate(record, retained)
+        by_id = {item["evidence_id"]: item for item in evidence}
+        selected_coverage = assess_answer_coverage(
+            record["question"],
+            record["answer"],
+            [str(by_id[item.evidence_id]["text"]) for item in retained if item.evidence_id in by_id],
+        )
+        if not assessment.partial or not selected_coverage.useful:
+            continue
+        missing = specific_missing_information(assessment)
+        output = EvidenceModelOutput(
+            status="insufficient",
+            selected_evidence=retained,
+            conflicts=[],
+            missing_information=missing,
+            summary=(
+                f"Evidence còn lại hỗ trợ {len(assessment.supported_keys)}/{len(assessment.requirements)} "
+                f"thành phần; còn thiếu: {'; '.join(missing)}"
+            ),
+        )
+        variants.append((
+            removed.evidence_id,
+            (
+                evidence,
+                output,
+                {
+                    "synthetic_partial": True,
+                    "leave_one_out": True,
+                    "removed_evidence_id": removed.evidence_id,
+                    "retained_evidence_ids": [item.evidence_id for item in retained],
+                    "slot_category": "+".join(assessment.missing_keys),
+                    "coverage_audit": {
+                        "audit_outcome": "leave_one_out_true_partial",
+                        "remaining_coverage": assessment.as_dict(),
+                    },
+                },
+            ),
+        ))
+    return variants
+
+
 def _format_row(record: dict[str, Any], behavior: str, *, max_selected: int) -> dict[str, Any]:
     evidence = record["evidence"]
     output: EvidenceModelOutput = record["output"]
     metadata: dict[str, Any] = {"synthetic": False, "gold_answer": record["answer"]}
     if record.get("coverage_audit"):
         metadata["coverage_audit"] = record["coverage_audit"]
+    if record.get("selected_set_audit"):
+        metadata["selected_set_audit"] = record["selected_set_audit"]
     if behavior == "duplicate":
         evidence, output, behavior_metadata = _apply_duplicate(record)
         metadata.update(behavior_metadata)
@@ -570,7 +689,7 @@ def _format_row(record: dict[str, Any], behavior: str, *, max_selected: int) -> 
     request_payload = request.model_dump()
     return {
         "id": sample_id,
-        "source_dataset": "vn_history_phase6",
+        "source_dataset": str(record["source"].get("source_dataset") or "vn_history_phase6"),
         "original_sample_id": legacy_id,
         "group_id": group_id,
         "behavior": behavior,
@@ -595,15 +714,18 @@ def build_dataset_v2(
     partial_ratio: float = 0.12,
     compression_max_chars: int = 600,
     max_selected: int = 8,
+    include_v23_fixtures: bool = False,
     audit_report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if any(value < 0 or value > 1 for value in (duplicate_ratio, conflict_ratio, partial_ratio)):
         raise ValueError("behavior ratios must be between 0 and 1")
     if duplicate_ratio + conflict_ratio + partial_ratio >= 0.8:
         raise ValueError("synthetic behavior ratios leave too little clean/insufficient supervision")
+    input_source_rows = list(source_rows)
+    working_source_rows = input_source_rows + (v23_source_fixtures() if include_v23_fixtures else [])
     unique_rows: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
-    for row in source_rows:
+    for row in working_source_rows:
         fingerprint = stable_source_hash(row)
         if fingerprint not in seen_hashes:
             seen_hashes.add(fingerprint)
@@ -619,11 +741,56 @@ def build_dataset_v2(
         except InvalidSourceRowError:
             malformed_source_rows += 1
             continue
+
+    sufficient_gold_audit = Counter()
+    rewritten_rows = redundant_removed = irrelevant_removed = 0
+    for record in records:
+        if record["output"].status != "sufficient":
+            continue
+        sufficient_gold_audit["total"] += 1
+        by_id = {item["evidence_id"]: str(item["text"]) for item in record["evidence"]}
+        selected_by_id = {item.evidence_id: item for item in record["output"].selected_evidence}
+        audit = audit_selected_evidence_set(
+            record["question"],
+            record["answer"],
+            {evidence_id: by_id[evidence_id] for evidence_id in selected_by_id if evidence_id in by_id},
+        )
+        sufficient_gold_audit["selected_subset_full"] += int(audit.complete)
+        sufficient_gold_audit["selected_subset_incomplete"] += int(not audit.complete)
+        sufficient_gold_audit["single_source_sufficient"] += int(audit.complete and len(audit.minimal_ids) == 1)
+        sufficient_gold_audit["true_multi_source_necessary"] += int(audit.complete and len(audit.minimal_ids) >= 2)
+        sufficient_gold_audit["redundant_multi_source"] += int(bool(audit.redundant_ids))
+        sufficient_gold_audit["irrelevant_selected"] += len(audit.irrelevant_ids)
+        sufficient_gold_audit["ambiguous_unresolved"] += int(
+            not audit.complete and any(req.confidence != "high" for req in record["base_coverage"].requirements)
+        )
+        record["selected_set_audit"] = {"before": audit.as_dict()}
+        if audit.complete and tuple(selected_by_id) != audit.minimal_ids:
+            removed = set(selected_by_id) - set(audit.minimal_ids)
+            rewritten_rows += 1
+            redundant_removed += len(removed - set(audit.irrelevant_ids))
+            irrelevant_removed += len(removed & set(audit.irrelevant_ids))
+            new_selected = [selected_by_id[evidence_id] for evidence_id in audit.minimal_ids]
+            record["output"] = record["output"].model_copy(update={"selected_evidence": new_selected})
+            record["base_coverage"] = assess_answer_coverage(
+                record["question"], record["answer"], [by_id[evidence_id] for evidence_id in audit.minimal_ids]
+            )
+            after = audit_selected_evidence_set(
+                record["question"],
+                record["answer"],
+                {evidence_id: by_id[evidence_id] for evidence_id in audit.minimal_ids},
+            )
+            record["selected_set_audit"]["after"] = after.as_dict()
     sufficient_indices = [index for index, item in enumerate(records) if item["output"].status == "sufficient"]
+    fixture_indices = {
+        index
+        for index, item in enumerate(records)
+        if item["source"].get("source_dataset") == "evidence_v23_fixture"
+    }
     coverage_invalid_indices = {
         index
         for index in sufficient_indices
-        if records[index]["base_coverage"].confident and not records[index]["base_coverage"].full
+        if not records[index]["base_coverage"].full
     }
     suspicious_heuristic_indices = {
         index
@@ -695,13 +862,85 @@ def build_dataset_v2(
                     "old_behavior": "source_sufficient",
                     "audit_outcome": "new_true_partial",
                 }
-    for index in ordered(list(safe_partial_variants), "semantic-partial")[:partial_target]:
-        records[index]["partial_variant"] = safe_partial_variants[index]
-        assigned[index] = "partial"
+    # V2.3 keeps every verified full row and adds partial rows alongside it.
+    # This prevents the augmentation from deleting the positive collective-
+    # coverage counterpart that a hard negative is meant to contrast with.
+    extra_partial_variants: list[
+        tuple[int, str, tuple[list[dict[str, Any]], EvidenceModelOutput, dict[str, Any]]]
+    ] = []
+    leave_one_out_candidates = 0
+    for index in sufficient_indices:
+        if index in coverage_invalid_indices:
+            continue
+        variants = _propose_leave_one_out_partials(records[index])
+        if len(records[index]["output"].selected_evidence) >= 2:
+            leave_one_out_candidates += len(records[index]["output"].selected_evidence)
+        for removed_id, variant in variants:
+            extra_partial_variants.append((index, f"loo-{removed_id}", variant))
+
+    # The relation fixture deliberately contains an event-only context plus a
+    # separate source that states the A-to-B relation.  Retain the event-only
+    # source in an explicit partial so relation relevance is not conflated with
+    # full relational sufficiency.
+    deterministic_fixture_partial_count = 0
+    for index, record in enumerate(records):
+        if str(record["source"].get("id")) != "v23-explicit-relation":
+            continue
+        context_id = "ev_d194c210"
+        by_id = {item["evidence_id"]: item for item in record["evidence"]}
+        selected = _selected_item(
+            context_id,
+            by_id,
+            record["question"],
+            record["answer"],
+            max_chars=compression_max_chars,
+        )
+        assessment = assess_answer_coverage(
+            record["question"], record["answer"], [str(by_id[context_id]["text"])]
+        )
+        if not assessment.partial:
+            raise ValueError("relation partial fixture no longer proves useful-but-incomplete coverage")
+        missing = specific_missing_information(assessment)
+        fixture_output = EvidenceModelOutput(
+            status="insufficient",
+            selected_evidence=[selected],
+            conflicts=[],
+            missing_information=missing,
+            summary=f"Evidence hỗ trợ bối cảnh sự kiện nhưng còn thiếu quan hệ trực tiếp: {'; '.join(missing)}",
+        )
+        extra_partial_variants.append((
+            index,
+            "relation-context-only",
+            (
+                [dict(by_id[context_id])],
+                fixture_output,
+                {
+                    "synthetic_partial": True,
+                    "deterministic_fixture": True,
+                    "relational_partial": True,
+                    "retained_evidence_ids": [context_id],
+                    "slot_category": "relation",
+                    "coverage_audit": {
+                        "audit_outcome": "deterministic_relation_partial",
+                        "remaining_coverage": assessment.as_dict(),
+                    },
+                },
+            ),
+        ))
+        deterministic_fixture_partial_count += 1
+    existing_partial_sources = {index for index, _, _ in extra_partial_variants}
+    additional_target = max(0, partial_target - len(extra_partial_variants))
+    for index in ordered(list(safe_partial_variants), "semantic-partial"):
+        if additional_target <= 0:
+            break
+        if index in existing_partial_sources:
+            continue
+        extra_partial_variants.append((index, "semantic", safe_partial_variants[index]))
+        additional_target -= 1
 
     conflict_eligible: list[int] = []
     for index in sufficient_indices:
-        if index in assigned or index in coverage_invalid_indices:
+        if index in assigned or index in coverage_invalid_indices or index in fixture_indices:
             continue
         variant = propose_question_relevant_conflict(
             question=records[index]["question"],
@@ -717,7 +956,7 @@ def build_dataset_v2(
 
     irrelevant_disagreement_eligible: list[int] = []
     for index in sufficient_indices:
-        if index in assigned or index in coverage_invalid_indices:
+        if index in assigned or index in coverage_invalid_indices or index in fixture_indices:
             continue
         variant = propose_irrelevant_disagreement(
             question=records[index]["question"],
@@ -734,7 +973,7 @@ def build_dataset_v2(
     duplicate_eligible = [
         index
         for index in sufficient_indices
-        if index not in assigned and index not in coverage_invalid_indices
+        if index not in assigned and index not in coverage_invalid_indices and index not in fixture_indices
     ]
     for index in ordered(duplicate_eligible, "duplicate")[:duplicate_target]:
         assigned[index] = "duplicate"
@@ -752,13 +991,21 @@ def build_dataset_v2(
         else:
             behavior = "clean_relevant"
         output.append(_format_row(record, behavior, max_selected=max_selected))
+    for index, variant_key, variant in extra_partial_variants:
+        record = dict(records[index])
+        record["partial_variant"] = variant
+        record["source_hash"] = hashlib.sha256(
+            f"{records[index]['source_hash']}:partial:{variant_key}".encode("utf-8")
+        ).hexdigest()
+        output.append(_format_row(record, "partial", max_selected=max_selected))
     ids = [row["id"] for row in output]
     if len(ids) != len(set(ids)):
         raise ValueError("Evidence v2 builder produced duplicate row IDs")
     if audit_report is not None:
         audit_report.clear()
         audit_report.update({
-            "source_rows": len(source_rows),
+            "source_rows": len(input_source_rows),
+            "fixture_source_rows": len(working_source_rows) - len(input_source_rows),
             "unique_source_rows": len(unique_rows),
             "malformed_source_rows": malformed_source_rows,
             "coverage_invalid_source_rows": len(coverage_invalid_indices),
@@ -767,6 +1014,28 @@ def build_dataset_v2(
             "remain_true_partial": partial_outcomes["remain_true_partial"],
             "dropped_invalid_partial_augmentation": partial_outcomes["dropped_invalid"],
             "new_verified_partial_rows": sum(value == "partial" for value in assigned.values()),
+            "v23_partial_rows": len(extra_partial_variants),
+            "deterministic_fixture_partial_rows": deterministic_fixture_partial_count,
+            "relational_partial_rows": sum(
+                bool(variant[2].get("relational_partial")) for _, _, variant in extra_partial_variants
+            ),
+            "leave_one_out_candidate_rows": leave_one_out_candidates,
+            "leave_one_out_partial_rows": sum(
+                bool(variant[2].get("leave_one_out")) for _, _, variant in extra_partial_variants
+            ),
+            "dropped_leave_one_out_candidates": max(
+                0,
+                leave_one_out_candidates
+                - sum(bool(variant[2].get("leave_one_out")) for _, _, variant in extra_partial_variants),
+            ),
+            "partial_by_slot_category": dict(Counter(
+                str(variant[2].get("slot_category") or "other")
+                for _, _, variant in extra_partial_variants
+            )),
+            "sufficient_gold_audit": dict(sufficient_gold_audit),
+            "minimal_sufficient_rewritten_rows": rewritten_rows,
+            "redundant_evidence_removed": redundant_removed,
+            "irrelevant_evidence_removed": irrelevant_removed,
             "legacy_numeric_conflict_candidates": len(legacy_conflict_eligible),
             "question_relevant_conflict_candidates": len(conflict_eligible),
             "regenerated_conflict_rows": sum(value == "conflict" for value in assigned.values()),
@@ -797,7 +1066,7 @@ def build_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build Evidence Agent v2.2 data using the canonical runtime model-output schema.")
+    parser = argparse.ArgumentParser(description="Build Evidence Agent v2.3 collective-coverage data using the runtime schema.")
     parser.add_argument("--input", default="Dataset/merged_jsonl/all_messages.jsonl")
     parser.add_argument("--output", default="datasets/evidence_agent/train.jsonl")
     parser.add_argument("--duplicate-ratio", type=float, default=0.13)
@@ -806,6 +1075,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compression-max-chars", type=int, default=600)
     parser.add_argument("--max-selected", type=int, default=8)
     parser.add_argument("--max-source-rows", type=int, default=None)
+    parser.add_argument("--include-v23-fixtures", action=argparse.BooleanOptionalAction, default=True)
     return parser
 
 
@@ -822,6 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         partial_ratio=args.partial_ratio,
         compression_max_chars=args.compression_max_chars,
         max_selected=args.max_selected,
+        include_v23_fixtures=args.include_v23_fixtures,
         audit_report=audit_report,
     )
     status = Counter(row["output"]["status"] for row in rows)
@@ -830,7 +1101,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({
         "source_rows": len(source_rows),
         "rows": count,
-        "dropped_source_rows": len(source_rows) - count,
+        "excluded_source_rows": (
+            audit_report.get("malformed_source_rows", 0)
+            + audit_report.get("coverage_invalid_source_rows", 0)
+        ),
         "status": status,
         "behavior": behavior,
         "semantic_audit": audit_report,

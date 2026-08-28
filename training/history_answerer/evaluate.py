@@ -37,6 +37,22 @@ def rouge_l(pred: str, gold: str) -> float:
     return 2 * lcs / (len(a) + len(b))
 
 
+def token_f1(pred: str, gold: str) -> float:
+    pred_tokens = pred.casefold().split()
+    gold_tokens = gold.casefold().split()
+    if not pred_tokens or not gold_tokens:
+        return 0.0
+    remaining = list(gold_tokens)
+    overlap = 0
+    for token in pred_tokens:
+        if token in remaining:
+            remaining.remove(token)
+            overlap += 1
+    precision = overlap / len(pred_tokens)
+    recall = overlap / len(gold_tokens)
+    return 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+
+
 def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[str, Any]]) -> dict[str, float]:
     source_exact = 0
     precision_total = 0.0
@@ -48,6 +64,8 @@ def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[s
     insufficient_empty = 0
     insufficient_count = 0
     rouge_total = 0.0
+    token_f1_total = 0.0
+    hallucinated_citation_rows = 0
     n = len(gold_rows) or 1
     for idx, gold in enumerate(gold_rows):
         pred = pred_rows[idx] if idx < len(pred_rows) else {}
@@ -67,6 +85,7 @@ def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[s
         answer_body = pred_text.split("Trả lời:", 1)[-1].strip() if "Trả lời:" in pred_text else pred_text.strip()
         answer_non_empty += int(bool(answer_body))
         source_ids_exist += int(pred_ids <= context_ids)
+        hallucinated_citation_rows += int(not pred_ids <= context_ids)
         if gold.get("type") == "insufficient_context":
             insufficient_count += 1
             insufficient_empty += int(not pred_ids)
@@ -77,6 +96,7 @@ def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[s
         recall_total += recall
         f1_total += f1
         rouge_total += rouge_l(pred_text, gold_text)
+        token_f1_total += token_f1(pred_text, gold_text)
     metrics = {
         "source_exact": source_exact / n,
         "source_precision": precision_total / n,
@@ -87,6 +107,8 @@ def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[s
         "source_ids_exist": source_ids_exist / n,
         "insufficient_empty_rate": insufficient_empty / max(insufficient_count, 1),
         "rouge_l": rouge_total / n,
+        "token_f1": token_f1_total / n,
+        "hallucinated_citation_rate": hallucinated_citation_rows / n,
     }
     metrics["generation_composite"] = (
         metrics["source_f1"]
@@ -104,7 +126,7 @@ def evaluate_predictions(gold_rows: list[dict[str, Any]], pred_rows: list[dict[s
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate history-answerer predictions.")
-    parser.add_argument("--gold", default="artifacts/training/history_answerer/messages_normalized.jsonl")
+    parser.add_argument("--gold", default="datasets/history_answerer/train.jsonl")
     parser.add_argument("--predictions", required=True)
     parser.add_argument("--output", default=None)
     return parser

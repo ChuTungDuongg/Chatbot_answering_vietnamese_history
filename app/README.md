@@ -50,9 +50,9 @@ app/
 |---|---|
 | `api-only` | FastAPI + SQLite; không corpus/model. |
 | `retrieval-only` | Corpus, E5, FAISS, BM25S, reranker. |
-| `full` | Retrieval + History model + agents/orchestrator. |
+| `full` | Retrieval + shared Qwen3 backend + three role adapters/orchestrator. |
 
-Trong `full`, `AGENT_CONTROLLER=model` nạp shared Qwen3 base 4-bit và hai PEFT adapters. `deterministic` giữ API chạy khi chưa có adapter, nhưng không phải 3-LLM production mode.
+Trong `full`, `LLM_BACKEND=transformers` nạp một shared Qwen3 base 4-bit và ba PEFT adapters. `LLM_BACKEND=vllm` gọi endpoint OpenAI-compatible đã phục vụ đúng ba tên role. `deterministic` giữ API chạy khi chưa có adapter, nhưng không đại diện chất lượng 3-LLM.
 
 ## 🔐 Environment
 
@@ -61,12 +61,14 @@ APP_MODE=full
 DEVICE=cuda
 DTYPE=bfloat16
 ARTIFACT_ROOT=./artifacts/vn_history_deployment
-HISTORY_MODEL_PATH=./artifacts/vn_history_deployment/history_answerer/model
+LLM_BACKEND=transformers
+SHARED_BASE_MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
 AGENT_CONTROLLER=model
 RESEARCH_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
-RESEARCH_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/research_agent/adapter
+RESEARCH_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/research
 EVIDENCE_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
-EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/evidence_agent/adapter
+EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/evidence
+HISTORY_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/history
 MAX_AGENT_STEPS=6
 MAX_WEB_SEARCHES=3
 MAX_PAGE_FETCHES=5

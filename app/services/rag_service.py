@@ -38,6 +38,7 @@ class RAGService:
         # Generation
         self.tokenizer = None
         self.model = None
+        self.external_generation_backend = False
 
     # ========================================================
     # Public lifecycle
@@ -76,7 +77,7 @@ class RAGService:
             self._load_reranker()
 
         # MODE 3 — FULL
-        if settings.should_load_model:
+        if settings.should_load_model and not settings.uses_shared_backend:
             self._load_generation_model()
 
         self.loaded = True
@@ -90,6 +91,7 @@ class RAGService:
         # Generation
         self.model = None
         self.tokenizer = None
+        self.external_generation_backend = False
 
         # Retrieval models
         self.embedder = None
@@ -466,7 +468,7 @@ class RAGService:
             "bm25_loaded": self.bm25 is not None,
             "embedder_loaded": self.embedder is not None,
             "reranker_loaded": self.reranker is not None,
-            "model_loaded": self.model is not None,
+            "model_loaded": self.model is not None or self.external_generation_backend,
             "corpus_chunks": len(self.chunks) if self.chunks else None,
             "faiss_vectors": (
                 int(self.faiss_index.ntotal)

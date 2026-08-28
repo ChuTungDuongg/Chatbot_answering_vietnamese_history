@@ -13,6 +13,12 @@ volume = modal.Volume.from_name(
 
 ROOT = Path("/artifacts")
 EXPECTED_CORPUS_COUNT = 58603
+EXPECTED_SHARED_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+ROLE_ADAPTERS = {
+    "research": ROOT / "adapters" / "research",
+    "evidence": ROOT / "adapters" / "evidence",
+    "history": ROOT / "adapters" / "history",
+}
 
 
 def size_mb(path: Path) -> float:
@@ -38,9 +44,9 @@ def sanity_check():
         "FAISS index": ROOT / "retrieval" / "faiss" / "chunks.index",
         "FAISS manifest": ROOT / "retrieval" / "faiss" / "manifest.json",
         "BM25 directory": ROOT / "retrieval" / "bm25s_index",
-        "history model directory": ROOT / "history_answerer" / "model",
-        "research adapter directory": ROOT / "research_agent" / "adapter",
-        "evidence adapter directory": ROOT / "evidence_agent" / "adapter",
+        "research adapter directory": ROLE_ADAPTERS["research"],
+        "evidence adapter directory": ROLE_ADAPTERS["evidence"],
+        "history adapter directory": ROLE_ADAPTERS["history"],
     }
 
     print("[1] REQUIRED PATHS")
@@ -65,6 +71,17 @@ def sanity_check():
 
             print("PASS  manifest.json parsed successfully")
             print("Keys :", list(manifest.keys()))
+
+            manifest_base = manifest.get("shared_base_model_id")
+            if manifest_base == EXPECTED_SHARED_BASE:
+                print("PASS  shared base model:", manifest_base)
+            else:
+                failures.append(
+                    f"Manifest shared base {manifest_base!r} != {EXPECTED_SHARED_BASE!r}"
+                )
+
+            if manifest.get("base_weights_bundled") is not False:
+                failures.append("Manifest must declare base_weights_bundled=false")
 
             try:
                 manifest_count = int(manifest["corpus"]["count"])
@@ -94,6 +111,14 @@ def sanity_check():
 
             print("PASS  inference_config.json parsed successfully")
             print("Keys :", list(config.keys()))
+            llm = config.get("llm", {})
+            if llm.get("shared_base_model_id") != EXPECTED_SHARED_BASE:
+                failures.append("Inference config shared base does not match Qwen3 registry")
+            role_models = llm.get("role_models", {})
+            if set(role_models) != set(ROLE_ADAPTERS):
+                failures.append(
+                    "Inference config must route research, evidence, and history roles"
+                )
         except Exception as exc:
             print("FAIL  inference_config.json could not be parsed:", exc)
             failures.append("Invalid inference config")
@@ -199,45 +224,44 @@ def sanity_check():
 
     print()
 
-    model_dir = required_paths["model directory"]
+    print("[7] SHARED QWEN3 ROLE ADAPTERS")
 
-    print("[7] QWEN MODEL")
+    for role, adapter_dir in ROLE_ADAPTERS.items():
+        config_file = adapter_dir / "adapter_config.json"
+        weights = sorted(adapter_dir.glob("adapter_model*.safetensors"))
 
-    if model_dir.exists():
-        model_files = [path for path in model_dir.rglob("*") if path.is_file()]
-        safetensors = [path for path in model_files if path.suffix == ".safetensors"]
+        if not config_file.is_file():
+            failures.append(f"Missing {role} adapter_config.json: {config_file}")
+            continue
+        if not weights:
+            failures.append(f"Missing {role} adapter safetensors: {adapter_dir}")
+            continue
 
-        total_model_bytes = sum(path.stat().st_size for path in model_files)
-        total_safetensor_bytes = sum(path.stat().st_size for path in safetensors)
+        try:
+            adapter_config = json.loads(config_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            failures.append(f"Invalid {role} adapter_config.json: {exc}")
+            continue
 
-        print("Model files           :", len(model_files))
-        print("Safetensors files     :", len(safetensors))
-        print("Model directory GB    :", round(total_model_bytes / 1024**3, 2))
-        print("Safetensors total GB  :", round(total_safetensor_bytes / 1024**3, 2))
-
-        for path in sorted(safetensors):
-            print(
-                f"  - {path.name}: "
-                f"{round(path.stat().st_size / 1024**3, 2)} GB"
+        declared_base = str(adapter_config.get("base_model_name_or_path", "")).rstrip("/")
+        if declared_base != EXPECTED_SHARED_BASE:
+            failures.append(
+                f"{role} adapter base mismatch: {declared_base!r} != {EXPECTED_SHARED_BASE!r}"
             )
+            continue
 
-        if safetensors:
-            print("PASS  model safetensors found")
-        else:
-            failures.append("No .safetensors files found in model directory")
+        total_bytes = sum(path.stat().st_size for path in weights)
+        print(
+            f"PASS  {role}: base={declared_base}, "
+            f"weights={len(weights)}, size={round(total_bytes / 1024**2, 2)} MB"
+        )
 
-        required_model_files = [
-            "config.json",
-            "tokenizer_config.json",
-        ]
-
-        for filename in required_model_files:
-            path = model_dir / filename
-
-            if path.exists():
-                print(f"PASS  {filename}")
-            else:
-                warnings.append(f"Model file missing: {filename}")
+    legacy_model = ROOT / "legacy" / "qwen25_history" / "model"
+    if legacy_model.exists():
+        warnings.append(
+            "Legacy Qwen2.5 History baseline is present for comparison only; "
+            "it is not part of the active shared-base runtime."
+        )
 
     print()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from training.common.cli import add_training_arguments, lora_settings_from_args, validate_training_arguments
@@ -13,16 +14,16 @@ from training.history_answerer.config import Phase6Config
 def build_parser() -> argparse.ArgumentParser:
     cfg = Phase6Config()
     parser = argparse.ArgumentParser(
-        description="Grounded RAG-SFT for the History Answerer, starting from vanilla Qwen2.5."
+        description="Fresh grounded QLoRA for the History Answerer on the shared vanilla Qwen3 base."
     )
     parser.add_argument(
         "--dataset-messages",
         "--dataset",
         dest="dataset_messages",
-        default="Dataset/merged_jsonl/all_messages.jsonl",
+        default="datasets/history_answerer/train.jsonl",
     )
     parser.add_argument("--dataset-chunks", default="training/Dataset/merged_jsonl/all_chunk_id.jsonl")
-    parser.add_argument("--output-dir", default="artifacts/training/history_answerer/phase6_rag_sft")
+    parser.add_argument("--output-dir", default="outputs/history-answerer-full")
     parser.add_argument("--model-id", default=cfg.model_id)
     add_training_arguments(parser, cfg)
     parser.add_argument("--dry-run", action="store_true", help="Validate dataset/splits without loading the model.")
@@ -31,29 +32,78 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    cfg = Phase6Config()
     validate_training_arguments(args)
     rows = load_messages(args.dataset_messages)
+    from training.history_answerer.validate_dataset import validate_rows
+
+    validation = validate_rows(rows)
+    if not validation["valid"]:
+        raise ValueError(f"History dataset validation failed: {validation['errors'][:5]}")
     if args.dataset_chunks and not Path(args.dataset_chunks).is_file():
         raise FileNotFoundError(args.dataset_chunks)
-    splits = split_rows(rows, seed=args.seed, max_samples=args.max_samples)
-    print({"rows": len(rows), "train": len(splits.train), "eval": len(splits.eval), "test": len(splits.test)})
+    splits = split_rows(
+        rows,
+        seed=args.seed,
+        max_samples=args.max_samples,
+        group_key="group_id",
+        stratify_key="type",
+        train_ratio=cfg.train_ratio,
+        eval_ratio=cfg.eval_ratio,
+    )
+
+    from transformers import AutoTokenizer
+
+    from training.history_answerer.loss import build_rag_training_example_with_stats
+    from training.history_answerer.preflight import tokenization_report
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+    tokenization = {
+        name: tokenization_report(
+            getattr(splits, name), tokenizer, max_length=args.max_length, split_name=name
+        )
+        for name in ("train", "eval", "test")
+    }
+    token_errors = [error for report in tokenization.values() for error in report["errors"]]
+    if token_errors:
+        raise ValueError(f"History tokenization preflight failed: {token_errors[:5]}")
+    summary = {
+        "rows": len(rows),
+        "model_id": args.model_id,
+        "fresh_adapter": True,
+        "splits": {
+            name: {
+                "rows": len(getattr(splits, name)),
+                "types": {
+                    row_type: sum(row.get("type") == row_type for row in getattr(splits, name))
+                    for row_type in sorted({str(row.get("type")) for row in getattr(splits, name)})
+                },
+            }
+            for name in tokenization
+        },
+        "tokenization": tokenization,
+    }
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "preflight_manifest.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     if args.dry_run:
         return 0
 
     from datasets import Dataset
     from peft import get_peft_model, prepare_model_for_kbit_training
-    from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
+    from transformers import AutoModelForCausalLM, EarlyStoppingCallback
 
     from training.history_answerer.loss import (
         WeightedDataCollator,
         build_rag_training_example,
         weighted_trainer_class,
     )
-    output_dir = Path(args.output_dir)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id,

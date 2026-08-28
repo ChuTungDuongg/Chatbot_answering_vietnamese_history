@@ -1,83 +1,60 @@
-# 🏯 History Answerer Training
+# History Answerer — fresh Qwen3 grounded QLoRA
 
-[⬅️ Training overview](../README.md) · [🏠 Project README](../../README.md)
+Active Phase-6 trains a new, role-specific History adapter directly from the frozen shared base `Qwen/Qwen3-4B-Instruct-2507`. The Qwen2.5 Phase-1/Phase-6 artifacts are legacy benchmark baselines only: they must never be mounted on Qwen3 or used as an init adapter.
 
-History Answerer là LLM thứ ba. Nó nhận **text evidence đã được critic chọn**, không nhận embedding vector, rồi sinh answer tiếng Việt và source IDs.
+The role consumes the question plus upstream-selected textual evidence and writes the final Vietnamese answer with existing source IDs. It does not retrieve, call tools, manage an evidence pool, or receive embedding vectors.
 
-## 🧩 Mapping và policy hiện tại
+## Prepare and validate
 
-- Old Phase 1 → `train_instruction_sft.py`, chỉ để tái hiện legacy.
-- Old Phase 6 → `train.py` + `loss.py` + `evaluate.py`, hiện train thẳng từ vanilla Qwen2.5.
+```bash
+python -m training.history_answerer.prepare_dataset \
+  --input Dataset/merged_jsonl/all_messages.jsonl \
+  --output datasets/history_answerer/train.jsonl
 
-## 1️⃣ Grounded RAG-SFT chính
+python -m training.history_answerer.validate_dataset \
+  --dataset datasets/history_answerer/train.jsonl
+
+python -m training.history_answerer.preflight \
+  --dataset datasets/history_answerer/train.jsonl \
+  --tokenizer-id Qwen/Qwen3-4B-Instruct-2507 \
+  --max-length 4096
+```
+
+Preparation drops source rows whose gold citation is absent from their own input rather than remapping or fabricating an ID. Preflight loads tokenizer metadata only. It checks every split for empty inputs, invented citation IDs, embedding leakage, assistant truncation, and zero-supervised labels.
+
+## Safe dry-run
 
 ```bash
 python -m training.history_answerer.train \
-  --model-id Qwen/Qwen2.5-3B-Instruct \
-  --dataset-messages Dataset/merged_jsonl/all_messages.jsonl \
-  --dataset-chunks training/Dataset/merged_jsonl/all_chunk_id.jsonl \
-  --batch-size 1 \
-  --gradient-accumulation-steps 16 \
-  --epochs 5 \
-  --output-dir outputs/history_answerer/phase6
+  --dataset datasets/history_answerer/train.jsonl \
+  --model-id Qwen/Qwen3-4B-Instruct-2507 \
+  --output-dir outputs/history-answerer-full \
+  --max-length 4096 \
+  --dry-run
 ```
 
-`train.py` load vanilla `Qwen/Qwen2.5-3B-Instruct` ở 4-bit, chuẩn bị k-bit training rồi gắn fresh LoRA. Nó không đọc, merge hoặc resume từ Phase 1 adapter.
+Dry-run validates data, builds group-disjoint splits, runs the exact target-preserving tokenization path, and writes a preflight manifest. It never loads Qwen weights or runs optimization.
 
-## 2️⃣ Instruction SFT Phase 1 legacy, tùy chọn
-
-```bash
-python -m training.history_answerer.train_instruction_sft \
-  --dataset Dataset/merged_jsonl/all_messages.jsonl \
-  --model-id Qwen/Qwen2.5-3B-Instruct \
-  --batch-size 1 \
-  --gradient-accumulation-steps 16 \
-  --output-dir outputs/history_answerer/phase1_legacy
-```
-
-User tokens bị mask. Nếu target có `<analysis>` và `<final>`, analysis weight là 0.5 và final weight là 1.0. Adapter này không đi vào flow Phase 6 mới.
-
-## ⚖️ Weighted loss
-
-`loss.py` tạo `labels=-100` cho user/padding tokens. Assistant tokens:
-
-| Segment | Weight |
-|---|---:|
-| `Nguồn được dùng:` | 1.6 |
-| `Trả lời:` và answer body | 1.0 |
-
-`WeightedCETrainer` áp dụng token-level cross entropy rồi chuẩn hóa theo tổng weight thực tế.
-
-## 🔗 Merge model cuối
-
-```bash
-python -m training.scripts.merge_model \
-  --base-model Qwen/Qwen2.5-3B-Instruct \
-  --adapter outputs/history_answerer/phase6/adapter \
-  --output-dir outputs/history_answerer/merged
-```
-
-Merge chỉ để deploy: Phase 6 adapter được merge vào đúng vanilla base đã dùng khi train. `merge_phase1.py` còn lại như legacy compatibility CLI, không phải bước bắt buộc.
-
-## 📏 Evaluation
-
-Prediction JSONL mỗi dòng cần `answer`, `assistant` hoặc `prediction`. Gold có thể là chat `messages`.
-
-```bash
-python -m training.history_answerer.evaluate \
-  --gold artifacts/training/history_answerer/messages_normalized.jsonl \
-  --predictions predictions/history_answerer.jsonl \
-  --output reports/history_answerer.json
-```
-
-Metrics: source exact/P/R/F1, format OK, answer non-empty, source ID tồn tại, insufficient empty-rate, ROUGE-L, generation composite; `eval_loss`/`test_loss` được tổng hợp nếu prediction/evaluation rows chứa hai trường này.
-
-## ♻️ Resume
+## Recommended A100 starting command
 
 ```bash
 python -m training.history_answerer.train \
-  --output-dir outputs/history_answerer/phase6 \
-  --resume-from-checkpoint outputs/history_answerer/phase6/checkpoint-500
+  --dataset datasets/history_answerer/train.jsonl \
+  --model-id Qwen/Qwen3-4B-Instruct-2507 \
+  --output-dir outputs/history-answerer-full \
+  --batch-size 2 \
+  --eval-batch-size 2 \
+  --gradient-accumulation-steps 8 \
+  --learning-rate 1e-4 \
+  --epochs 3 \
+  --max-length 4096 \
+  --eval-steps 50 \
+  --save-steps 50 \
+  --bf16 --no-fp16 --gradient-checkpointing
 ```
 
-Giữ nguyên `--model-id`, output, dataset và split seed. Resume checkpoint thuộc chính Phase 6, không dùng Phase 1 checkpoint.
+Assistant targets are preserved in full. Prompt/context tokens are removed from the left when necessary, an assistant target longer than `max_length` fails, and an all-`-100` sample is impossible. Source-line tokens retain weight 1.6 and answer tokens weight 1.0.
+
+The canonical split keeps groups disjoint and uses three whole groups for each holdout (34/3/3 groups) so `grounded_qa`, `noisy_context`, `insufficient_context`, and `false_premise` are all represented in both eval and test.
+
+`train_instruction_sft.py` and `merge_phase1.py` are legacy Qwen2.5 compatibility utilities. They are not part of active Phase-6. `merge_adapter.py` may merge a trained adapter only into the exact base declared by that adapter; shared multi-LoRA deployment normally exports adapters without bundling or triplicating base weights.

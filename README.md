@@ -5,7 +5,7 @@
 **Ba vai trò LLM · Hybrid Retrieval · Grounded Answer · FastAPI · React · Modal**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![Qwen](https://img.shields.io/badge/Qwen2.5%20%2B%20Qwen3-LLM-6F42C1)
+![Qwen](https://img.shields.io/badge/Qwen3--4B-shared%20base-6F42C1)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
 ![Modal](https://img.shields.io/badge/Modal-GPU%20L4-00C7B7)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)
@@ -24,9 +24,9 @@ Hệ thống trả lời câu hỏi lịch sử Việt Nam bằng ba vai trò t�
 
 1. **Research / Tool Agent** dùng Qwen3 và tool registry để tìm local corpus, tài liệu PDF/ảnh đã upload trong conversation, tìm web khi được cấu hình, đọc trang và truy vấn evidence trong session.
 2. **Evidence Critic / Compressor** dùng adapter Qwen3 riêng để lọc, phát hiện xung đột, nén evidence và chỉ được chọn ID đã tồn tại.
-3. **History Answerer** dùng model Qwen2.5 đã instruction-SFT và grounded RAG-SFT để sinh câu trả lời tiếng Việt có citation, sau đó chạy source/year/format guards.
+3. **History Answerer** dùng adapter Qwen3 riêng, được fresh grounded RAG-SFT, để sinh câu trả lời tiếng Việt có citation rồi chạy source/year/format guards.
 
-Hai adapter agent có thể dùng chung một Qwen3 base 4-bit trong runtime để giảm VRAM, nhưng vẫn là hai policy/role được train và kích hoạt độc lập. History Answerer là model thứ ba.
+Ba adapter `research`, `evidence`, `history` dùng chung đúng một frozen Qwen3-4B base trong shared runtime, nhưng giữ dataset, schema, evaluator, prompt và adapter độc lập. Qwen2.5 History cũ chỉ là legacy benchmark baseline.
 
 ## 🧭 Kiến trúc
 
@@ -157,11 +157,13 @@ AGENT_CONTROLLER=model
 DEVICE=cuda
 DTYPE=bfloat16
 ARTIFACT_ROOT=./artifacts/vn_history_deployment
-HISTORY_MODEL_PATH=./artifacts/vn_history_deployment/history_answerer/model
+LLM_BACKEND=transformers
+SHARED_BASE_MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
 RESEARCH_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
-RESEARCH_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/research_agent/adapter
+RESEARCH_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/research
 EVIDENCE_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
-EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/evidence_agent/adapter
+EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/evidence
+HISTORY_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/history
 WEB_SEARCH_PROVIDER=local-only
 ```
 
@@ -186,30 +188,32 @@ Giao diện ở `http://localhost:5173`.
 
 Tất cả lệnh dưới đây chạy tại repository root. Luôn chạy `--help` và một dry-run trước khi dùng GPU.
 
-### 1. History Answerer: grounded RAG-SFT trực tiếp từ vanilla Qwen2.5
+### 1. History Answerer: fresh grounded QLoRA trực tiếp từ vanilla Qwen3
 
 ```bash
+python -m training.history_answerer.prepare_dataset
+python -m training.history_answerer.preflight
 python -m training.history_answerer.train \
-  --model-id Qwen/Qwen2.5-3B-Instruct \
-  --dataset-messages Dataset/merged_jsonl/all_messages.jsonl \
+  --model-id Qwen/Qwen3-4B-Instruct-2507 \
+  --dataset datasets/history_answerer/train.jsonl \
   --dataset-chunks training/Dataset/merged_jsonl/all_chunk_id.jsonl \
   --batch-size 1 \
   --gradient-accumulation-steps 16 \
-  --epochs 5 \
-  --output-dir outputs/history_answerer/phase6
+  --epochs 3 \
+  --output-dir outputs/history-answerer-full
 ```
 
 Flow mới:
 
 ```text
-Qwen2.5-3B-Instruct vanilla
+Qwen3-4B-Instruct-2507 vanilla
   → load 4-bit NF4
   → prepare_model_for_kbit_training()
   → fresh LoRA
   → grounded RAG-SFT
 ```
 
-Phase 6 không còn phụ thuộc hoặc merge adapter Phase 1. Loss chỉ train assistant tokens; dòng `Nguồn được dùng:` có weight 1.6 và answer body có weight 1.0.
+Phase 6 không phụ thuộc hoặc merge adapter Phase 1. Target assistant luôn được giữ trọn; context bị cắt từ trái, zero-supervised bị fail. Dòng `Nguồn được dùng:` có weight 1.6 và answer body có weight 1.0.
 
 ### 2. Instruction SFT Phase 1 cũ, chỉ dùng khi cần tái hiện legacy
 
@@ -377,24 +381,15 @@ python -m training.scripts.build_index \
 
 Index builder dùng normalized E5 embeddings + `faiss.IndexFlatIP` và BM25S. Runtime bổ sung weighted RRF, BGE reranking, metadata boost và diversity.
 
-## 📦 Merge và export artifact
+## 📦 Export shared-base artifact
 
-Merge Phase 6 adapter vào intermediate merged base:
-
-```bash
-python -m training.scripts.merge_model \
-  --base-model Qwen/Qwen2.5-3B-Instruct \
-  --adapter outputs/history_answerer/phase6/adapter \
-  --output-dir outputs/history_answerer/merged
-```
-
-Export bundle ba model:
+Export ba adapter độc lập; base Qwen3 được cache riêng và không bị copy ba lần:
 
 ```bash
 python -m training.scripts.export_artifacts \
-  --model-dir outputs/history_answerer/merged \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
+  --history-agent outputs/history-answerer-full/adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -404,13 +399,14 @@ Kết quả:
 
 ```text
 artifacts/vn_history_deployment/
-├── history_answerer/model/
-├── research_agent/adapter/
-├── evidence_agent/adapter/
+├── adapters/research/
+├── adapters/evidence/
+├── adapters/history/
 ├── retrieval/faiss/
 ├── retrieval/bm25s_index/
 ├── corpus/vn_history_rag_chunks_enriched.jsonl
 ├── config/inference_config.json
+├── config/model_registry.json
 ├── manifest.json
 └── EXPORT_SUCCESS.txt
 ```
@@ -484,7 +480,7 @@ Production:
 modal deploy modal_app.py
 ```
 
-`modal_app.py` mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`, đặt `AGENT_CONTROLLER=model` và cache History model, shared Qwen3 base + hai adapters, embedding model, reranker, FAISS và BM25S theo lifecycle container. Không model nào được load lại theo từng request.
+`modal_app.py` mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`, rồi load một shared Qwen3 base + ba adapter, embedding model, reranker, FAISS và BM25S theo lifecycle container. Không model nào được load lại theo từng request. Xem `docs/shared_qwen3_serving.md` cho Transformers/vLLM và caveat quantization.
 
 Sau `modal serve`, lấy URL `https://...modal.run`, đặt vào `frontend/.env`:
 
@@ -590,11 +586,11 @@ Kết quả kỳ vọng cho source project là rỗng.
 | Phase 3 | corpus/chunk export trong `training.scripts` |
 | Phase 4 | corpus/chunk export trong `training.scripts` |
 | Phase 5 | JSONL utilities và dataset preparation |
-| Phase 6 | `training.history_answerer.train`, `loss`, `merge_adapter`, `evaluate`; train thẳng vanilla base |
+| Phase 6 | `training.history_answerer.prepare_dataset`, `validate_dataset`, `preflight`, `train`, `loss`, `evaluate`; fresh Qwen3 adapter |
 | Phase 7 | evaluation và benchmark CLIs |
 | Phase 8 | `training.scripts.enrich_corpus` |
 | Phase 9 | `app.rag.retrieval`, `training.scripts.build_index`, `benchmark` |
-| Phase 10 | `training.scripts.merge_model`, `export_artifacts`, Modal uploader |
+| Phase 10 | `training.scripts.export_artifacts`, Modal uploader; shared base cache + ba adapters |
 
 Không notebook nào là workflow bắt buộc và repository source không còn `.ipynb`.
 
@@ -605,10 +601,10 @@ Không notebook nào là workflow bắt buộc và repository source không còn
 | `No module named training` | Chạy ở repository root; package là `training` viết thường. |
 | CUDA OOM khi train | Batch/max length/LoRA rank giảm; gradient accumulation tăng. |
 | T4 lỗi BF16 | Dùng `--no-bf16 --fp16`. |
-| Phase 6 load nhầm checkpoint cũ | Bỏ mọi cờ/path Phase 1; `--model-id` phải trỏ vanilla Qwen2.5 base. |
+| History load nhầm checkpoint cũ | Không dùng Qwen2.5 adapter; `--model-id` phải là vanilla `Qwen/Qwen3-4B-Instruct-2507`. |
 | `/ready` báo thiếu artifact | So layout bằng `artifacts/README.md` và chạy Modal sanity. |
 | Modal không thấy model | Kiểm tra `modal volume ls vn-history-artifacts`; upload vào root, không lồng thêm `vn_history_deployment/`. |
-| Agent controller model không start | Cả hai adapter path phải tồn tại và dùng cùng Qwen3 base ID. |
+| Shared backend không start | Cả ba adapter path phải tồn tại, có tên role riêng và khai báo cùng Qwen3 base ID. |
 | Không có web result | `local-only` cố ý trả rỗng; cấu hình provider/key ở môi trường deploy. |
 | Import FastAPI/pytest lỗi | Cài `requirements.txt` và `requirements-training.txt` trong đúng virtualenv. |
 

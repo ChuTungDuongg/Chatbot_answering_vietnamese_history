@@ -2,9 +2,19 @@
   "phase9_pipeline_version": "phase9_v2_tooluse_grounded_direct",
   "phase10_export_version": "phase10_fastapi_export_v1",
   "model": {
-    "base_model_id": "Qwen/Qwen2.5-3B-Instruct",
-    "deployment_model_path": "history_answerer/model",
-    "merged_stage1_stage2": true,
+    "shared_base_model_id": "Qwen/Qwen3-4B-Instruct-2507",
+    "tokenizer_model_id": "Qwen/Qwen3-4B-Instruct-2507",
+    "backend": "transformers",
+    "base_weights_bundled": false,
+    "role_adapters": {
+      "research": "adapters/research",
+      "evidence": "adapters/evidence",
+      "history": "adapters/history"
+    },
+    "legacy_history_baseline": {
+      "base_model_id": "Qwen/Qwen2.5-3B-Instruct",
+      "legacy_only": true
+    },
     "dtype_preference": "float16_or_bfloat16"
   },
   "retrieval": {

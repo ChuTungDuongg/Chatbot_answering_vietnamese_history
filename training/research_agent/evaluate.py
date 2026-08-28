@@ -66,6 +66,37 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
         if trajectory_class in {"no_tool", "no_tool_needed"}:
             totals["no_tool_rows"] += 1
             totals["no_tool_correct"] += int(pred_action == "finish")
+        predicted_no_tool = pred_action == "finish" and state.step == 1 and not state.observations
+        gold_no_tool = trajectory_class in {"no_tool", "no_tool_needed"}
+        totals["no_tool_predicted"] += int(predicted_no_tool)
+        totals["no_tool_tp"] += int(predicted_no_tool and gold_no_tool)
+        if any(call.tool_name == "search_history" for call in gold_calls):
+            totals["history_search_rows"] += 1
+            totals["history_search_correct"] += int(
+                any(call.tool_name == "search_history" for call in pred_calls)
+            )
+        metadata = gold_row.get("metadata") or {}
+        if metadata.get("boundary_category"):
+            totals["boundary_rows"] += 1
+            totals["boundary_correct"] += int(
+                any(call.tool_name == "search_history" for call in pred_calls)
+            )
+        if metadata.get("no_tool_category") in {"capability", "usage_help", "ui_help"}:
+            totals["meta_rows"] += 1
+            totals["meta_correct"] += int(pred_action == "finish")
+        if trajectory_class == "false_premise" and state.step == 1:
+            totals["false_premise_initial"] += 1
+            totals["false_premise_search_correct"] += int(
+                any(call.tool_name == "search_history" for call in pred_calls)
+            )
+        if any(call.tool_name == "inspect_evidence" for call in gold_calls):
+            totals["search_to_inspect_rows"] += 1
+            totals["search_to_inspect_correct"] += int(
+                any(call.tool_name == "inspect_evidence" for call in pred_calls)
+            )
+        if gold_action == "finish" and any(obs.tool == "inspect_evidence" for obs in state.observations):
+            totals["inspect_to_finish_rows"] += 1
+            totals["inspect_to_finish_correct"] += int(pred_action == "finish")
         if trajectory_class in {"local_only", "no_tool", "no_tool_needed"} and any(call.tool_name == "search_web" for call in pred_calls):
             totals["unnecessary_web"] += 1
         if any(call.tool_name == "search_web" for call in pred_calls) and state.limits.web_searches_left <= 0:
@@ -81,14 +112,33 @@ def evaluate_rows(predictions: list[dict[str, Any]], gold: list[dict[str, Any]])
 
     trajectory_success = sum(value["pred"] == value["gold"] for value in sequences.values())
     ratio = lambda numerator, denominator: numerator / max(denominator, 1)
+    no_tool_precision = ratio(totals["no_tool_tp"], totals["no_tool_predicted"])
+    no_tool_recall = ratio(totals["no_tool_tp"], totals["no_tool_rows"])
     report = {
         "count": count,
+        "action_accuracy": ratio(totals["action_correct"], count),
         "decision_parse_rate": ratio(totals["parsed"], count),
         "tool_selection_accuracy": ratio(totals["tool_correct"], totals["tool_rows"]),
         "argument_validity_rate": ratio(totals["arguments_valid"], totals["tool_rows"]),
         "unknown_tool_rate": ratio(totals["unknown_tool"], count),
         "finish_accuracy": ratio(totals["finish_correct"], sum(1 for row in gold[:count] if _payload(row).get("action") == "finish")),
         "no_tool_accuracy": ratio(totals["no_tool_correct"], totals["no_tool_rows"]),
+        "no_tool_precision": no_tool_precision,
+        "no_tool_recall": no_tool_recall,
+        "no_tool_f1": ratio(2 * no_tool_precision * no_tool_recall, no_tool_precision + no_tool_recall),
+        "history_search_recall": ratio(totals["history_search_correct"], totals["history_search_rows"]),
+        "conversational_prefix_history_search_accuracy": ratio(totals["boundary_correct"], totals["boundary_rows"]),
+        "meta_request_no_tool_accuracy": ratio(totals["meta_correct"], totals["meta_rows"]),
+        "false_premise_initial_search_accuracy": ratio(
+            totals["false_premise_search_correct"], totals["false_premise_initial"]
+        ),
+        "search_to_inspect_accuracy": ratio(
+            totals["search_to_inspect_correct"], totals["search_to_inspect_rows"]
+        ),
+        "inspect_to_finish_accuracy": ratio(
+            totals["inspect_to_finish_correct"], totals["inspect_to_finish_rows"]
+        ),
+        "schema_valid_rate": ratio(totals["parsed"], count),
         "unnecessary_web_search_rate": ratio(totals["unnecessary_web"], count),
         "budget_violation_rate": ratio(totals["budget_violation"], count),
         "trajectory_success_rate": ratio(trajectory_success, len(sequences)),

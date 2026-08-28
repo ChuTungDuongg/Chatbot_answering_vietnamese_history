@@ -1,3 +1,5 @@
+"""LEGACY ONLY: repair shards in the old merged Qwen2.5 History baseline."""
+
 import json
 from pathlib import Path
 

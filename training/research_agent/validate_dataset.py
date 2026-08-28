@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from app.agents.policy_schema import (
     validate_training_decision,
 )
 from training.common.jsonl import read_jsonl
+from training.common.datasets import split_rows
 
 
 def _validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> list[str]:
@@ -70,6 +72,10 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     group_trajectories: dict[str, set[str]] = defaultdict(set)
     classes: Counter[str] = Counter()
     sources: Counter[str] = Counter()
+    no_tool_categories: Counter[str] = Counter()
+    boundary_categories: Counter[str] = Counter()
+    no_tool_rows = 0
+    meta_without_history_lookup = 0
 
     for index, row in enumerate(rows, 1):
         label = f"row {index}"
@@ -123,6 +129,21 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             errors.append(f"{label}: runtime history policy cannot emit tool_batch")
         if row.get("training_target") != decision.model_dump():
             errors.append(f"{label}: training_target differs from assistant decision")
+        trajectory_class = str(row.get("trajectory_class") or "unknown")
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        if trajectory_class == "no_tool":
+            no_tool_rows += 1
+            category = str(metadata.get("no_tool_category") or "other")
+            no_tool_categories[category] += 1
+            if decision.action != "finish":
+                errors.append(f"{label}: no-tool supervision must finish without retrieval")
+            if category in {"capability", "usage_help", "ui_help"}:
+                meta_without_history_lookup += 1
+        boundary_category = str(metadata.get("boundary_category") or "")
+        if boundary_category:
+            boundary_categories[boundary_category] += 1
+            if not isinstance(decision, ToolDecision) or decision.tool_name != "search_history":
+                errors.append(f"{label}: conversational-prefix history boundary must search_history")
         calls = decision.tool_calls if isinstance(decision, ToolBatchDecision) else ([decision] if isinstance(decision, ToolDecision) else [])
         schemas = {tool.name: tool.input_schema for tool in state.tools}
         for call in calls:
@@ -142,7 +163,7 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             if group_id:
                 group_trajectories[group_id].add(trajectory_id)
 
-        classes[str(row.get("trajectory_class") or "unknown")] += 1
+        classes[trajectory_class] += 1
         sources[str(row.get("source_dataset") or row.get("source") or "unknown")] += 1
 
     for trajectory_id, steps in trajectory_steps.items():
@@ -169,6 +190,61 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         warnings.append("dataset contains fewer than two trajectory classes")
     unique_groups = len(group_trajectories)
     unique_trajectories = len(trajectory_identity)
+    split_no_tool_distribution = {"train": 0, "eval": 0, "test": 0}
+    split_class_distribution: dict[str, dict[str, int]] = {"train": {}, "eval": {}, "test": {}}
+    split_row_counts = {"train": 0, "eval": 0, "test": 0}
+    split_groups_count = {"train": 0, "eval": 0, "test": 0}
+    split_group_overlap = {"train_eval": 0, "train_test": 0, "eval_test": 0}
+    near_duplicate_no_tool_cross_split = 0
+    no_tool_group_overlap = 0
+    if rows and all(row.get("group_id") for row in rows):
+        splits = split_rows(
+            rows,
+            seed=42,
+            train_ratio=0.88,
+            eval_ratio=0.06,
+            group_key="group_id",
+            stratify_key="trajectory_class",
+        )
+        split_groups = {
+            name: {str(row["group_id"]) for row in getattr(splits, name)}
+            for name in ("train", "eval", "test")
+        }
+        split_group_overlap = {
+            "train_eval": len(split_groups["train"] & split_groups["eval"]),
+            "train_test": len(split_groups["train"] & split_groups["test"]),
+            "eval_test": len(split_groups["eval"] & split_groups["test"]),
+        }
+        split_row_counts = {name: len(getattr(splits, name)) for name in ("train", "eval", "test")}
+        split_groups_count = {name: len(split_groups[name]) for name in ("train", "eval", "test")}
+        split_class_distribution = {
+            name: dict(Counter(str(row.get("trajectory_class") or "unknown") for row in getattr(splits, name)))
+            for name in ("train", "eval", "test")
+        }
+        no_tool_group_overlap = sum(split_group_overlap.values())
+        split_no_tool_distribution = {
+            name: sum(row.get("trajectory_class") == "no_tool" for row in getattr(splits, name))
+            for name in ("train", "eval", "test")
+        }
+        semantic_groups = {
+            name: {
+                str((row.get("metadata") or {}).get("semantic_group"))
+                for row in getattr(splits, name)
+                if row.get("trajectory_class") == "no_tool" and (row.get("metadata") or {}).get("semantic_group")
+            }
+            for name in ("train", "eval", "test")
+        }
+        near_duplicate_no_tool_cross_split = (
+            len(semantic_groups["train"] & semantic_groups["eval"])
+            + len(semantic_groups["train"] & semantic_groups["test"])
+            + len(semantic_groups["eval"] & semantic_groups["test"])
+        )
+        if any(split_group_overlap.values()):
+            errors.append(f"group leakage across Research splits: {split_group_overlap}")
+        if near_duplicate_no_tool_cross_split:
+            errors.append("near-duplicate no-tool semantic families cross splits")
+        if no_tool_rows and any(value == 0 for value in split_no_tool_distribution.values()):
+            errors.append(f"no-tool supervision missing from a split: {split_no_tool_distribution}")
     return {
         "valid": not errors,
         "rows": len(rows),
@@ -179,6 +255,19 @@ def validate_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_trajectories_per_group": unique_trajectories / max(unique_groups, 1),
         "class_distribution": dict(classes),
         "source_distribution": dict(sources),
+        "no_tool_rows": no_tool_rows,
+        "no_tool_percentage": 100.0 * no_tool_rows / max(len(rows), 1),
+        "no_tool_categories": dict(no_tool_categories),
+        "history_with_conversational_prefix": sum(boundary_categories.values()),
+        "boundary_categories": dict(boundary_categories),
+        "meta_without_history_lookup": meta_without_history_lookup,
+        "split_no_tool_distribution": split_no_tool_distribution,
+        "split_rows": split_row_counts,
+        "split_groups": split_groups_count,
+        "split_class_distribution": split_class_distribution,
+        "split_group_overlap": split_group_overlap,
+        "near_duplicate_no_tool_cross_split": near_duplicate_no_tool_cross_split,
+        "no_tool_group_overlap": no_tool_group_overlap,
         "errors": errors,
         "warnings": warnings,
     }

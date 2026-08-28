@@ -8,9 +8,9 @@
 |---|---|---|
 | `ResearchAgent` | Qwen3 + Research adapter | PLAN/ACTION/OBSERVATION/FINISH, chọn typed tool. |
 | `EvidenceCriticAgent` | Qwen3 + Evidence adapter | Lọc, dedup, conflict check, compress, validate IDs. |
-| `HistoryAnswererAgent` | merged Qwen2.5 History model | Viết grounded Vietnamese answer và citations. |
+| `HistoryAnswererAgent` | Qwen3 + History adapter | Viết grounded Vietnamese answer và citations. |
 
-`SharedAgentModelRuntime` nạp Qwen3 base một lần ở NF4 4-bit, load hai adapter tên `research` và `evidence`, rồi chuyển adapter dưới lock trước generation. Điều này tránh duplicate base weights và ngăn hai request đổi adapter đồng thời.
+`SharedAgentModelRuntime` nạp Qwen3 base một lần ở NF4 4-bit, load ba adapter tên `research`, `evidence`, `history`, rồi chuyển đúng adapter dưới lock trước generation. Metadata base mismatch hoặc role chưa load bị từ chối. `VLLMOpenAIBackend` giữ cùng interface và ba model name nhưng không tự quản lý server.
 
 ## 🔁 Orchestration
 

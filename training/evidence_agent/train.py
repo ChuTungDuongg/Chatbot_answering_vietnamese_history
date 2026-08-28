@@ -10,6 +10,7 @@ from training.common.jsonl import read_jsonl
 from training.evidence_agent.config import EvidenceAgentConfig
 from training.evidence_agent.sft import prepare_evidence_split
 from training.evidence_agent.validate_dataset import validate_rows
+from app.agents.model_registry import validate_role_adapter
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     validate_training_arguments(args)
     if args.init_adapter and args.resume_from_checkpoint:
         raise ValueError("--init-adapter starts a new run and cannot be combined with --resume-from-checkpoint")
+    if args.init_adapter:
+        validate_role_adapter("evidence", args.init_adapter)
     rows = read_jsonl(args.dataset)
     validation = validate_rows(rows)
     if not validation["valid"]:

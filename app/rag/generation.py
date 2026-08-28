@@ -18,6 +18,7 @@ from app.rag.retrieval import (
     match_norm,
 )
 from app.services.rag_service import RAGService
+from app.agents.model_runtime import RoleLLMBackend
 
 
 STRUCTURED_SECTION_SPECS = (
@@ -44,10 +45,12 @@ class RAGGenerator:
         service: RAGService,
         retriever: HybridRetriever,
         temporary_retriever: TemporaryCorpusRetriever | None = None,
+        model_runtime: RoleLLMBackend | None = None,
     ):
         self.service = service
         self.retriever = retriever
         self.temporary_retriever = temporary_retriever
+        self.model_runtime = model_runtime
 
         self.prompt_builder = PromptBuilder(service)
         self.guards = AnswerGuards(service)
@@ -180,7 +183,7 @@ class RAGGenerator:
                 "RAGService has not been loaded."
             )
 
-        if self.service.model is None:
+        if self.service.model is None and self.model_runtime is None:
             raise RuntimeError(
                 "Generation model is not loaded. "
                 "Use APP_MODE=full to enable /api/v1/chat."
@@ -425,6 +428,13 @@ class RAGGenerator:
         min_new_tokens: int = 0,
     ) -> str:
         self._ensure_ready()
+
+        if self.model_runtime is not None:
+            return self.model_runtime.generate_prompt(
+                adapter="history",
+                prompt=prompt,
+                max_new_tokens=max_new_tokens or self.max_new_tokens,
+            )
 
         tokenizer = self.service.tokenizer
         model = self.service.model

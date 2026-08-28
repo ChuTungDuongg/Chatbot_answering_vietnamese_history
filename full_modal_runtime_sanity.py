@@ -1,3 +1,5 @@
+"""LEGACY ONLY: sanity check for the retired merged-Qwen2.5 deployment layout."""
+
 import modal
 
 

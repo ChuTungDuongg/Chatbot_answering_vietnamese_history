@@ -7,7 +7,8 @@ from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.agents.evidence_agent import EvidenceCriticAgent
 from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
+from app.agents.model_registry import SHARED_BASE_MODEL_ID
 from app.agents.orchestrator import AgentOrchestrator
 from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
@@ -61,15 +62,37 @@ async def lifespan(app: FastAPI):
             if retriever is None:
                 raise RuntimeError("Full mode requires the retrieval runtime.")
 
-            generator = RAGGenerator(
-                service=service,
-                retriever=retriever,
-                temporary_retriever=temporary_retriever,
-            )
-
-            if settings.agent_controller == "model":
+            if settings.uses_shared_backend:
+                if settings.shared_base_model_id != SHARED_BASE_MODEL_ID:
+                    raise ValueError("Active shared backend must use the canonical Qwen3 base model ID.")
+                if settings.llm_backend == "transformers":
+                    if any(path is None for path in (
+                        settings.research_agent_adapter_path,
+                        settings.evidence_agent_adapter_path,
+                        settings.history_agent_adapter_path,
+                    )):
+                        raise ValueError("Shared Transformers backend requires Research, Evidence, and History adapter paths.")
+                    assert settings.research_agent_adapter_path is not None
+                    assert settings.evidence_agent_adapter_path is not None
+                    assert settings.history_agent_adapter_path is not None
+                    agent_model_runtime = SharedAgentModelRuntime(
+                        model_id=settings.shared_base_model_id,
+                        research_adapter=settings.research_agent_adapter_path,
+                        evidence_adapter=settings.evidence_agent_adapter_path,
+                        history_adapter=settings.history_agent_adapter_path,
+                        dtype=settings.dtype,
+                    )
+                else:
+                    agent_model_runtime = VLLMOpenAIBackend(
+                        base_url=settings.vllm_base_url,
+                        api_key=settings.vllm_api_key,
+                        tokenizer_id=settings.shared_base_model_id,
+                    )
+                service.tokenizer = agent_model_runtime.tokenizer
+                service.external_generation_backend = True
+            elif settings.agent_controller == "model":
                 if settings.research_agent_model != settings.evidence_agent_model:
-                    raise ValueError("Shared Qwen runtime requires matching Research/Evidence base model IDs.")
+                    raise ValueError("Legacy controller requires matching Research/Evidence base model IDs.")
                 if settings.research_agent_adapter_path is None or settings.evidence_agent_adapter_path is None:
                     raise ValueError("Model agent controller requires both Research and Evidence adapter paths.")
                 agent_model_runtime = SharedAgentModelRuntime(
@@ -78,6 +101,13 @@ async def lifespan(app: FastAPI):
                     evidence_adapter=settings.evidence_agent_adapter_path,
                     dtype=settings.dtype,
                 )
+
+            generator = RAGGenerator(
+                service=service,
+                retriever=retriever,
+                temporary_retriever=temporary_retriever,
+                model_runtime=agent_model_runtime if settings.uses_shared_backend else None,
+            )
 
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
@@ -133,7 +163,7 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description=(
-        "Vietnamese History Hybrid RAG API using Qwen2.5, multilingual E5, FAISS, BM25S, "
+        "Vietnamese History Agentic Hybrid RAG API using a shared Qwen3 base, multilingual E5, FAISS, BM25S, "
         "Reciprocal Rank Fusion, cross-encoder reranking, conversation memory, temporary "
         "document retrieval and grounded-generation guards."
     ),

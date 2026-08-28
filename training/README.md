@@ -15,7 +15,7 @@ training/
 │   ├── sft.py                 # generic assistant-only CE for policy agents
 │   ├── datasets.py            # load/split chat rows
 │   └── jsonl.py               # typed JSONL I/O
-├── history_answerer/          # Qwen2.5 instruction SFT + grounded RAG-SFT
+├── history_answerer/          # fresh Qwen3 grounded RAG-SFT; Qwen2.5 Phase-1 legacy only
 ├── research_agent/            # Qwen3 tool policy
 ├── evidence_agent/            # Qwen3 critic/compressor
 ├── scripts/                   # corpus/index/merge/export/benchmark
@@ -40,23 +40,27 @@ python -m training.research_agent.validate_dataset --help
 python -m training.research_agent.preflight --help
 python -m training.evidence_agent.train --help
 
+python -m training.history_answerer.prepare_dataset
+python -m training.history_answerer.validate_dataset
+python -m training.history_answerer.preflight
 python -m training.history_answerer.train --max-samples 10 --dry-run
 ```
 
-Dry-run chỉ đọc/validate dataset và split, không tải model.
+Dry-run validate dataset/split và chạy tokenizer path thật, nhưng không tải model weights.
 
 ## 🎓 Thứ tự train đề xuất
 
 ```text
-Vanilla Qwen2.5 base
-  → fresh History RAG-SFT adapter
+Một vanilla Qwen3-4B shared base
+  → fresh Evidence adapter
+  → corrective Research history-policy adapter
+  → fresh History grounded adapter
 
 History trajectories → Research Agent QLoRA
 History evidence rows → Evidence Agent QLoRA
 
-Merge History adapter
-  → build corpus/index
-  → export bundle 3-model
+Build corpus/index
+  → export bundle ba adapter (không bundle ba base copies)
   → Modal Volume
 ```
 
@@ -134,11 +138,11 @@ L4/A100 dùng `--bf16 --no-fp16` sau khi preflight xác nhận BF16 support. `--
 | 3 | `scripts/build_corpus.py` + JSONL utils | Chunk/export và dedup theo `chunk_id` |
 | 4 | cùng scripts Phase 3 | Extra-topic packs |
 | 5 | `common/jsonl.py`, dataset preparation | Merge/normalize JSONL |
-| 6 | `history_answerer/train.py`, `merge_adapter.py`, `loss.py`, `evaluate.py` | Vanilla Qwen2.5 → fresh LoRA, source weight 1.6 |
+| 6 | `history_answerer/prepare_dataset.py`, `validate_dataset.py`, `preflight.py`, `train.py`, `loss.py`, `evaluate.py` | Vanilla Qwen3 → fresh History LoRA, source weight 1.6 |
 | 7 | evaluate/benchmark CLIs | Inference sanity và metrics |
 | 8 | `scripts/enrich_corpus.py` | Metadata/year enrichment |
 | 9 | `scripts/build_index.py`, `app/rag/retrieval.py` | FAISS + BM25S + hybrid runtime |
-| 10 | `scripts/merge_model.py`, `export_artifacts.py` | Merge/export deployment bundle |
+| 10 | `scripts/export_artifacts.py` | Shared-base registry + ba adapter + retrieval/corpus |
 
 Không còn `.ipynb` hoặc notebook archive trong source project; mọi workflow bắt buộc đều là Python CLI.
 

@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.model_runtime import RoleLLMBackend
 from app.agents.policy_schema import (
     RESEARCH_AGENT_SYSTEM,
     FinishDecision,
@@ -28,7 +28,7 @@ class ResearchAgent:
         registry: ToolRegistry,
         evidence_store: SessionEvidenceStore,
         generator: RAGGenerator,
-        model_runtime: SharedAgentModelRuntime | None = None,
+        model_runtime: RoleLLMBackend | None = None,
         max_steps: int = 6,
         max_web_searches: int = 3,
         max_page_fetches: int = 5,

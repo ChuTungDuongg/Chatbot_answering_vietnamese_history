@@ -20,6 +20,7 @@ from training.evidence_agent.coverage import (
     GENERIC_MISSING_PREFIX,
     accentfold,
     assess_answer_coverage,
+    audit_selected_evidence_set,
 )
 from training.evidence_agent.conflicts import (
     MODEL_VISIBLE_RESERVED_MARKERS,
@@ -83,6 +84,19 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
     sufficient_with_suspicious_coverage = 0
     duplicate_rows_selecting_all_duplicates = 0
     generic_missing_information_count = 0
+    slot_specific_missing_information_count = 0
+    sufficient_selected_subset_full_coverage = 0
+    sufficient_selected_subset_incomplete = 0
+    single_source_multi_slot_sufficient = 0
+    true_multi_source_sufficient = 0
+    redundant_multi_source_sufficient = 0
+    irrelevant_selected_in_sufficient = 0
+    insufficient_with_partial_support = 0
+    insufficient_partial_selected_empty = 0
+    insufficient_no_support_selected_nonempty = 0
+    partial_missing_slot_specific = 0
+    partial_missing_slot_generic = 0
+    leave_one_out_partial_pairs = 0
     relevance_by_class: dict[str, list[float]] = defaultdict(list)
 
     for index, row in enumerate(rows, 1):
@@ -203,6 +217,7 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
             if accentfold(item).startswith(GENERIC_MISSING_PREFIX)
         ]
         generic_missing_information_count += len(generic_missing)
+        slot_specific_missing_information_count += len(output.missing_information) - len(generic_missing)
         if generic_missing:
             errors.append(f"{label}: generic missing_information is forbidden")
 
@@ -216,13 +231,36 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
                 gold_answer,
                 [candidates[evidence_id].text for evidence_id in selected_ids if evidence_id in candidates],
             )
-            if output.status == "sufficient" and not selected_coverage.full:
-                sufficient_with_suspicious_coverage += 1
-                message = f"{label}: sufficient selected evidence does not cover the gold answer components"
-                if selected_coverage.confident:
-                    errors.append(message)
-                else:
-                    warnings.append(message + " (heuristic)")
+            selected_audit = audit_selected_evidence_set(
+                request.question,
+                gold_answer,
+                {evidence_id: candidates[evidence_id].text for evidence_id in selected_ids if evidence_id in candidates},
+            )
+            if output.status == "sufficient":
+                sufficient_selected_subset_full_coverage += int(selected_audit.complete)
+                sufficient_selected_subset_incomplete += int(not selected_audit.complete)
+                if not selected_audit.complete:
+                    sufficient_with_suspicious_coverage += 1
+                    errors.append(f"{label}: sufficient selected subset is incomplete")
+                if len(selected_audit.item_supported_keys) == 1 and len(selected_audit.supported_keys) >= 2:
+                    single_source_multi_slot_sufficient += 1
+                if selected_audit.complete and len(selected_audit.minimal_ids) >= 2:
+                    true_multi_source_sufficient += 1
+                if selected_audit.redundant_ids:
+                    redundant_multi_source_sufficient += 1
+                    errors.append(f"{label}: sufficient gold selection is not minimal")
+                if selected_audit.irrelevant_ids:
+                    irrelevant_selected_in_sufficient += len(selected_audit.irrelevant_ids)
+                    errors.append(f"{label}: sufficient gold selects irrelevant evidence")
+            if output.status == "insufficient":
+                has_partial = input_coverage.partial
+                insufficient_with_partial_support += int(has_partial)
+                if has_partial and not output.selected_evidence:
+                    insufficient_partial_selected_empty += 1
+                    errors.append(f"{label}: useful partial evidence was discarded")
+                if not input_coverage.useful and output.selected_evidence:
+                    insufficient_no_support_selected_nonempty += 1
+                    errors.append(f"{label}: no-support input must not select evidence")
             if behavior == "partial":
                 if input_coverage.full:
                     partial_with_full_gold_answer_coverage += 1
@@ -230,7 +268,10 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
                 if not selected_coverage.useful:
                     partial_without_useful_coverage += 1
                     errors.append(f"{label}: partial selection supports no required answer component")
+                partial_missing_slot_generic += int(bool(generic_missing))
+                partial_missing_slot_specific += int(bool(output.missing_information) and not generic_missing)
         metadata = row.get("metadata") or {}
+        leave_one_out_partial_pairs += int(bool(metadata.get("leave_one_out")))
         if output.status == "conflicting":
             for conflict in output.conflicts:
                 mentioned = referenced_evidence_ids(conflict, candidates)
@@ -425,6 +466,19 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
         "sufficient_with_suspicious_coverage": sufficient_with_suspicious_coverage,
         "duplicate_rows_selecting_all_duplicates": duplicate_rows_selecting_all_duplicates,
         "generic_missing_information_count": generic_missing_information_count,
+        "slot_specific_missing_information_count": slot_specific_missing_information_count,
+        "sufficient_selected_subset_full_coverage": sufficient_selected_subset_full_coverage,
+        "sufficient_selected_subset_incomplete": sufficient_selected_subset_incomplete,
+        "single_source_multi_slot_sufficient": single_source_multi_slot_sufficient,
+        "true_multi_source_sufficient": true_multi_source_sufficient,
+        "redundant_multi_source_sufficient": redundant_multi_source_sufficient,
+        "irrelevant_selected_in_sufficient": irrelevant_selected_in_sufficient,
+        "insufficient_with_partial_support": insufficient_with_partial_support,
+        "insufficient_partial_selected_empty": insufficient_partial_selected_empty,
+        "insufficient_no_support_selected_nonempty": insufficient_no_support_selected_nonempty,
+        "partial_missing_slot_specific": partial_missing_slot_specific,
+        "partial_missing_slot_generic": partial_missing_slot_generic,
+        "leave_one_out_partial_pairs": leave_one_out_partial_pairs,
         "relevance_status_shortcut_stats": relevance_status_shortcut_stats,
         "relevance_shortcut_detected": relevance_shortcut_detected,
         "errors": errors,
@@ -433,7 +487,7 @@ def validate_rows(rows: list[dict[str, Any]], *, require_v2_behaviors: bool = Tr
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate Evidence Agent v2.2 JSONL against the production runtime contract.")
+    parser = argparse.ArgumentParser(description="Validate Evidence Agent v2.3 JSONL against coverage and runtime contracts.")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--report", default=None)
     parser.add_argument("--allow-partial-fixture", action="store_true", help="Do not require every v2 behavior in tiny fixtures.")
