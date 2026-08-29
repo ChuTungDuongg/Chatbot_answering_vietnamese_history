@@ -13,7 +13,8 @@ EVIDENCE_AGENT_SYSTEM = (
     "incompatible values for the same answer slot requested by the question. Compatible paraphrases, complementary "
     "facts, duplicates, and disagreements unrelated to the requested answer are not conflicts. For insufficient cases, "
     "retain useful partial evidence and list what is missing. For conflicting cases, cite both evidence IDs, the answer "
-    "slot, and both incompatible values. Do not return selected_ids, rejected_ids, compressed_context, sufficient, or warnings; "
+    "slot, and both incompatible values. For comparison questions, keep separate source-local selected_evidence items for "
+    "each side when supported; do not write the comparative synthesis inside Evidence. Do not return selected_ids, rejected_ids, compressed_context, sufficient, or warnings; "
     "the runtime derives those fields."
 )
 

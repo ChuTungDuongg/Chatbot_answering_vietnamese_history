@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from contextlib import suppress
 from types import SimpleNamespace
@@ -73,7 +74,7 @@ def _event_blocks(chunks: list[str]) -> list[tuple[str, dict]]:
     return events
 
 
-def test_stream_emits_typed_evidence_contract_error(tmp_path):
+def test_stream_emits_typed_evidence_contract_error(caplog, tmp_path):
     async def run():
         store, owner_id, conversation_id = _store_with_conversation(tmp_path)
         payload = ChatRequest(
@@ -91,16 +92,23 @@ def test_stream_emits_typed_evidence_contract_error(tmp_path):
             chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
         return _event_blocks(chunks)
 
-    events = asyncio.run(run())
+    with caplog.at_level(logging.WARNING):
+        events = asyncio.run(run())
 
-    assert ("error", {
-        "type": "evidence_contract_error",
-        "stage": "evidence",
-        "code": "grounding_contract_failed",
-        "message": "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.",
-        "evidence_ids": ["ev_01"],
-        "repair_attempted": True,
-    }) in events
+    error = next(data for event, data in events if event == "error")
+    assert error["type"] == "evidence_contract_error"
+    assert error["stage"] == "evidence"
+    assert error["code"] == "grounding_contract_failed"
+    assert error["message"] == "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại."
+    assert error["evidence_ids"] == ["ev_01"]
+    assert error["repair_attempted"] is True
+    assert error["validation_errors"] == []
+    assert "Streaming evidence contract error:" in caplog.text
+    assert "stage=evidence" in caplog.text
+    assert "code=grounding_contract_failed" in caplog.text
+    assert "repair_attempted=true" in caplog.text
+    assert 'evidence_ids=["ev_01"]' in caplog.text
+    assert "validation_errors=[]" in caplog.text
     assert events[-1][0] == "done"
     assert events[-1][1]["status"] == "error"
 

@@ -122,6 +122,42 @@ class ResearchAgent:
             question,
             normalized_history,
         )
+        analysis = self.retrieval_runtime.retriever.analyze_question(question)
+        classifier = getattr(self.retrieval_runtime.retriever, "classify_question", None)
+        classification = classifier(question) if callable(classifier) else {}
+        gate_result = str(classification.get("domain_gate_result") or ("out_of_domain" if classification.get("is_ood") else "in_domain"))
+        if gate_result in {"out_of_domain", "meta", "ambiguous"}:
+            elapsed_ms = (time.perf_counter() - attempt_started) * 1000
+            if telemetry is not None:
+                telemetry.research_ms += elapsed_ms
+                telemetry.retrieval_skipped_due_to_ood = gate_result == "out_of_domain"
+                telemetry.llm_calls_skipped_due_to_ood = True
+            return ResearchResult(
+                question=question,
+                evidence=[],
+                tool_trace=[f"domain_gate:{gate_result}"],
+                is_ood=gate_result == "out_of_domain",
+                ood_reason=str(classification.get("ood_reason") or ""),
+                analysis={
+                    **analysis,
+                    "retrieval_question": retrieval_question,
+                    "history_used_for_retrieval": history_used,
+                    "domain_gate_result": gate_result,
+                    "domain_gate_reason": classification.get("domain_gate_reason"),
+                    **({"intent": classification["intent"]} if classification.get("intent") else {}),
+                },
+                debug={
+                    "steps": 0,
+                    "generation_calls": 0,
+                    "json_repairs": 0,
+                    "elapsed_ms": elapsed_ms,
+                    "tools": [],
+                    "evidence_ids": [],
+                    "retrieval_question": retrieval_question,
+                    "history_used_for_retrieval": history_used,
+                    "domain_gate_result": gate_result,
+                },
+            )
         tool_context = None
         if owner_id or conversation_id or request_id:
             tool_context = ToolExecutionContext(
@@ -151,9 +187,6 @@ class ResearchAgent:
         if telemetry is not None:
             telemetry.research_steps += len(policy_steps)
             telemetry.research_ms += elapsed_ms
-        analysis = self.retrieval_runtime.retriever.analyze_question(question)
-        classifier = getattr(self.retrieval_runtime.retriever, "classify_question", None)
-        classification = classifier(question) if callable(classifier) else {}
         all_evidence = {
             str(item.get("chunk_id")): item
             for item in self.evidence_store.all(session_id)

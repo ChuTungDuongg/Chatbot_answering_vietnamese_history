@@ -13,6 +13,115 @@ from app.telemetry import current_request_telemetry, log_event
 
 
 logger = logging.getLogger(__name__)
+SCOPE_ANSWER = (
+    "Xin lỗi, mình là trợ lý chuyên về lịch sử Việt Nam. Mình có thể giúp bạn "
+    "với các câu hỏi về sự kiện, nhân vật, triều đại và các vấn đề lịch sử Việt Nam."
+)
+META_ANSWER = (
+    "Mình có thể trả lời các câu hỏi về lịch sử Việt Nam, gồm sự kiện, nhân vật, "
+    "triều đại, chiến tranh, văn hóa, kinh tế, tôn giáo và so sánh lịch sử."
+)
+AMBIGUOUS_ANSWER = (
+    "Bạn có thể nói rõ câu hỏi này gắn với giai đoạn, sự kiện hoặc bối cảnh nào "
+    "trong lịch sử Việt Nam không?"
+)
+
+
+def _domain_gate(retriever: Any, question: str) -> dict[str, Any]:
+    classifier = getattr(retriever, "classify_question", None)
+    if not callable(classifier):
+        return {"domain_gate_result": "in_domain", "domain_gate_reason": "classifier_unavailable"}
+    result = dict(classifier(question) or {})
+    result.setdefault("domain_gate_result", "out_of_domain" if result.get("is_ood") else "in_domain")
+    result.setdefault("domain_gate_reason", result.get("ood_reason") or "classifier")
+    return result
+
+
+def _scoped_response(
+    *,
+    question: str,
+    gate: dict[str, Any],
+    mode: str,
+    started: float,
+    answer_depth: str,
+) -> dict[str, Any] | None:
+    gate_result = str(gate.get("domain_gate_result") or "in_domain")
+    if gate_result not in {"out_of_domain", "meta", "ambiguous"}:
+        return None
+
+    answer = {
+        "out_of_domain": SCOPE_ANSWER,
+        "meta": META_ANSWER,
+        "ambiguous": AMBIGUOUS_ANSWER,
+    }[gate_result]
+    status = "blocked_off_topic" if gate_result == "out_of_domain" else gate_result
+    retrieval = {
+        "question": question,
+        "is_ood": gate_result == "out_of_domain",
+        "ood_reason": str(gate.get("ood_reason") or ""),
+        "domain_gate_result": gate_result,
+        "domain_gate_reason": str(gate.get("domain_gate_reason") or ""),
+        "intent": gate.get("intent", {}),
+        "analysis": {"question": question, "facet": gate_result, "facets": [gate_result]},
+        "query_variants": [],
+        "final_context": [],
+        "tool_trace": [f"domain_gate:{gate_result}"],
+    }
+    telemetry = current_request_telemetry()
+    if telemetry is not None:
+        telemetry.domain_gate_result = gate_result
+        telemetry.domain_gate_reason = str(gate.get("domain_gate_reason") or "")
+        telemetry.history_anchor = gate.get("history_anchor")
+        telemetry.ood_anchor = gate.get("ood_anchor")
+        telemetry.domain_margin = gate.get("domain_margin")
+        telemetry.retrieval_skipped_due_to_ood = gate_result == "out_of_domain"
+        telemetry.llm_calls_skipped_due_to_ood = True
+    return {
+        "question": question,
+        "answer": answer,
+        "status": status,
+        "source_ids": [],
+        "source_chunks": [],
+        "model_source_ids": [],
+        "invalid_source_ids": [],
+        "unsupported_years": [],
+        "format_ok": True,
+        "retrieval": retrieval,
+        "analysis": retrieval["analysis"],
+        "prompt_budget": None,
+        "support_score": None,
+        "quality_warnings": [],
+        "rewrite_used": False,
+        "repair_attempted": False,
+        "structured_expansion_used": False,
+        "initial_quality_issues": [],
+        "raw_output": "",
+        "history_message_count": 0,
+        "tool_trace": retrieval["tool_trace"],
+        "latency_sec": time.perf_counter() - started,
+        "total_latency_sec": time.perf_counter() - started,
+        "inference_mode": mode,
+        "agentic": mode == "agentic_rag",
+        "answer_provenance": {
+            "mode": mode,
+            "source": "domain_gate",
+            "guard_short_circuit": True,
+            "guard_name": f"domain_gate:{gate_result}",
+            "research_generation_calls": 0,
+            "evidence_generation_calls": 0,
+            "history_generation_calls": 0,
+            "total_llm_calls": 0,
+            "answer_depth": answer_depth,
+        },
+        "history_debug": {
+            "generation_calls": 0,
+            "input_evidence_ids": [],
+            "input_claim_count": 0,
+            "input_source_kind_counts": {},
+            "input_evidence_preview": [],
+            "answer_depth": answer_depth,
+        },
+    }
 
 
 class HybridRAGOrchestrator:
@@ -40,6 +149,16 @@ class HybridRAGOrchestrator:
     ) -> dict[str, Any]:
         del owner_id, conversation_id
         started = time.perf_counter()
+        gate = _domain_gate(self.retriever, question)
+        scoped = _scoped_response(
+            question=question,
+            gate=gate,
+            mode="hybrid_rag",
+            started=started,
+            answer_depth="standard",
+        )
+        if scoped is not None:
+            return scoped
         selected_final_k = max(1, int(final_k or getattr(self.retriever, "final_context_k", 6)))
         normalized_history = self.retrieval_runtime.normalize_history(
             history,
@@ -67,6 +186,8 @@ class HybridRAGOrchestrator:
             "temporary_context_count": sum(item.get("source_kind") == "attachment" for item in contexts),
             "temporary_context_relevant": False,
             "context_title_diversity": self.retriever.context_title_diversity(contexts),
+            "domain_gate_result": retrieval.get("domain_gate_result") or gate.get("domain_gate_result"),
+            "domain_gate_reason": retrieval.get("domain_gate_reason") or gate.get("domain_gate_reason"),
         })
         tool_trace = [
             *retrieval.get("tool_trace", []),
@@ -94,6 +215,9 @@ class HybridRAGOrchestrator:
             "mode": "hybrid_rag",
             "research_generation_calls": 0,
             "evidence_generation_calls": 0,
+            "history_input_evidence_count": len(result.get("history_debug", {}).get("input_evidence_ids", [])),
+            "history_input_claim_count": result.get("history_debug", {}).get("input_claim_count", 0),
+            "history_input_source_kind_counts": result.get("history_debug", {}).get("input_source_kind_counts", {}),
             "total_llm_calls": int(provenance.get("history_generation_calls") or 0),
         })
         return result
@@ -127,6 +251,42 @@ class AgentOrchestrator:
     ) -> dict[str, Any]:
         started = time.perf_counter()
         session_id = request_id or f"{conversation_id or 'anonymous'}:{uuid.uuid4()}"
+        gate = _domain_gate(self.research_agent.retrieval_runtime.retriever, question)
+        scoped = _scoped_response(
+            question=question,
+            gate=gate,
+            mode="agentic_rag",
+            started=started,
+            answer_depth="deep",
+        )
+        if scoped is not None:
+            scoped["research_debug"] = {
+                "steps": 0,
+                "generation_calls": 0,
+                "attempts": [],
+                "tools": [],
+                "evidence_ids": [],
+                "retrieval_question": question,
+                "prefetch_used": False,
+                "external_fallback_triggered": False,
+            }
+            scoped["evidence_critique"] = {
+                "status": "insufficient",
+                "selected_evidence": [],
+                "selected_ids": [],
+                "sufficient": False,
+            }
+            scoped["evidence_debug"] = {
+                "input_count": 0,
+                "input_ids": [],
+                "model_input_evidence": [],
+                "status": "insufficient",
+                "selected_ids": [],
+                "generation_calls": 0,
+                "repair_used": False,
+                "repair_path": None,
+            }
+            return scoped
         try:
             research = await self.research_agent.run(
                 question,
@@ -246,6 +406,34 @@ class AgentOrchestrator:
             "dropped_reasons": critique.dropped_reasons,
             "source_kind_counts_raw": critique.source_kind_counts_raw,
             "source_kind_counts_visible": critique.source_kind_counts_visible,
+            "question_type": critique.question_type,
+            "first_model_output": critique.first_model_output,
+            "first_validation_issues": critique.first_validation_issues,
+            "final_validation_issues": critique.final_validation_issues,
+            "semantic_guard_findings": critique.semantic_guard_findings,
+            "comparison_targets": critique.comparison_targets,
+            "target_a_candidate_count": critique.target_a_candidate_count,
+            "target_b_candidate_count": critique.target_b_candidate_count,
+            "target_a_model_visible_count": critique.target_a_model_visible_count,
+            "target_b_model_visible_count": critique.target_b_model_visible_count,
+            "comparison_target_coverage": critique.comparison_target_coverage,
+            "rebucket_attempted": (
+                telemetry.evidence_rebucket_attempted if telemetry is not None else False
+            ),
+            "rebucket_succeeded": (
+                telemetry.evidence_rebucket_succeeded if telemetry is not None else False
+            ),
+            "rebucket_moved_claim_count": (
+                telemetry.evidence_rebucket_moved_claim_count if telemetry is not None else 0
+            ),
+            "rebucket_destination_ids": (
+                telemetry.evidence_rebucket_destination_ids if telemetry is not None else []
+            ),
+            "final_validation_result": (
+                telemetry.evidence_final_validation_result if telemetry is not None else (
+                    "pass" if not critique.final_validation_issues else "fail"
+                )
+            ),
             "relevance_guard_triggered": (
                 telemetry.evidence_relevance_guard_triggered if telemetry is not None else False
             ),
@@ -296,6 +484,11 @@ class AgentOrchestrator:
             "evidence_dropped_ids": critique.dropped_ids,
             "evidence_source_kind_counts_raw": critique.source_kind_counts_raw,
             "evidence_source_kind_counts_visible": critique.source_kind_counts_visible,
+            "evidence_question_type": critique.question_type,
+            "evidence_first_validation_issues": critique.first_validation_issues,
+            "evidence_final_validation_issues": critique.final_validation_issues,
+            "comparison_targets": critique.comparison_targets,
+            "comparison_target_coverage": critique.comparison_target_coverage,
             "external_evidence_collected_count": telemetry.external_evidence_collected_count if telemetry is not None else 0,
             "external_evidence_model_visible_count": telemetry.external_evidence_model_visible_count if telemetry is not None else 0,
             "external_evidence_selected_count": telemetry.external_evidence_selected_count if telemetry is not None else 0,
@@ -305,8 +498,15 @@ class AgentOrchestrator:
             "evidence_relevance_guard_triggered": telemetry.evidence_relevance_guard_triggered if telemetry is not None else False,
             "evidence_coverage_guard_triggered": telemetry.evidence_coverage_guard_triggered if telemetry is not None else False,
             "evidence_reconsideration_used": telemetry.evidence_reconsideration_used if telemetry is not None else False,
+            "evidence_rebucket_attempted": telemetry.evidence_rebucket_attempted if telemetry is not None else False,
+            "evidence_rebucket_succeeded": telemetry.evidence_rebucket_succeeded if telemetry is not None else False,
+            "evidence_rebucket_moved_claim_count": telemetry.evidence_rebucket_moved_claim_count if telemetry is not None else 0,
+            "evidence_rebucket_destination_ids": telemetry.evidence_rebucket_destination_ids if telemetry is not None else [],
+            "evidence_final_validation_result": telemetry.evidence_final_validation_result if telemetry is not None else "pass",
             "history_generation_calls": history_generation_calls,
             "history_input_evidence_count": len(result.get("history_debug", {}).get("input_evidence_ids", [])),
+            "history_input_claim_count": result.get("history_debug", {}).get("input_claim_count", 0),
+            "history_input_source_kind_counts": result.get("history_debug", {}).get("input_source_kind_counts", {}),
             "total_llm_calls": total_llm_calls,
         })
         result["total_latency_sec"] = time.perf_counter() - started

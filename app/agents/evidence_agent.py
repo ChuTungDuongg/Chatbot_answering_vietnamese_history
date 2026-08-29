@@ -20,6 +20,7 @@ from app.agents.evidence_validation import (
     normalize_grounding,
     referenced_evidence_ids,
 )
+from app.rag.retrieval import extract_comparison_targets, text_matches_target
 from app.telemetry import current_request_telemetry, log_event
 
 
@@ -43,6 +44,23 @@ SEMANTIC_RELEVANCE_FLOOR = 0.34
 ANALYTICAL_CUES = {
     "nguyen nhan", "vi sao", "tai sao", "dan den", "suy yeu", "y nghia",
     "vai tro", "so sanh", "phan tich", "danh gia", "he qua", "tac dong",
+}
+FACTUAL_PREFIXES = {
+    "ai",
+    "khi nao",
+    "o dau",
+    "nhan vat nao",
+    "vua nao",
+    "tuong nao",
+    "trieu dai nao",
+    "su kien nao",
+    "nam nao",
+}
+FACTUAL_CUES = {
+    "duoc menh danh",
+    "la ai",
+    "ten gi",
+    "ten la gi",
 }
 FACTOR_KEYWORDS = {
     "political": {"chinh tri", "quyen luc", "trieu dinh", "vua", "quan lai", "the che", "lanh dao", "ho quy ly"},
@@ -175,6 +193,19 @@ def _normalized_text(value: str) -> str:
 def _question_is_analytical(question: str) -> bool:
     normalized = _normalized_text(question)
     return any(cue in normalized for cue in ANALYTICAL_CUES)
+
+
+def _evidence_question_type(question: str) -> str:
+    normalized = _normalized_text(question)
+    if len(extract_comparison_targets(question)) >= 2:
+        return "compare"
+    if any(cue in normalized for cue in ANALYTICAL_CUES - {"so sanh"}):
+        return "analysis"
+    if any(normalized == prefix or normalized.startswith(f"{prefix} ") for prefix in FACTUAL_PREFIXES):
+        return "factual"
+    if any(cue in normalized for cue in FACTUAL_CUES):
+        return "factual"
+    return "general"
 
 
 def _question_years(question: str) -> set[str]:
@@ -320,6 +351,28 @@ def _candidate_quality(question: str, item: dict[str, Any]) -> float:
     return max(0.0, quality)
 
 
+def _candidate_matches_target(item: Any, target: str) -> bool:
+    if isinstance(item, dict):
+        title = item.get("title", "")
+        text = item.get("text", "")
+    else:
+        title = getattr(item, "title", "")
+        text = getattr(item, "text", "")
+    return text_matches_target(f"{title or ''} {text or ''}", target)
+
+
+def _candidate_title_matches_target(item: Any, target: str) -> bool:
+    title = item.get("title", "") if isinstance(item, dict) else getattr(item, "title", "")
+    return text_matches_target(str(title or ""), target)
+
+
+def _selected_matches_target(item: SelectedEvidence, candidate: Any, target: str) -> bool:
+    return text_matches_target(
+        f"{getattr(candidate, 'title', '') or ''} {item.compressed_text} {' '.join(item.claims)}",
+        target,
+    )
+
+
 class EvidenceCriticAgent:
     def __init__(
         self,
@@ -352,7 +405,14 @@ class EvidenceCriticAgent:
                 if not self.allow_model_fallback:
                     if isinstance(exc, EvidenceModelContractError):
                         raise
-                    raise EvidenceModelContractError(f"Evidence model output failed canonical schema validation: {exc}") from exc
+                    raise EvidenceModelContractError(
+                        f"Evidence model output failed canonical schema validation: {exc}",
+                        code="invalid_evidence_schema" if isinstance(exc, ValidationError) else "grounding_contract_failed",
+                        validation_errors=[{
+                            "code": type(exc).__name__,
+                            "message": str(exc),
+                        }],
+                    ) from exc
                 critique, contexts = self._deterministic_compress(
                     question,
                     evidence,
@@ -440,12 +500,39 @@ class EvidenceCriticAgent:
             raw_available[chunk_id] = item
 
         visible_limit = min(max(final_k, 1), self.max_contexts)
+        comparison_targets = extract_comparison_targets(question)
+        question_type = _evidence_question_type(question)
         ranked = sorted(
             raw_available.items(),
             key=lambda pair: (_candidate_quality(question, pair[1]), -list(raw_available).index(pair[0])),
             reverse=True,
         )
         selected_ids: list[str] = []
+        target_candidate_counts: list[int] = []
+        if len(comparison_targets) >= 2 and visible_limit >= 2:
+            for target in comparison_targets[:2]:
+                matches = [
+                    (chunk_id, item)
+                    for chunk_id, item in ranked
+                    if _candidate_matches_target(item, target)
+                ]
+                matches.sort(
+                    key=lambda pair: (
+                        _candidate_title_matches_target(pair[1], target),
+                        _candidate_quality(question, pair[1]),
+                    ),
+                    reverse=True,
+                )
+                target_candidate_counts.append(len(matches))
+                best = next((chunk_id for chunk_id, _ in matches if chunk_id not in selected_ids), None)
+                if best is not None:
+                    selected_ids.append(best)
+                if len(selected_ids) >= visible_limit:
+                    break
+        else:
+            target_candidate_counts = [0, 0]
+        while len(target_candidate_counts) < 2:
+            target_candidate_counts.append(0)
         for preferred_kind in ("attachment", "wikipedia", "web", "history"):
             best = next(
                 (
@@ -468,6 +555,12 @@ class EvidenceCriticAgent:
         dropped_ids = [chunk_id for chunk_id in raw_available if chunk_id not in available]
         raw_kind_counts = Counter(_source_kind(item) for item in raw_available.values())
         visible_kind_counts = Counter(_source_kind(item) for item in available.values())
+        target_visible_counts = [
+            sum(1 for item in available.values() if _candidate_matches_target(item, target))
+            for target in comparison_targets[:2]
+        ]
+        while len(target_visible_counts) < 2:
+            target_visible_counts.append(0)
         dropped_reasons = {chunk_id: "budget_not_model_visible" for chunk_id in dropped_ids}
         per_item_limit = min(
             MAX_EVIDENCE_ITEM_CHARS,
@@ -502,6 +595,12 @@ class EvidenceCriticAgent:
             "dropped_source_kinds": {chunk_id: _source_kind(raw_available[chunk_id]) for chunk_id in dropped_ids},
             "source_kind_counts_raw": dict(raw_kind_counts),
             "source_kind_counts_visible": dict(visible_kind_counts),
+            "question_type": question_type,
+            "comparison_targets": comparison_targets[:2],
+            "target_a_candidate_count": target_candidate_counts[0],
+            "target_b_candidate_count": target_candidate_counts[1],
+            "target_a_model_visible_count": target_visible_counts[0],
+            "target_b_model_visible_count": target_visible_counts[1],
         }
         return request, available, budget_report
 
@@ -524,6 +623,10 @@ class EvidenceCriticAgent:
                 "Evidence model returned legacy selected_evidence format list[str]. Retrain or migrate the Evidence Agent.",
                 code="invalid_evidence_schema",
                 repair_attempted=repair_attempted,
+                validation_errors=[{
+                    "code": "legacy_selected_evidence",
+                    "message": "selected_evidence must contain objects, not evidence_id strings.",
+                }],
             )
         try:
             return EvidenceModelOutput.model_validate(output)
@@ -532,6 +635,14 @@ class EvidenceCriticAgent:
                 f"Evidence model returned invalid canonical output: {exc}",
                 code="invalid_evidence_schema",
                 repair_attempted=repair_attempted,
+                validation_errors=[
+                    {
+                        "code": "schema_validation",
+                        "loc": list(error.get("loc", ())),
+                        "message": str(error.get("msg", "")),
+                    }
+                    for error in exc.errors()
+                ],
             ) from exc
 
     def _contract_issues(
@@ -587,6 +698,18 @@ class EvidenceCriticAgent:
                         for evidence_id, other_text in visible_sources.items()
                         if evidence_id != item.evidence_id and grounded_in_source(item.compressed_text, other_text)
                     ]
+                    if not other_sources:
+                        compressed_spans = [
+                            span
+                            for span in _source_sentence_spans(item.compressed_text)
+                            if span and not grounded_in_source(span, source_text)
+                        ]
+                        other_sources = [
+                            evidence_id
+                            for evidence_id, other_text in visible_sources.items()
+                            if evidence_id != item.evidence_id
+                            and any(grounded_in_source(span, other_text) for span in compressed_spans)
+                        ]
                     code = "cross_id_compressed_text" if other_sources else "compressed_not_extractive"
                     recoverable = not other_sources
                 issues.append(EvidenceValidationIssue(
@@ -748,8 +871,15 @@ class EvidenceCriticAgent:
         model_output: EvidenceModelOutput,
         request: EvidenceAgentRequest,
     ) -> dict[str, Any]:
+        question_type = _evidence_question_type(request.question)
+        base_findings: dict[str, Any] = {
+            "question_type": question_type,
+            "guard_policy": f"{question_type}_evidence_policy",
+            "selected_ids": [item.evidence_id for item in model_output.selected_evidence],
+        }
         if model_output.status != "sufficient" or not model_output.selected_evidence or not request.evidence:
             return {
+                **base_findings,
                 "triggered": False,
                 "relevance_triggered": False,
                 "coverage_triggered": False,
@@ -757,6 +887,9 @@ class EvidenceCriticAgent:
                 "candidate_factors": [],
                 "selected_factors": [],
                 "year_conflict_ids": [],
+                "comparison_targets": [],
+                "missing_comparison_targets": [],
+                "comparison_target_coverage": {},
             }
 
         candidates_by_id = {item.evidence_id: item for item in request.evidence}
@@ -790,7 +923,21 @@ class EvidenceCriticAgent:
             for item in model_output.selected_evidence
             if item.evidence_id in candidates_by_id
         ]
+        selected_direct_scores = [
+            (
+                item.evidence_id,
+                _semantic_score(
+                    request.question,
+                    title=candidates_by_id[item.evidence_id].title,
+                    text=f"{item.compressed_text} {' '.join(item.claims)}",
+                    retrieval_score=None,
+                ),
+            )
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+        ]
         best_selected = max((score for _, score in selected_scores), default=0.0)
+        best_direct_selected = max((score for _, score in selected_direct_scores), default=0.0)
         best_unselected_score, best_unselected_id = next(
             ((score, evidence_id) for score, evidence_id, _ in ranked if evidence_id not in selected_ids),
             (0.0, None),
@@ -842,6 +989,32 @@ class EvidenceCriticAgent:
         if year_conflict_ids:
             relevance_triggered = True
 
+        if (
+            question_type == "factual"
+            and not year_conflict_ids
+            and not weak_selected_ids
+            and best_direct_selected >= SEMANTIC_RELEVANCE_FLOOR
+        ):
+            return {
+                **base_findings,
+                "triggered": False,
+                "relevance_triggered": False,
+                "coverage_triggered": False,
+                "best_candidate_ids": [],
+                "best_unselected_id": best_unselected_id,
+                "best_unselected_score": best_unselected_score,
+                "best_selected_score": best_selected,
+                "best_direct_selected_score": best_direct_selected,
+                "weak_selected_ids": [],
+                "year_conflict_ids": [],
+                "candidate_factors": [],
+                "selected_factors": [],
+                "comparison_targets": [],
+                "missing_comparison_targets": [],
+                "comparison_target_coverage": {},
+                "guard_policy": "accept_valid_factual_first_pass",
+            }
+
         analytical = _question_is_analytical(request.question)
         strong_candidates: list[tuple[float, str, set[str]]] = []
         seen_factor_fingerprints: set[tuple[str, ...]] = set()
@@ -864,25 +1037,96 @@ class EvidenceCriticAgent:
             for item in model_output.selected_evidence
             if item.evidence_id in candidates_by_id
         )) if selected_ids else set()
-        coverage_triggered = (
-            analytical
-            and len(strong_candidates) >= 2
-            and len(candidate_factors) >= 2
-            and len(selected_factors) < min(2, len(candidate_factors))
-        )
+        comparison_targets = extract_comparison_targets(request.question)
+        comparison_target_coverage: dict[str, bool] = {}
+        missing_comparison_targets: list[str] = []
+        comparison_candidate_ids: list[str] = []
+        if len(comparison_targets) >= 2:
+            for target in comparison_targets[:2]:
+                target_candidates = [
+                    (score, evidence_id, candidate)
+                    for score, evidence_id, candidate in ranked
+                    if score >= SEMANTIC_RELEVANCE_FLOOR
+                    and not _title_year_conflicts_question(request.question, candidate.title)
+                    and _candidate_matches_target(candidate, target)
+                ]
+                target_candidates.sort(
+                    key=lambda value: (
+                        _candidate_title_matches_target(value[2], target),
+                        value[0],
+                    ),
+                    reverse=True,
+                )
+                target_has_title_candidate = any(
+                    _candidate_title_matches_target(candidate, target)
+                    for _, _, candidate in target_candidates
+                )
+                target_selected = any(
+                    item.evidence_id in candidates_by_id
+                    and _selected_matches_target(item, candidates_by_id[item.evidence_id], target)
+                    and (
+                        not target_has_title_candidate
+                        or _candidate_title_matches_target(candidates_by_id[item.evidence_id], target)
+                    )
+                    for item in model_output.selected_evidence
+                )
+                target_has_candidate = bool(target_candidates)
+                comparison_target_coverage[target] = target_selected
+                if target_has_candidate and not target_selected:
+                    missing_comparison_targets.append(target)
+                if target_candidates:
+                    best_target_id = target_candidates[0][1]
+                    if best_target_id not in comparison_candidate_ids:
+                        comparison_candidate_ids.append(best_target_id)
+            if (
+                not missing_comparison_targets
+                and relevance_triggered
+                and best_unselected_id is not None
+                and not weak_selected_ids
+                and not year_conflict_ids
+            ):
+                best_unselected_candidate = candidates_by_id.get(best_unselected_id)
+                if best_unselected_candidate is not None and not any(
+                    _candidate_title_matches_target(best_unselected_candidate, target)
+                    for target in comparison_targets[:2]
+                ):
+                    relevance_triggered = False
+            if not missing_comparison_targets:
+                relevance_triggered = bool(year_conflict_ids)
+        if len(comparison_targets) >= 2:
+            coverage_triggered = bool(missing_comparison_targets)
+        else:
+            coverage_triggered = (
+                analytical
+                and len(strong_candidates) >= 2
+                and len(candidate_factors) >= 2
+                and len(selected_factors) < min(2, len(candidate_factors))
+            )
 
         return {
+            **base_findings,
             "triggered": relevance_triggered or coverage_triggered,
             "relevance_triggered": relevance_triggered,
             "coverage_triggered": coverage_triggered,
-            "best_candidate_ids": [evidence_id for _, evidence_id, _ in strong_candidates[: self.max_contexts]],
+            "best_candidate_ids": (
+                _dedupe_preserve_order(comparison_candidate_ids)
+                if len(comparison_targets) >= 2
+                else _dedupe_preserve_order([
+                    *comparison_candidate_ids,
+                    *[evidence_id for _, evidence_id, _ in strong_candidates[: self.max_contexts]],
+                ])
+            ),
             "best_unselected_id": best_unselected_id,
             "best_unselected_score": best_unselected_score,
             "best_selected_score": best_selected,
+            "best_direct_selected_score": best_direct_selected,
             "weak_selected_ids": weak_selected_ids,
             "year_conflict_ids": year_conflict_ids,
             "candidate_factors": sorted(candidate_factors),
             "selected_factors": sorted(selected_factors),
+            "comparison_targets": comparison_targets[:2],
+            "missing_comparison_targets": missing_comparison_targets,
+            "comparison_target_coverage": comparison_target_coverage,
         }
 
     def _semantic_reconsideration_messages(
@@ -919,9 +1163,24 @@ class EvidenceCriticAgent:
         findings: dict[str, Any],
     ) -> EvidenceModelOutput | None:
         selected: list[SelectedEvidence] = []
-        candidate_ids = findings.get("best_candidate_ids") or []
-        if findings.get("best_unselected_id") and findings["best_unselected_id"] not in candidate_ids:
+        candidate_ids = list(findings.get("best_candidate_ids") or [])
+        comparison_targets = extract_comparison_targets(request.question)
+        if (
+            findings.get("question_type") == "analysis"
+            and findings.get("coverage_triggered")
+            and not findings.get("relevance_triggered")
+        ):
+            candidate_ids = [
+                *list(findings.get("selected_ids") or []),
+                *candidate_ids,
+            ]
+        if (
+            len(comparison_targets) < 2
+            and findings.get("best_unselected_id")
+            and findings["best_unselected_id"] not in candidate_ids
+        ):
             candidate_ids = [findings["best_unselected_id"], *candidate_ids]
+        candidate_ids = _dedupe_preserve_order([str(evidence_id) for evidence_id in candidate_ids])
         weak_selected_ids = set(findings.get("weak_selected_ids") or [])
         year_conflict_ids = set(findings.get("year_conflict_ids") or [])
         candidates_by_id = {item.evidence_id: item for item in request.evidence}
@@ -961,6 +1220,169 @@ class EvidenceCriticAgent:
                 conflicts=[],
                 missing_information=[],
                 summary="Các bằng chứng đã giữ lại trả lời trực tiếp câu hỏi: "
+                + ", ".join(item.evidence_id for item in selected)
+                + ".",
+            )
+        except ValidationError:
+            return None
+
+    def _source_local_parse_failure_output(
+        self,
+        request: EvidenceAgentRequest,
+        *,
+        question_type: str,
+    ) -> EvidenceModelOutput | None:
+        if question_type == "compare":
+            return self._comparison_parse_failure_output(request)
+
+        ranked = sorted(
+            request.evidence,
+            key=lambda item: _semantic_score(
+                request.question,
+                title=item.title,
+                text=item.text,
+                retrieval_score=item.retrieval_score,
+            ),
+            reverse=True,
+        )
+        max_selected = 1 if question_type == "factual" else min(request.max_selected, 4)
+        max_claims = 2 if question_type == "factual" else 3
+        selected: list[SelectedEvidence] = []
+        selected_factors: set[str] = set()
+        for candidate in ranked:
+            if _title_year_conflicts_question(request.question, candidate.title):
+                continue
+            claims = _best_candidate_claims(request.question, candidate, max_claims=max_claims)
+            if not claims:
+                continue
+            claim_text = " ".join(claims)
+            claim_score = _semantic_score(
+                request.question,
+                title=None,
+                text=claim_text,
+                retrieval_score=None,
+            )
+            if claim_score < SEMANTIC_RELEVANCE_FLOOR:
+                continue
+            if question_type == "analysis":
+                candidate_factors = _text_factor_labels(f"{candidate.title or ''} {claim_text}")
+                if candidate_factors and candidate_factors <= selected_factors and len(selected) >= 2:
+                    continue
+                selected_factors.update(candidate_factors)
+            selected.append(SelectedEvidence(
+                evidence_id=candidate.evidence_id,
+                relevance=claim_score,
+                claims=claims,
+                compressed_text=claim_text,
+            ))
+            if len(selected) >= max_selected:
+                break
+
+        if not selected:
+            try:
+                return EvidenceModelOutput(
+                    status="insufficient",
+                    selected_evidence=[],
+                    conflicts=[],
+                    missing_information=[
+                        "Không tìm thấy bằng chứng nguồn-cục bộ đủ trực tiếp sau lỗi JSON của Evidence."
+                    ],
+                    summary="Evidence model emitted invalid JSON; deterministic source-local recovery found no direct grounded claim.",
+                )
+            except ValidationError:
+                return None
+        try:
+            return EvidenceModelOutput(
+                status="sufficient",
+                selected_evidence=selected,
+                conflicts=[],
+                missing_information=[],
+                summary="Evidence model emitted invalid JSON; selected source-local grounded evidence: "
+                + ", ".join(item.evidence_id for item in selected)
+                + ".",
+            )
+        except ValidationError:
+            return None
+
+    def _parse_failure_output(
+        self,
+        request: EvidenceAgentRequest,
+    ) -> EvidenceModelOutput | None:
+        question_type = _evidence_question_type(request.question)
+        if question_type == "compare":
+            return self._comparison_parse_failure_output(request)
+        return self._source_local_parse_failure_output(request, question_type=question_type)
+
+    def _comparison_parse_failure_output(
+        self,
+        request: EvidenceAgentRequest,
+    ) -> EvidenceModelOutput | None:
+        comparison_targets = extract_comparison_targets(request.question)
+        if len(comparison_targets) < 2:
+            return None
+
+        ranked = sorted(
+            request.evidence,
+            key=lambda item: _semantic_score(
+                request.question,
+                title=item.title,
+                text=item.text,
+                retrieval_score=item.retrieval_score,
+            ),
+            reverse=True,
+        )
+        selected: list[SelectedEvidence] = []
+        selected_ids: set[str] = set()
+        for target in comparison_targets[:2]:
+            target_ranked = [
+                item
+                for item in ranked
+                if item.evidence_id not in selected_ids
+                and not _title_year_conflicts_question(request.question, item.title)
+                and _candidate_matches_target(item, target)
+            ]
+            target_ranked.sort(
+                key=lambda item: (
+                    _candidate_title_matches_target(item, target),
+                    _semantic_score(
+                        request.question,
+                        title=item.title,
+                        text=item.text,
+                        retrieval_score=item.retrieval_score,
+                    ),
+                ),
+                reverse=True,
+            )
+            candidate = target_ranked[0] if target_ranked else None
+            if candidate is None:
+                continue
+            claims = _best_candidate_claims(request.question, candidate)
+            if not claims:
+                continue
+            selected.append(SelectedEvidence(
+                evidence_id=candidate.evidence_id,
+                relevance=_semantic_score(
+                    request.question,
+                    title=None,
+                    text=" ".join(claims),
+                    retrieval_score=None,
+                ),
+                claims=claims,
+                compressed_text=" ".join(claims),
+            ))
+            selected_ids.add(candidate.evidence_id)
+            if len(selected) >= request.max_selected:
+                break
+
+        if not selected:
+            return None
+        try:
+            return EvidenceModelOutput(
+                status="sufficient",
+                selected_evidence=selected,
+                conflicts=[],
+                missing_information=[],
+                summary="Evidence model emitted invalid JSON; selected source-local comparison evidence: "
                 + ", ".join(item.evidence_id for item in selected)
                 + ".",
             )
@@ -1039,14 +1461,36 @@ class EvidenceCriticAgent:
         generation_calls: int,
         repair_used: bool,
         repair_path: str | None,
+        first_model_output: dict[str, Any] | None,
+        first_validation_issues: list[dict[str, Any]],
+        final_validation_issues: list[dict[str, Any]],
+        semantic_guard_findings: dict[str, Any],
     ) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
         selected = model_output.selected_evidence[: self.max_contexts]
         contexts: list[dict[str, Any]] = []
         for item in selected:
             context = dict(available[item.evidence_id])
             context["text"] = item.compressed_text or str(context.get("text", ""))
+            context["claims"] = list(item.claims)
             contexts.append(context)
         selected_ids = [item.evidence_id for item in selected]
+        comparison_coverage = {}
+        for target in budget_report.get("comparison_targets", []):
+            target_has_title_candidate = any(
+                _candidate_title_matches_target(request_item, str(target))
+                for request_item in request.evidence
+                if _candidate_matches_target(request_item, str(target))
+            )
+            comparison_coverage[str(target)] = any(
+                _selected_matches_target(item, request_item, str(target))
+                and (
+                    not target_has_title_candidate
+                    or _candidate_title_matches_target(request_item, str(target))
+                )
+                for item in selected
+                for request_item in request.evidence
+                if request_item.evidence_id == item.evidence_id
+            )
         critique = EvidenceCritique(
             status=model_output.status,
             selected_evidence=selected,
@@ -1079,6 +1523,17 @@ class EvidenceCriticAgent:
             dropped_reasons=dict(budget_report["dropped_reasons"]),
             source_kind_counts_raw=dict(budget_report["source_kind_counts_raw"]),
             source_kind_counts_visible=dict(budget_report["source_kind_counts_visible"]),
+            question_type=str(budget_report.get("question_type") or _evidence_question_type(question)),
+            first_model_output=first_model_output,
+            first_validation_issues=first_validation_issues,
+            final_validation_issues=final_validation_issues,
+            semantic_guard_findings=semantic_guard_findings,
+            comparison_targets=list(budget_report.get("comparison_targets", [])),
+            target_a_candidate_count=int(budget_report.get("target_a_candidate_count", 0)),
+            target_b_candidate_count=int(budget_report.get("target_b_candidate_count", 0)),
+            target_a_model_visible_count=int(budget_report.get("target_a_model_visible_count", 0)),
+            target_b_model_visible_count=int(budget_report.get("target_b_model_visible_count", 0)),
+            comparison_target_coverage=comparison_coverage,
             generation_calls=generation_calls,
             repair_used=repair_used,
             repair_path=repair_path,
@@ -1105,6 +1560,16 @@ class EvidenceCriticAgent:
         generation_calls = 1
         repair_used = False
         repair_path: str | None = None
+        first_model_output: dict[str, Any] | None = None
+        first_validation_issues: list[dict[str, Any]] = []
+        final_validation_issues: list[dict[str, Any]] = []
+        semantic_guard_findings: dict[str, Any] = {
+            "question_type": str(budget_report.get("question_type") or _evidence_question_type(question)),
+            "guard_policy": f"{budget_report.get('question_type') or _evidence_question_type(question)}_evidence_policy",
+            "triggered": False,
+            "relevance_triggered": False,
+            "coverage_triggered": False,
+        }
         log_event(
             "EVIDENCE_START",
             request_id=request_id,
@@ -1114,6 +1579,7 @@ class EvidenceCriticAgent:
             final_k=final_k,
             per_item_limit=len(request.evidence[0].text) if request.evidence else 0,
             text_budget=EVIDENCE_TEXT_BUDGET,
+            question_type=budget_report.get("question_type"),
         )
         if telemetry is not None:
             telemetry.evidence_candidate_count = len(request.evidence)
@@ -1123,6 +1589,11 @@ class EvidenceCriticAgent:
             telemetry.evidence_dropped_ids = list(budget_report["dropped_ids"])
             telemetry.evidence_source_kind_counts_raw = dict(budget_report["source_kind_counts_raw"])
             telemetry.evidence_source_kind_counts_visible = dict(budget_report["source_kind_counts_visible"])
+            telemetry.comparison_targets = list(budget_report["comparison_targets"])
+            telemetry.target_a_candidate_count = int(budget_report["target_a_candidate_count"])
+            telemetry.target_b_candidate_count = int(budget_report["target_b_candidate_count"])
+            telemetry.target_a_model_visible_count = int(budget_report["target_a_model_visible_count"])
+            telemetry.target_b_model_visible_count = int(budget_report["target_b_model_visible_count"])
             telemetry.external_evidence_collected_count = sum(
                 count for kind, count in telemetry.evidence_source_kind_counts_raw.items()
                 if kind in {"wikipedia", "web"}
@@ -1148,19 +1619,75 @@ class EvidenceCriticAgent:
         )
         log_event("EVIDENCE_GENERATION_START", request_id=request_id, generation_number=1)
         generation_started = time.perf_counter()
-        output = self.model_runtime.generate_json(
-            adapter="evidence",
-            messages=self._evidence_messages(request),
-            max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
-            repair=False,
-        )
+        try:
+            output = self.model_runtime.generate_json(
+                adapter="evidence",
+                messages=self._evidence_messages(request),
+                max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
+                repair=False,
+            )
+            model_output = self._parse_model_output(output)
+            first_model_output = model_output.model_dump()
+        except (ValueError, ValidationError, EvidenceModelContractError, KeyError, TypeError) as exc:
+            if isinstance(exc, EvidenceModelContractError):
+                raise
+            parse_failure_question_type = _evidence_question_type(question)
+            deterministic_output = self._parse_failure_output(request)
+            deterministic_issues = (
+                self._contract_issues(deterministic_output, visible_sources)
+                if deterministic_output is not None
+                else [EvidenceValidationIssue(
+                    code="invalid_evidence_schema",
+                    message=(
+                        "Evidence model emitted invalid JSON and deterministic source-local "
+                        f"{parse_failure_question_type} recovery was unavailable."
+                    ),
+                    recoverable=False,
+                )]
+            )
+            log_event(
+                "EVIDENCE_PARSE_FAILURE",
+                request_id=request_id,
+                error_type=type(exc).__name__,
+                question_type=parse_failure_question_type,
+                deterministic_recovery_attempted=True,
+                deterministic_recovery_succeeded=bool(deterministic_output and not deterministic_issues),
+                remaining_issue_codes=[issue.code for issue in deterministic_issues],
+            )
+            if deterministic_output is None or deterministic_issues:
+                raise EvidenceModelContractError(
+                    f"Evidence model output failed canonical schema validation: {exc}",
+                    code=(
+                        exc.code
+                        if isinstance(exc, EvidenceModelContractError)
+                        else "invalid_evidence_schema" if isinstance(exc, ValidationError) else "grounding_contract_failed"
+                    ),
+                    evidence_ids=exc.evidence_ids if isinstance(exc, EvidenceModelContractError) else [],
+                    repair_attempted=exc.repair_attempted if isinstance(exc, EvidenceModelContractError) else False,
+                    validation_errors=[
+                        *(
+                            exc.validation_errors
+                            if isinstance(exc, EvidenceModelContractError) and exc.validation_errors
+                            else [{"code": type(exc).__name__, "message": str(exc)}]
+                        ),
+                        *[issue.as_dict() for issue in deterministic_issues],
+                    ],
+                ) from exc
+            model_output = deterministic_output
+            first_model_output = None
+            repair_used = True
+            repair_path = "deterministic_parse_failure"
+            if telemetry is not None:
+                telemetry.evidence_recovery_used = True
+        first_pass_latency_ms = (time.perf_counter() - generation_started) * 1000
+        if telemetry is not None:
+            telemetry.evidence_first_pass_latency_ms += first_pass_latency_ms
         log_event(
             "EVIDENCE_GENERATION_END",
             request_id=request_id,
             generation_number=1,
-            elapsed_ms=(time.perf_counter() - generation_started) * 1000,
+            elapsed_ms=first_pass_latency_ms,
         )
-        model_output = self._parse_model_output(output)
         log_event(
             "EVIDENCE_PARSE_RESULT",
             request_id=request_id,
@@ -1172,6 +1699,8 @@ class EvidenceCriticAgent:
             },
         )
         issues = self._contract_issues(model_output, visible_sources)
+        first_validation_issues = [issue.as_dict() for issue in issues]
+        final_validation_issues = list(first_validation_issues)
 
         if issues:
             repair_path = "deterministic" if all(issue.recoverable for issue in issues) else "hard_failure"
@@ -1225,6 +1754,7 @@ class EvidenceCriticAgent:
                     if telemetry is not None:
                         telemetry.evidence_recovery_used = True
                     issues = []
+                    final_validation_issues = []
                 elif rebucket_issues:
                     self._log_validation_failed(request_id, rebucket_issues, "failed_after_rebucket")
                     self._raise_contract_error(rebucket_issues, repair_attempted=False)
@@ -1232,7 +1762,7 @@ class EvidenceCriticAgent:
             if not all(issue.recoverable for issue in issues):
                 self._raise_contract_error(issues, repair_attempted=False)
 
-            if any(issue.code == "claim_not_extractive" for issue in issues):
+            if any(issue.code == "claim_not_extractive" for issue in issues) and not extract_comparison_targets(question):
                 self._raise_contract_error(issues, repair_attempted=False)
 
             if issues:
@@ -1274,65 +1804,39 @@ class EvidenceCriticAgent:
                     repair_path = "deterministic"
                     if telemetry is not None:
                         telemetry.evidence_recovery_used = True
+                    final_validation_issues = []
                 else:
                     self._raise_contract_error(recovered_issues, repair_attempted=False)
 
-        guard_findings = self._semantic_guard_findings(model_output, request)
-        if guard_findings["triggered"]:
-            telemetry = current_request_telemetry()
-            if telemetry is not None:
-                telemetry.evidence_relevance_guard_triggered = (
-                    telemetry.evidence_relevance_guard_triggered
-                    or bool(guard_findings["relevance_triggered"])
-                )
-                telemetry.evidence_coverage_guard_triggered = (
-                    telemetry.evidence_coverage_guard_triggered
-                    or bool(guard_findings["coverage_triggered"])
-                )
-            log_event(
-                "EVIDENCE_SEMANTIC_GUARD_TRIGGERED",
-                request_id=request_id,
-                relevance_triggered=guard_findings["relevance_triggered"],
-                coverage_triggered=guard_findings["coverage_triggered"],
-                best_candidate_ids=guard_findings["best_candidate_ids"],
-                selected_ids=[item.evidence_id for item in model_output.selected_evidence],
-                candidate_factors=guard_findings["candidate_factors"],
-                selected_factors=guard_findings["selected_factors"],
-            )
-            reconsidered_output: EvidenceModelOutput | None = None
-            try:
-                generation_calls += 1
-                if telemetry is not None:
-                    telemetry.evidence_reconsideration_used = True
-                log_event("EVIDENCE_RECONSIDERATION_START", request_id=request_id)
-                reconsidered_raw = self.model_runtime.generate_json(
-                    adapter="evidence",
-                    messages=self._semantic_reconsideration_messages(
-                        request=request,
-                        invalid_output=model_output,
-                        findings=guard_findings,
-                    ),
-                    max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
-                    repair=False,
-                )
-                reconsidered_output = self._parse_model_output(
-                    reconsidered_raw,
-                    repair_attempted=True,
-                )
-                reconsidered_issues = self._contract_issues(reconsidered_output, visible_sources)
-                if reconsidered_issues:
-                    self._raise_contract_error(reconsidered_issues, repair_attempted=True)
-                reconsidered_guard = self._semantic_guard_findings(reconsidered_output, request)
-                if not reconsidered_guard["triggered"]:
-                    model_output = reconsidered_output
-                    repair_used = True
-                    repair_path = "semantic_reconsideration"
-                else:
-                    guard_findings = reconsidered_guard
-            finally:
-                log_event("EVIDENCE_RECONSIDERATION_END", request_id=request_id)
-
+        guard_started = time.perf_counter()
+        try:
+            guard_findings = self._semantic_guard_findings(model_output, request)
+            semantic_guard_findings = dict(guard_findings)
             if guard_findings["triggered"]:
+                telemetry = current_request_telemetry()
+                if telemetry is not None:
+                    telemetry.evidence_relevance_guard_triggered = (
+                        telemetry.evidence_relevance_guard_triggered
+                        or bool(guard_findings["relevance_triggered"])
+                    )
+                    telemetry.evidence_coverage_guard_triggered = (
+                        telemetry.evidence_coverage_guard_triggered
+                        or bool(guard_findings["coverage_triggered"])
+                    )
+                    log_event(
+                        "EVIDENCE_SEMANTIC_GUARD_TRIGGERED",
+                        request_id=request_id,
+                        relevance_triggered=guard_findings["relevance_triggered"],
+                        coverage_triggered=guard_findings["coverage_triggered"],
+                        best_candidate_ids=guard_findings["best_candidate_ids"],
+                        selected_ids=[item.evidence_id for item in model_output.selected_evidence],
+                        candidate_factors=guard_findings["candidate_factors"],
+                        selected_factors=guard_findings["selected_factors"],
+                        comparison_targets=guard_findings.get("comparison_targets", []),
+                        comparison_target_coverage=guard_findings.get("comparison_target_coverage", {}),
+                        question_type=guard_findings.get("question_type"),
+                        guard_policy=guard_findings.get("guard_policy"),
+                    )
                 deterministic_output = self._semantic_guard_output(
                     request=request,
                     findings=guard_findings,
@@ -1346,15 +1850,123 @@ class EvidenceCriticAgent:
                         recoverable=False,
                     )]
                 )
-                if deterministic_output is None or deterministic_issues:
-                    self._raise_contract_error(deterministic_issues, repair_attempted=True)
-                model_output = deterministic_output
-                repair_used = True
-                repair_path = "deterministic_semantic_guard"
-                if telemetry is not None:
-                    telemetry.evidence_recovery_used = True
+                deterministic_guard = (
+                    self._semantic_guard_findings(deterministic_output, request)
+                    if deterministic_output is not None and not deterministic_issues
+                    else {"triggered": True}
+                )
+                if deterministic_output is not None and not deterministic_issues and not deterministic_guard["triggered"]:
+                    model_output = deterministic_output
+                    repair_used = True
+                    repair_path = "deterministic_semantic_guard"
+                    guard_findings = deterministic_guard
+                    semantic_guard_findings = dict(deterministic_guard)
+                    final_validation_issues = []
+                    if telemetry is not None:
+                        telemetry.evidence_recovery_used = True
+                        telemetry.comparison_target_coverage = dict(
+                            deterministic_guard.get("comparison_target_coverage") or {}
+                        )
+                else:
+                    final_validation_issues = [issue.as_dict() for issue in deterministic_issues]
+                    log_event(
+                        "EVIDENCE_DETERMINISTIC_GUARD_FALLBACK",
+                        request_id=request_id,
+                        success=False,
+                        remaining_issue_codes=[issue.code for issue in deterministic_issues],
+                    )
+                reconsidered_output: EvidenceModelOutput | None = None
+                if guard_findings["triggered"]:
+                    reconsideration_started = time.perf_counter()
+                    try:
+                        generation_calls += 1
+                        if telemetry is not None:
+                            telemetry.evidence_reconsideration_used = True
+                        log_event("EVIDENCE_RECONSIDERATION_START", request_id=request_id)
+                        reconsidered_raw = self.model_runtime.generate_json(
+                            adapter="evidence",
+                            messages=self._semantic_reconsideration_messages(
+                                request=request,
+                                invalid_output=model_output,
+                                findings=guard_findings,
+                            ),
+                            max_new_tokens=int(ROLE_MODELS["evidence"].generation["max_new_tokens"]),
+                            repair=False,
+                        )
+                        reconsidered_output = self._parse_model_output(
+                            reconsidered_raw,
+                            repair_attempted=True,
+                        )
+                        reconsidered_issues = self._contract_issues(reconsidered_output, visible_sources)
+                        if reconsidered_issues:
+                            self._raise_contract_error(reconsidered_issues, repair_attempted=True)
+                        reconsidered_guard = self._semantic_guard_findings(reconsidered_output, request)
+                        if not reconsidered_guard["triggered"]:
+                            model_output = reconsidered_output
+                            repair_used = True
+                            repair_path = "semantic_reconsideration"
+                            guard_findings = reconsidered_guard
+                            semantic_guard_findings = dict(reconsidered_guard)
+                            final_validation_issues = []
+                        else:
+                            guard_findings = reconsidered_guard
+                            semantic_guard_findings = dict(reconsidered_guard)
+                    finally:
+                        elapsed_reconsideration_ms = (time.perf_counter() - reconsideration_started) * 1000
+                        if telemetry is not None:
+                            telemetry.evidence_reconsideration_latency_ms += elapsed_reconsideration_ms
+                        log_event(
+                            "EVIDENCE_RECONSIDERATION_END",
+                            request_id=request_id,
+                            elapsed_ms=elapsed_reconsideration_ms,
+                        )
+
+                    if guard_findings["triggered"]:
+                        deterministic_output = self._semantic_guard_output(
+                            request=request,
+                            findings=guard_findings,
+                        )
+                        deterministic_issues = (
+                            self._contract_issues(deterministic_output, visible_sources)
+                            if deterministic_output is not None
+                            else [EvidenceValidationIssue(
+                                code="semantic_guard_failed",
+                                message="Evidence semantic guard could not build grounded replacement evidence.",
+                                recoverable=False,
+                            )]
+                        )
+                        if deterministic_output is None or deterministic_issues:
+                            final_validation_issues = [issue.as_dict() for issue in deterministic_issues]
+                            self._raise_contract_error(deterministic_issues, repair_attempted=True)
+                        model_output = deterministic_output
+                        repair_used = True
+                        repair_path = "deterministic_semantic_guard"
+                        guard_findings = self._semantic_guard_findings(model_output, request)
+                        semantic_guard_findings = dict(guard_findings)
+                        final_validation_issues = []
+                        if telemetry is not None:
+                            telemetry.evidence_recovery_used = True
+        finally:
+            elapsed_guard_ms = (time.perf_counter() - guard_started) * 1000
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.evidence_guard_latency_ms += elapsed_guard_ms
+            log_event(
+                "EVIDENCE_GUARD_END",
+                request_id=request_id,
+                elapsed_ms=elapsed_guard_ms,
+                triggered=bool(semantic_guard_findings.get("triggered")),
+                question_type=semantic_guard_findings.get("question_type"),
+                guard_policy=semantic_guard_findings.get("guard_policy"),
+            )
 
         model_output = self._summary_consistent_with_selected(model_output, visible_sources)
+        final_contract_issues = self._contract_issues(model_output, visible_sources)
+        final_validation_issues = [issue.as_dict() for issue in final_contract_issues]
+        if final_contract_issues:
+            self._raise_contract_error(final_contract_issues, repair_attempted=repair_used)
+        if telemetry is not None:
+            telemetry.evidence_final_validation_result = "pass"
         critique, contexts = self._critique_from_output(
             model_output,
             available=available,
@@ -1364,6 +1976,10 @@ class EvidenceCriticAgent:
             generation_calls=generation_calls,
             repair_used=repair_used,
             repair_path=repair_path,
+            first_model_output=first_model_output,
+            first_validation_issues=first_validation_issues,
+            final_validation_issues=final_validation_issues,
+            semantic_guard_findings=semantic_guard_findings,
         )
         logger.info(
             "evidence_complete",
@@ -1382,6 +1998,7 @@ class EvidenceCriticAgent:
         if telemetry is not None:
             telemetry.evidence_ms += elapsed_ms
             telemetry.evidence_selected_count = len(contexts)
+            telemetry.comparison_target_coverage = dict(critique.comparison_target_coverage)
             telemetry.external_evidence_selected_count = sum(
                 1 for context in contexts if _source_kind(context) in {"wikipedia", "web"}
             )

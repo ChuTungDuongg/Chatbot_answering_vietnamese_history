@@ -115,6 +115,13 @@ def _consume_task_exception(task: asyncio.Task) -> None:
 
 
 def _evidence_contract_error_payload(exc: EvidenceModelContractError) -> dict[str, Any]:
+    diagnostics = {
+        "stage": exc.stage,
+        "code": exc.code,
+        "evidence_ids": exc.evidence_ids,
+        "repair_attempted": exc.repair_attempted,
+        "validation_errors": exc.validation_errors,
+    }
     return {
         "type": "evidence_contract_error",
         "stage": exc.stage,
@@ -122,7 +129,20 @@ def _evidence_contract_error_payload(exc: EvidenceModelContractError) -> dict[st
         "message": exc.user_message,
         "evidence_ids": exc.evidence_ids,
         "repair_attempted": exc.repair_attempted,
+        "validation_errors": exc.validation_errors,
+        "diagnostics": diagnostics,
     }
+
+
+def _format_evidence_contract_error(prefix: str, exc: EvidenceModelContractError) -> str:
+    return (
+        f"{prefix}:\n"
+        f"stage={exc.stage}\n"
+        f"code={exc.code}\n"
+        f"repair_attempted={json.dumps(exc.repair_attempted)}\n"
+        f"evidence_ids={json.dumps(exc.evidence_ids, ensure_ascii=False)}\n"
+        f"validation_errors={json.dumps(exc.validation_errors, ensure_ascii=False)}"
+    )
 
 
 def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
@@ -197,6 +217,11 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
         "is_ood": retrieval.get("is_ood", False),
         "ood_reason": retrieval.get("ood_reason", ""),
         "global_ood_reason": retrieval.get("global_ood_reason"),
+        "domain_gate_result": retrieval.get("domain_gate_result"),
+        "domain_gate_reason": retrieval.get("domain_gate_reason"),
+        "history_anchor": (retrieval.get("intent") or {}).get("history_anchor"),
+        "ood_anchor": (retrieval.get("intent") or {}).get("ood_anchor"),
+        "domain_margin": (retrieval.get("intent") or {}).get("margin"),
         "query_variants": retrieval.get("query_variants", []),
         "retrieval_question": retrieval.get("retrieval_question"),
         "history_message_count": result.get("history_message_count", 0),
@@ -241,6 +266,7 @@ def _execute_chat(
     telemetry = RequestTelemetry(
         request_id=request_id,
         inference_mode=selected_mode,
+        selected_inference_mode=selected_mode,
         deployment_id=getattr(service, "deployment_id", None),
         gpu=_gpu_name(),
         cold_start_included=False,
@@ -404,12 +430,13 @@ async def chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except EvidenceModelContractError as exc:
         logger.warning(
-            "Chat evidence contract error",
+            _format_evidence_contract_error("Chat evidence contract error", exc),
             extra={
                 "stage": exc.stage,
                 "code": exc.code,
                 "evidence_ids": exc.evidence_ids,
                 "repair_attempted": exc.repair_attempted,
+                "validation_errors": exc.validation_errors,
             },
         )
         raise HTTPException(
@@ -535,12 +562,13 @@ async def chat_stream(
             return
         except EvidenceModelContractError as exc:
             logger.warning(
-                "Streaming evidence contract error",
+                _format_evidence_contract_error("Streaming evidence contract error", exc),
                 extra={
                     "stage": exc.stage,
                     "code": exc.code,
                     "evidence_ids": exc.evidence_ids,
                     "repair_attempted": exc.repair_attempted,
+                    "validation_errors": exc.validation_errors,
                 },
             )
             yield _sse("error", _evidence_contract_error_payload(exc))

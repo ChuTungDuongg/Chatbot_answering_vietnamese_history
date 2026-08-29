@@ -355,7 +355,7 @@ def test_evidence_relevance_guard_rejects_weak_buddhism_only_selection():
         final_k=4,
     )
 
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 1
     assert critique.repair_path == "deterministic_semantic_guard"
     assert critique.sufficient is True
     assert critique.selected_ids != [TRAN_WEAK_ID]
@@ -386,6 +386,54 @@ def test_evidence_summary_only_mentions_retained_selected_ids():
 
     assert TRAN_SOCIAL_ID in critique.summary
     assert TRAN_POLITICAL_ID not in critique.summary
+
+
+def test_factual_direct_evidence_accepts_valid_first_pass_without_reconsideration():
+    question = "Ai được mệnh danh là anh cả Quân đội Nhân dân Việt Nam?"
+    claim = "Đại tướng Võ Nguyên Giáp được mệnh danh là anh cả của Quân đội Nhân dân Việt Nam."
+    runtime = FakeEvidenceModel([{
+        "status": "sufficient",
+        "selected_evidence": [{
+            "evidence_id": "vo_nguyen_giap",
+            "relevance": 1.0,
+            "claims": [claim],
+            "compressed_text": claim,
+        }],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Bằng chứng trực tiếp trả lời câu hỏi.",
+    }])
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        question,
+        [
+            {
+                "chunk_id": "vo_nguyen_giap",
+                "title": "Võ Nguyên Giáp",
+                "text": claim,
+                "source_kind": "history",
+                "final_retrieval_score": 0.98,
+            },
+            {
+                "chunk_id": "dien_bien",
+                "title": "Chiến thắng Điện Biên Phủ",
+                "text": "Chiến thắng Điện Biên Phủ năm 1954 là thắng lợi quân sự lớn.",
+                "source_kind": "history",
+                "final_retrieval_score": 0.8,
+            },
+        ],
+        final_k=2,
+    )
+
+    assert len(runtime.calls) == 1
+    assert critique.question_type == "factual"
+    assert critique.repair_path is None
+    assert critique.semantic_guard_findings["guard_policy"] == "accept_valid_factual_first_pass"
+    assert critique.semantic_guard_findings["coverage_triggered"] is False
+    assert critique.semantic_guard_findings["relevance_triggered"] is False
+    assert critique.first_validation_issues == []
+    assert critique.final_validation_issues == []
+    assert contexts[0]["claims"] == [claim]
 
 
 def test_cause_coverage_guard_prevents_unjustified_single_factor_collapse():

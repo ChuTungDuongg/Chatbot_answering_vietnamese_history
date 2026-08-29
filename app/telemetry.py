@@ -29,6 +29,7 @@ class GenerationMetric:
 class RequestTelemetry:
     request_id: str
     inference_mode: str | None = None
+    selected_inference_mode: str | None = None
     deployment_id: str | None = None
     gpu: str | None = None
     started: float = field(default_factory=time.perf_counter)
@@ -43,6 +44,13 @@ class RequestTelemetry:
     external_fallback_triggered: bool = False
     tool_calls: int = 0
     tool_calls_by_type: dict[str, int] = field(default_factory=dict)
+    domain_gate_result: str | None = None
+    domain_gate_reason: str | None = None
+    history_anchor: float | None = None
+    ood_anchor: float | None = None
+    domain_margin: float | None = None
+    retrieval_skipped_due_to_ood: bool = False
+    llm_calls_skipped_due_to_ood: bool = False
     retrieval_ms: float = 0.0
     wikipedia_calls: int = 0
     wikipedia_search_count: int = 0
@@ -75,6 +83,15 @@ class RequestTelemetry:
     evidence_rebucket_moved_claim_count: int = 0
     evidence_rebucket_destination_ids: list[str] = field(default_factory=list)
     evidence_final_validation_result: str | None = None
+    comparison_targets: list[str] = field(default_factory=list)
+    target_a_candidate_count: int = 0
+    target_b_candidate_count: int = 0
+    target_a_model_visible_count: int = 0
+    target_b_model_visible_count: int = 0
+    comparison_target_coverage: dict[str, bool] = field(default_factory=dict)
+    evidence_first_pass_latency_ms: float = 0.0
+    evidence_guard_latency_ms: float = 0.0
+    evidence_reconsideration_latency_ms: float = 0.0
     duplicate_inspect_skipped: bool = False
     wikipedia_query: str | None = None
     wikipedia_candidate_titles: list[str] = field(default_factory=list)
@@ -82,6 +99,9 @@ class RequestTelemetry:
     wikipedia_year_conflict_rejections: int = 0
     history_ms: float = 0.0
     history_generation_calls: int = 0
+    history_input_evidence_count: int = 0
+    history_input_claim_count: int = 0
+    history_input_source_kind_counts: dict[str, int] = field(default_factory=dict)
     generation_metrics: list[GenerationMetric] = field(default_factory=list)
 
     def next_call_index(self) -> int:
@@ -124,6 +144,7 @@ class RequestTelemetry:
         return {
             "request_id": self.request_id,
             "inference_mode": self.inference_mode,
+            "selected_inference_mode": self.selected_inference_mode or self.inference_mode,
             "deployment_id": self.deployment_id,
             "gpu": self.gpu,
             "result": result,
@@ -141,6 +162,13 @@ class RequestTelemetry:
             "external_fallback_triggered": self.external_fallback_triggered,
             "tool_calls": self.tool_calls,
             "tool_calls_by_type": self.tool_calls_by_type,
+            "domain_gate_result": self.domain_gate_result,
+            "domain_gate_reason": self.domain_gate_reason,
+            "history_anchor": self.history_anchor,
+            "ood_anchor": self.ood_anchor,
+            "domain_margin": self.domain_margin,
+            "retrieval_skipped_due_to_ood": self.retrieval_skipped_due_to_ood,
+            "llm_calls_skipped_due_to_ood": self.llm_calls_skipped_due_to_ood,
             "retrieval_ms": self.retrieval_ms,
             "wikipedia_calls": self.wikipedia_calls,
             "wikipedia_search_count": self.wikipedia_search_count,
@@ -174,6 +202,15 @@ class RequestTelemetry:
             "evidence_rebucket_moved_claim_count": self.evidence_rebucket_moved_claim_count,
             "evidence_rebucket_destination_ids": self.evidence_rebucket_destination_ids,
             "evidence_final_validation_result": self.evidence_final_validation_result,
+            "comparison_targets": self.comparison_targets,
+            "target_a_candidate_count": self.target_a_candidate_count,
+            "target_b_candidate_count": self.target_b_candidate_count,
+            "target_a_model_visible_count": self.target_a_model_visible_count,
+            "target_b_model_visible_count": self.target_b_model_visible_count,
+            "comparison_target_coverage": self.comparison_target_coverage,
+            "evidence_first_pass_latency_ms": self.evidence_first_pass_latency_ms,
+            "evidence_guard_latency_ms": self.evidence_guard_latency_ms,
+            "evidence_reconsideration_latency_ms": self.evidence_reconsideration_latency_ms,
             "duplicate_inspect_skipped": self.duplicate_inspect_skipped,
             "wikipedia_query": self.wikipedia_query,
             "wikipedia_candidate_titles": self.wikipedia_candidate_titles,
@@ -181,6 +218,12 @@ class RequestTelemetry:
             "wikipedia_year_conflict_rejections": self.wikipedia_year_conflict_rejections,
             "history_ms": self.history_ms,
             "history_generation_calls": self.history_generation_calls,
+            "history_input_evidence_count": self.history_input_evidence_count,
+            "history_input_claim_count": self.history_input_claim_count,
+            "history_input_source_kind_counts": self.history_input_source_kind_counts,
+            "research_latency_ms": self.research_ms,
+            "history_latency_ms": self.history_ms,
+            "total_latency_ms": (time.perf_counter() - self.started) * 1000,
             "total_llm_calls": self.total_llm_calls,
             "per_role_latency_ms": {
                 "research": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "research"),

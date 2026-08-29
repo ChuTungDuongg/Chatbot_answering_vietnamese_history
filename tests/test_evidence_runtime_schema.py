@@ -30,7 +30,10 @@ class FakeRuntime:
                 )
             )
         index = min(len(self.calls) - 1, len(self.outputs) - 1)
-        return self.outputs[index]
+        output = self.outputs[index]
+        if isinstance(output, Exception):
+            raise output
+        return output
 
 
 def _canonical(text: str, *, evidence_id: str = "ev_01"):
@@ -84,6 +87,64 @@ def test_runtime_accepts_canonical_output_and_derives_transport_fields():
     assert critique.sufficient is True
     assert contexts[0]["text"] == text
     assert runtime.calls[0]["messages"][0]["content"] == EVIDENCE_AGENT_SYSTEM
+
+
+def test_runtime_reports_evidence_policy_and_guard_latency_in_telemetry():
+    text = "Đại tướng Võ Nguyên Giáp được mệnh danh là anh cả của Quân đội Nhân dân Việt Nam."
+    runtime = FakeRuntime(_canonical(text, evidence_id="vo_nguyen_giap"))
+    telemetry = RequestTelemetry(request_id="req-factual-policy")
+    token = set_request_telemetry(telemetry)
+    try:
+        critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+            "Ai được mệnh danh là anh cả Quân đội Nhân dân Việt Nam?",
+            [{"chunk_id": "vo_nguyen_giap", "title": "Võ Nguyên Giáp", "text": text}],
+            final_k=1,
+            request_id="req-factual-policy",
+        )
+    finally:
+        reset_request_telemetry(token)
+
+    summary = telemetry.summary(result="success")
+    assert critique.question_type == "factual"
+    assert critique.semantic_guard_findings["guard_policy"] == "accept_valid_factual_first_pass"
+    assert critique.first_model_output is not None
+    assert critique.first_validation_issues == []
+    assert critique.final_validation_issues == []
+    assert contexts[0]["claims"] == [text]
+    assert summary["evidence_first_pass_latency_ms"] >= 0
+    assert summary["evidence_guard_latency_ms"] >= 0
+    assert summary["evidence_reconsideration_latency_ms"] == 0
+    assert summary["evidence_final_validation_result"] == "pass"
+
+
+def test_factual_parse_failure_uses_source_local_recovery_without_reconsideration():
+    text = "Đại tướng Võ Nguyên Giáp được mệnh danh là anh cả của Quân đội Nhân dân Việt Nam."
+    runtime = FakeRuntime([ValueError("Model output does not contain a JSON object.")])
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        "Ai được mệnh danh là anh cả Quân đội Nhân dân Việt Nam?",
+        [
+            {
+                "chunk_id": "vo_nguyen_giap",
+                "title": "Võ Nguyên Giáp",
+                "text": text,
+                "source_kind": "history",
+                "final_retrieval_score": 0.95,
+            }
+        ],
+        final_k=2,
+        request_id="req-factual-parse-recovery",
+    )
+
+    assert len(runtime.calls) == 1
+    assert critique.question_type == "factual"
+    assert critique.repair_used is True
+    assert critique.repair_path == "deterministic_parse_failure"
+    assert critique.sufficient is True
+    assert critique.selected_ids == ["vo_nguyen_giap"]
+    assert critique.selected_evidence[0].claims == [text]
+    assert critique.semantic_guard_findings["guard_policy"] == "accept_valid_factual_first_pass"
+    assert contexts[0]["claims"] == [text]
 
 
 def test_runtime_rejects_legacy_list_of_ids_with_clear_diagnostic():

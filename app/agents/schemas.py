@@ -112,6 +112,17 @@ class EvidenceCritique(BaseModel):
     dropped_reasons: dict[str, str] = Field(default_factory=dict)
     source_kind_counts_raw: dict[str, int] = Field(default_factory=dict)
     source_kind_counts_visible: dict[str, int] = Field(default_factory=dict)
+    question_type: str = "general"
+    first_model_output: dict[str, Any] | None = None
+    first_validation_issues: list[dict[str, Any]] = Field(default_factory=list)
+    final_validation_issues: list[dict[str, Any]] = Field(default_factory=list)
+    semantic_guard_findings: dict[str, Any] = Field(default_factory=dict)
+    comparison_targets: list[str] = Field(default_factory=list)
+    target_a_candidate_count: int = 0
+    target_b_candidate_count: int = 0
+    target_a_model_visible_count: int = 0
+    target_b_model_visible_count: int = 0
+    comparison_target_coverage: dict[str, bool] = Field(default_factory=dict)
     generation_calls: int = 0
     repair_used: bool = False
     repair_path: str | None = None

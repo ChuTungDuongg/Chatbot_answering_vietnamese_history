@@ -63,13 +63,29 @@ OOD_ANCHORS = [
     "tình yêu quan hệ cá nhân hẹn hò",
 ]
 
+META_PATTERNS = [
+    r"^(xin chao|chao|hello|hi)\b",
+    r"ban co the lam gi|ban lam duoc gi|tro ly.*lam gi",
+    r"ban dung nguon nao|nguon nao|lay nguon tu dau",
+    r"hybrid rag.*agentic rag|agentic rag.*hybrid rag|hybrid khac agentic",
+]
+
+HISTORY_DOMAIN_PATTERNS = [
+    r"lich su|su viet|viet nam|dai viet|van lang|au lac",
+    r"cach mang|khoi nghia|khang chien|chien dich|chien thang|tran ",
+    r"bach dang|dien bien phu|thang tam|geneve|doc lap|bac thuoc|phap thuoc",
+    r"nha ly|nha tran|nha le|nha nguyen|tay son|chua nguyen|trinh nguyen",
+    r"thoi ly|thoi tran|thoi le|thoi nguyen|phong kien|trieu dai",
+    r"vua |tuong |lanh tu|anh hung dan toc|nhan vat lich su",
+]
+
 EXPLICIT_OOD_PATTERNS = [
-    r"\bpython\b|\bjavascript\b|\bjava\b|lap trinh|viet code|debug|\bapi\b",
+    r"\bpython\b|\bjavascript\b|\bjava\b|lap trinh|viet code|doan code|hello world|debug|\bapi\b",
     r"thoi tiet|nhiet do hom nay|du bao mua|do am hom nay",
     r"\bmessi\b|\bronaldo\b|premier league|champions league|ti so bong da|world cup 20\d\d",
-    r"cong thuc nau|nau mon|chien bao lau|luoc bao lau",
-    r"giai phuong trinh|dao ham|tich phan|tinh \d+\s*[+*/-]",
-    r"trieu chung|lieu thuoc|uong thuoc|dau bung|sot bao nhieu",
+    r"cong thuc nau|nau mon|nau pho|pho bo|chien bao lau|luoc bao lau",
+    r"giai phuong trinh|phuong trinh|dao ham|tich phan|tinh \d+\s*[+*/-]|x\^?2",
+    r"trieu chung|lieu thuoc|uong thuoc|dau bung|dau hong|viem hong|sot bao nhieu|bi benh|y hoc hien dai",
     r"gia bitcoin|gia co phieu|ty gia hom nay|mua coin",
     r"iphone|samsung|dien thoai nao",
     r"dich cau|dich sang tieng viet|translate",
@@ -189,6 +205,41 @@ FACET_TO_METADATA = {
     "content": {"noi dung"},
     "features": {"dac diem"},
 }
+
+
+def extract_comparison_targets(question: str) -> list[str]:
+    original = clean_text(question)
+    normalized = match_norm(original)
+    if not re.search(r"\bso sanh\b|khac nhau|giong nhau|doi chieu", normalized):
+        return []
+
+    body = re.sub(
+        r"^\s*(hãy\s+|hay\s+)?(so\s+sánh|so sanh|đối\s+chiếu|doi chieu)\s+",
+        "",
+        original,
+        flags=re.I,
+    )
+    body = re.sub(r"\s+(khác nhau|giong nhau|giống nhau)\s+(như thế nào|ra sao)?\??\s*$", "", body, flags=re.I)
+    body = re.sub(r"\s+(như thế nào|ra sao)\??\s*$", "", body, flags=re.I)
+    body = body.strip(" .?!:;")
+    if not body:
+        return []
+
+    parts = re.split(r"\s+(?:và|va|với|voi)\s+|[,;/]+", body, maxsplit=2, flags=re.I)
+    targets = [part.strip(" .?!:;") for part in parts if part.strip(" .?!:;")]
+    return targets[:2] if len(targets) >= 2 else []
+
+
+def text_matches_target(text: str, target: str) -> bool:
+    target_norm = match_norm(target)
+    text_norm = match_norm(text)
+    if not target_norm or not text_norm:
+        return False
+    target_terms = [term for term in target_norm.split() if len(term) > 2]
+    if not target_terms:
+        return target_norm in text_norm
+    hits = sum(1 for term in target_terms if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", text_norm))
+    return target_norm in text_norm or hits >= max(1, min(len(target_terms), 2))
 
 
 # ============================================================
@@ -369,12 +420,49 @@ class HybridRetriever:
 
     def classify_question(self, question: str) -> dict[str, Any]:
         """Run the lightweight anchor intent guard without corpus retrieval."""
-        intent = self.intent_scores(clean_text(question))
+        question = clean_text(question)
+        normalized = match_norm(question)
+        intent = self.intent_scores(question)
         public_intent = {key: value for key, value in intent.items() if key != "query_embedding"}
-        is_ood = bool(intent["explicit_ood"] and intent["margin"] < self.ood_anchor_margin)
+        explicit_meta = any(re.search(pattern, normalized, flags=re.I) for pattern in META_PATTERNS)
+        explicit_history = any(re.search(pattern, normalized, flags=re.I) for pattern in HISTORY_DOMAIN_PATTERNS)
+        explicit_year = bool(re.search(r"(?<!\d)(9[0-9]{2}|1[0-9]{3}|20[0-9]{2})(?!\d)", normalized))
+        comparison_targets = extract_comparison_targets(question)
+
+        if explicit_meta:
+            result = "meta"
+            reason = "meta_request"
+        elif explicit_history or comparison_targets or (explicit_year and intent["history_anchor"] >= intent["ood_anchor"]):
+            result = "in_domain"
+            reason = "history_signal"
+        elif intent["explicit_ood"]:
+            result = "out_of_domain"
+            reason = "explicit_ood"
+        elif intent["margin"] < self.secondary_ood_margin:
+            result = "out_of_domain"
+            reason = "anchor_guard"
+        elif abs(float(intent["margin"])) < self.ood_anchor_margin:
+            result = "ambiguous"
+            reason = "low_domain_margin"
+        else:
+            result = "in_domain"
+            reason = "history_anchor"
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.domain_gate_result = result
+            telemetry.domain_gate_reason = reason
+            telemetry.history_anchor = float(intent["history_anchor"])
+            telemetry.ood_anchor = float(intent["ood_anchor"])
+            telemetry.domain_margin = float(intent["margin"])
         return {
-            "is_ood": is_ood,
-            "ood_reason": "explicit_ood+anchor_guard" if is_ood else "",
+            "is_ood": result == "out_of_domain",
+            "ood_reason": reason if result == "out_of_domain" else "",
+            "domain_gate_result": result,
+            "domain_gate_reason": reason,
+            "history_anchor": float(intent["history_anchor"]),
+            "ood_anchor": float(intent["ood_anchor"]),
+            "domain_margin": float(intent["margin"]),
+            "comparison_targets": comparison_targets,
             "intent": public_intent,
         }
 
@@ -407,10 +495,14 @@ class HybridRetriever:
             if facet != "time"
         ]
 
+        comparison_targets = extract_comparison_targets(question) if "compare" in facets else []
+
         return {
             "question": question,
+            "facet": facets[0],
             "facets": facets,
             "years": years,
+            "comparison_targets": comparison_targets,
             "is_multi_part": len(meaningful_facets) >= 2,
         }
 
@@ -813,26 +905,25 @@ class HybridRetriever:
 
         analysis = self.analyze_question(question)
         query_variants = self.plan_query_variants(question)
-        intent = self.intent_scores(question)
-
-        public_intent = {
-            key: value
-            for key, value in intent.items()
-            if key != "query_embedding"
-        }
+        classification = self.classify_question(question)
+        public_intent = classification.get("intent", {})
 
         # ----------------------------------------------------
-        # OOD guard 1
+        # Shared domain gate: no corpus retrieval for scoped exits.
         # ----------------------------------------------------
 
-        if (
-            intent["explicit_ood"]
-            and intent["margin"] < self.ood_anchor_margin
-        ):
+        if classification.get("domain_gate_result") in {"out_of_domain", "meta", "ambiguous"}:
+            gate_result = str(classification.get("domain_gate_result"))
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.retrieval_skipped_due_to_ood = gate_result == "out_of_domain"
+                telemetry.llm_calls_skipped_due_to_ood = gate_result in {"out_of_domain", "meta", "ambiguous"}
             result = {
                 "question": question,
-                "is_ood": True,
-                "ood_reason": "explicit_ood+anchor_guard",
+                "is_ood": gate_result == "out_of_domain",
+                "ood_reason": str(classification.get("ood_reason") or ""),
+                "domain_gate_result": gate_result,
+                "domain_gate_reason": str(classification.get("domain_gate_reason") or ""),
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
@@ -843,9 +934,23 @@ class HybridRetriever:
                 "tool_trace": [
                     "question_analyzer",
                     "query_planner",
-                    "ood_guard:block",
+                    f"domain_gate:{gate_result}",
                 ],
             }
+            log_event(
+                "RETRIEVAL_COMPLETE",
+                request_id=request_id,
+                embedding_ms=embedding_ms,
+                faiss_ms=0.0,
+                bm25_ms=0.0,
+                fusion_ms=0.0,
+                reranker_ms=0.0,
+                total_ms=(time.perf_counter() - retrieve_started) * 1000,
+                candidate_count=0,
+                reranker_pair_count=0,
+                final_count=0,
+            )
+            return result
 
         # ----------------------------------------------------
         # Dense + BM25 for all query variants
@@ -896,13 +1001,15 @@ class HybridRetriever:
         # ----------------------------------------------------
 
         if (
-            intent["margin"] < self.secondary_ood_margin
+            float(public_intent.get("margin", 0.0)) < self.secondary_ood_margin
             and max_dense < self.secondary_min_dense
         ):
             result = {
                 "question": question,
                 "is_ood": True,
                 "ood_reason": "weak_history_retrieval+anchor_guard",
+                "domain_gate_result": "out_of_domain",
+                "domain_gate_reason": "weak_history_retrieval+anchor_guard",
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
@@ -917,20 +1024,6 @@ class HybridRetriever:
                     "ood_guard:block",
                 ],
             }
-            log_event(
-                "RETRIEVAL_COMPLETE",
-                request_id=request_id,
-                embedding_ms=embedding_ms,
-                faiss_ms=faiss_ms,
-                bm25_ms=bm25_ms,
-                fusion_ms=fusion_ms,
-                reranker_ms=reranker_ms,
-                total_ms=(time.perf_counter() - retrieve_started) * 1000,
-                candidate_count=0,
-                reranker_pair_count=0,
-                final_count=0,
-            )
-            return result
             log_event(
                 "RETRIEVAL_COMPLETE",
                 request_id=request_id,
@@ -962,6 +1055,8 @@ class HybridRetriever:
                 "question": question,
                 "is_ood": False,
                 "ood_reason": "",
+                "domain_gate_result": "in_domain",
+                "domain_gate_reason": str(classification.get("domain_gate_reason") or ""),
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
@@ -1070,6 +1165,8 @@ class HybridRetriever:
             "question": question,
             "is_ood": False,
             "ood_reason": "",
+            "domain_gate_result": "in_domain",
+            "domain_gate_reason": str(classification.get("domain_gate_reason") or ""),
             "intent": public_intent,
             "analysis": analysis,
             "query_variants": query_variants,

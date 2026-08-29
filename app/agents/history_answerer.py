@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import Counter
 from typing import Any
 
 from app.agents.history_contract import (
@@ -11,9 +12,11 @@ from app.agents.history_contract import (
     parse_history_answer_output,
 )
 from app.agents.model_runtime import RoleLLMBackend
+from app.rag.retrieval import extract_comparison_targets, text_matches_target
 from app.telemetry import current_request_telemetry, log_event
 
 WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
+YEAR_RE = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
 HISTORY_STOPWORDS = {
     "ai", "bao", "bi", "cai", "cho", "co", "cua", "da", "duoc", "gi",
@@ -23,6 +26,23 @@ HISTORY_STOPWORDS = {
 DEEP_ANALYTICAL_CUES = {
     "nguyen nhan", "vi sao", "tai sao", "dan den", "suy yeu", "y nghia",
     "vai tro", "so sanh", "phan tich", "danh gia", "he qua", "tac dong",
+}
+DEEP_FACTUAL_PREFIXES = {
+    "ai",
+    "khi nao",
+    "o dau",
+    "nhan vat nao",
+    "vua nao",
+    "tuong nao",
+    "trieu dai nao",
+    "su kien nao",
+    "nam nao",
+}
+DEEP_FACTUAL_CUES = {
+    "duoc menh danh",
+    "la ai",
+    "ten gi",
+    "ten la gi",
 }
 
 
@@ -52,6 +72,19 @@ def _is_deep_analytical_question(question: str) -> bool:
     return any(cue in normalized for cue in DEEP_ANALYTICAL_CUES)
 
 
+def _history_question_type(question: str) -> str:
+    normalized = _normalize_text(question)
+    if len(extract_comparison_targets(question)) >= 2:
+        return "compare"
+    if any(cue in normalized for cue in DEEP_ANALYTICAL_CUES - {"so sanh"}):
+        return "analysis"
+    if any(normalized == prefix or normalized.startswith(f"{prefix} ") for prefix in DEEP_FACTUAL_PREFIXES):
+        return "factual"
+    if any(cue in normalized for cue in DEEP_FACTUAL_CUES):
+        return "factual"
+    return "general"
+
+
 def _candidate_sentences(text: str) -> list[str]:
     sentences: list[str] = []
     for sentence in SENTENCE_SPLIT_RE.split(str(text)):
@@ -59,6 +92,100 @@ def _candidate_sentences(text: str) -> list[str]:
         if sentence:
             sentences.append(sentence)
     return sentences
+
+
+def _context_source_kind(context: dict[str, Any]) -> str:
+    value = str(context.get("source_kind") or context.get("source_type") or "history").strip().lower()
+    if value in {"local", "history"}:
+        return "history"
+    if value in {"attachment", "wikipedia", "web"}:
+        return value
+    return "web" if value.startswith("http") else value
+
+
+def _context_claims(context: dict[str, Any]) -> list[str]:
+    claims = context.get("claims")
+    if not isinstance(claims, list):
+        claims = context.get("evidence_claims")
+    return [
+        str(claim).strip()
+        for claim in claims
+        if str(claim).strip()
+    ] if isinstance(claims, list) else []
+
+
+def _history_input_claim_count(contexts: list[dict[str, Any]]) -> int:
+    return sum(len(_context_claims(context)) for context in contexts)
+
+
+def _supported_years(question: str, contexts: list[dict[str, Any]]) -> set[str]:
+    text = " ".join([question, *[str(context.get("text") or "") for context in contexts]])
+    return set(YEAR_RE.findall(_normalize_text(text)))
+
+
+def _unsupported_years(answer: str, question: str, contexts: list[dict[str, Any]]) -> list[str]:
+    answer_years = set(YEAR_RE.findall(_normalize_text(answer)))
+    return sorted(answer_years - _supported_years(question, contexts))
+
+
+def _sentence_count(answer: str) -> int:
+    return len(_candidate_sentences(answer))
+
+
+def _answer_mentions_supported_compare_targets(
+    question: str,
+    contexts: list[dict[str, Any]],
+    answer: str,
+) -> list[str]:
+    targets = extract_comparison_targets(question)
+    if len(targets) < 2:
+        return []
+    missing: list[str] = []
+    evidence_text = " ".join(str(context.get("title") or "") + " " + str(context.get("text") or "") for context in contexts)
+    for target in targets[:2]:
+        if text_matches_target(evidence_text, target) and not text_matches_target(answer, target):
+            missing.append(target)
+    return missing
+
+
+def _deep_answer_quality_issues(
+    question: str,
+    contexts: list[dict[str, Any]],
+    answer: str,
+    *,
+    answer_depth: str,
+) -> list[str]:
+    if not answer.strip():
+        return ["empty_answer"]
+    if answer_depth != "deep":
+        return []
+
+    issues: list[str] = []
+    question_type = _history_question_type(question)
+    validated_claim_count = _history_input_claim_count(contexts)
+    breadth = validated_claim_count or len(contexts)
+    sentence_count = _sentence_count(answer)
+    answer_is_short = len(answer) < 520
+    if question_type == "compare":
+        missing_targets = _answer_mentions_supported_compare_targets(question, contexts, answer)
+        issues.extend(f"missing_compare_target:{target}" for target in missing_targets)
+        normalized_answer = _normalize_text(answer)
+        has_compare_structure = any(
+            marker in normalized_answer
+            for marker in ("khai quat", "diem giong", "diem khac", "nhan xet")
+        )
+        if (
+            (breadth >= 2 and sentence_count <= 1 and len(answer) < 320)
+            or (breadth >= 4 and answer_is_short and (sentence_count <= 2 or not has_compare_structure))
+        ):
+            issues.append("deep_answer_collapse")
+    elif question_type == "analysis":
+        if (
+            (breadth >= 2 and sentence_count <= 1 and len(answer) < 320)
+            or (breadth >= 4 and answer_is_short and sentence_count <= 2)
+        ):
+            issues.append("deep_answer_collapse")
+    return list(dict.fromkeys(issues))
 
 
 def _deep_evidence_claims(
@@ -105,16 +232,42 @@ def _expand_deep_answer_from_evidence(
     contexts: list[dict[str, Any]],
     current_answer: str,
 ) -> tuple[str, list[str]] | None:
-    if not _is_deep_analytical_question(question) or len(contexts) < 2 or len(current_answer) >= 420:
+    question_type = _history_question_type(question)
+    if question_type not in {"analysis", "compare"} or len(current_answer) >= 620:
         return None
     claims = _deep_evidence_claims(question, contexts)
     if len(claims) < 2:
         return None
     selected_ids = list(dict.fromkeys(evidence_id for evidence_id, _ in claims))
-    lines = ["Trả lời có thể triển khai sâu hơn từ các bằng chứng đã chọn:"]
-    for index, (_, claim) in enumerate(claims, start=1):
-        lines.append(f"{index}. {claim}")
-    lines.append("Tổng hợp lại, ý nghĩa chính cần rút ra nằm ở các hệ quả trực tiếp được những bằng chứng trên nêu ra.")
+    if question_type == "compare":
+        targets = extract_comparison_targets(question)
+        lines = ["Khái quát"]
+        lines.append("Các nguồn cung cấp dữ kiện riêng cho từng đối tượng cần so sánh.")
+        if len(targets) >= 2:
+            for target in targets[:2]:
+                target_claims = [
+                    claim
+                    for evidence_id, claim in claims
+                    if text_matches_target(
+                        f"{claim} {next((context.get('title') for context in contexts if context.get('chunk_id') == evidence_id), '')}",
+                        target,
+                    )
+                ]
+                if target_claims:
+                    lines.append(f"\nĐiểm khác nhau - {target}")
+                    lines.extend(f"- {claim}" for claim in target_claims)
+        lines.append("\nNhận xét")
+        lines.append("Có thể so sánh hai sự kiện từ các dữ kiện riêng này: mỗi nguồn làm rõ một mặt của bối cảnh, kết quả hoặc ý nghĩa lịch sử.")
+        return "\n".join(lines), selected_ids
+
+    lines = ["Kết luận trực tiếp"]
+    lines.append(claims[0][1])
+    remaining = claims[1:]
+    if remaining:
+        lines.append("\nCác khía cạnh được tài liệu hỗ trợ")
+        lines.extend(f"- {claim}" for _, claim in remaining)
+    lines.append("\nTổng hợp")
+    lines.append("Từ các dữ kiện này, câu trả lời nên được hiểu theo nhiều khía cạnh được nguồn nêu, thay vì chỉ dừng ở một kết luận ngắn.")
     return "\n".join(lines), selected_ids
 
 
@@ -196,10 +349,16 @@ class HistoryAnswererAgent:
             "history_debug": {
                 "generation_calls": 0,
                 "input_evidence_ids": [],
+                "input_claim_count": 0,
+                "input_source_kind_counts": {},
                 "input_evidence_preview": [],
                 "cited_ids": [],
                 "conversation_history_used": False,
                 "answer_depth": answer_depth,
+                "question_type": _history_question_type(question),
+                "initial_quality_issues": [],
+                "quality_warnings": [],
+                "unsupported_years": [],
             },
         }
 
@@ -233,12 +392,23 @@ class HistoryAnswererAgent:
             ood_reason=ood_reason,
         )
         input_ids = [str(item["chunk_id"]) for item in contexts]
+        input_claim_count = _history_input_claim_count(contexts)
+        input_source_kind_counts = dict(Counter(_context_source_kind(item) for item in contexts))
+        question_type = _history_question_type(question)
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.history_input_evidence_count = len(contexts)
+            telemetry.history_input_claim_count = input_claim_count
+            telemetry.history_input_source_kind_counts = input_source_kind_counts
         log_event(
             "HISTORY_START",
             request_id=request_id,
             input_evidence_count=len(contexts),
             input_evidence_ids=input_ids,
+            input_claim_count=input_claim_count,
+            input_source_kind_counts=input_source_kind_counts,
             answer_depth=answer_depth,
+            question_type=question_type,
         )
 
         if is_ood and not contexts:
@@ -288,7 +458,6 @@ class HistoryAnswererAgent:
                 answer_depth=answer_depth,
             )
 
-        telemetry = current_request_telemetry()
         calls_before = telemetry.total_llm_calls if telemetry is not None else 0
         messages = build_history_answerer_messages(
             question,
@@ -303,9 +472,15 @@ class HistoryAnswererAgent:
         actual_calls = (telemetry.total_llm_calls - calls_before) if telemetry is not None else 1
         parsed = parse_history_answer_output(raw_output, allowed_source_ids=input_ids)
         by_id = {str(item["chunk_id"]): item for item in contexts}
+        initial_quality_issues = _deep_answer_quality_issues(
+            question,
+            contexts,
+            parsed.answer,
+            answer_depth=answer_depth,
+        )
         structured_expansion = (
             _expand_deep_answer_from_evidence(question, contexts, parsed.answer)
-            if answer_depth == "deep"
+            if answer_depth == "deep" and "deep_answer_collapse" in initial_quality_issues
             else None
         )
         answer_text = parsed.answer
@@ -315,6 +490,19 @@ class HistoryAnswererAgent:
             answer_text, expanded_source_ids = structured_expansion
             source_ids = expanded_source_ids
             structured_expansion_used = True
+        final_quality_issues = _deep_answer_quality_issues(
+            question,
+            contexts,
+            answer_text,
+            answer_depth=answer_depth,
+        )
+        unsupported_years = _unsupported_years(answer_text, question, contexts)
+        if unsupported_years:
+            final_quality_issues = [
+                *final_quality_issues,
+                *[f"unsupported_year:{year}" for year in unsupported_years],
+            ]
+        final_quality_issues = list(dict.fromkeys(final_quality_issues))
         source_chunks = [by_id[source_id] for source_id in source_ids]
         status = "ok" if source_ids else "insufficient"
 
@@ -331,6 +519,7 @@ class HistoryAnswererAgent:
                 cited_count=len(source_ids),
                 invalid_citation_count=invalid_citation_count,
                 structured_expansion_used=structured_expansion_used,
+                quality_issues=final_quality_issues,
             )
         return {
             "question": question,
@@ -340,18 +529,18 @@ class HistoryAnswererAgent:
             "source_chunks": source_chunks,
             "model_source_ids": parsed.source_ids,
             "invalid_source_ids": [],
-            "unsupported_years": [],
+            "unsupported_years": unsupported_years,
             "format_ok": True,
             "raw_output": parsed.raw_output,
             "retrieval": retrieval,
             "analysis": analysis,
             "prompt_budget": None,
             "support_score": None,
-            "quality_warnings": [],
+            "quality_warnings": final_quality_issues,
             "rewrite_used": False,
             "repair_attempted": False,
             "structured_expansion_used": structured_expansion_used,
-            "initial_quality_issues": [],
+            "initial_quality_issues": initial_quality_issues,
             "history_message_count": 0,
             "tool_trace": [
                 *tool_trace,
@@ -373,10 +562,13 @@ class HistoryAnswererAgent:
             "history_debug": {
                 "generation_calls": 1,
                 "input_evidence_ids": input_ids,
+                "input_claim_count": input_claim_count,
+                "input_source_kind_counts": input_source_kind_counts,
                 "input_evidence_preview": [
                     {
                         "evidence_id": str(item["chunk_id"]),
                         "text_preview": str(item.get("text") or "")[:220],
+                        "claim_count": len(_context_claims(item)),
                     }
                     for item in contexts
                 ],
@@ -384,6 +576,10 @@ class HistoryAnswererAgent:
                 "model_cited_ids": parsed.source_ids,
                 "conversation_history_used": False,
                 "answer_depth": answer_depth,
+                "question_type": question_type,
                 "structured_expansion_used": structured_expansion_used,
+                "initial_quality_issues": initial_quality_issues,
+                "quality_warnings": final_quality_issues,
+                "unsupported_years": unsupported_years,
             },
         }

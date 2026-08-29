@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.rag.retrieval import extract_comparison_targets
+
 
 QUESTION_PREFIX = "Câu hỏi:"
 REFERENCES_PREFIX = "Tài liệu tham khảo:"
@@ -32,6 +34,36 @@ _OUTPUT_RE = re.compile(
     re.I | re.S,
 )
 _BRACKET_ID_RE = re.compile(r"\[([^\]]+)\]")
+_ANALYSIS_CUES = {
+    "nguyen nhan",
+    "vi sao",
+    "tai sao",
+    "dan den",
+    "suy yeu",
+    "y nghia",
+    "vai tro",
+    "phan tich",
+    "danh gia",
+    "he qua",
+    "tac dong",
+}
+_FACTUAL_PREFIXES = {
+    "ai",
+    "khi nao",
+    "o dau",
+    "nhan vat nao",
+    "vua nao",
+    "tuong nao",
+    "trieu dai nao",
+    "su kien nao",
+    "nam nao",
+}
+_FACTUAL_CUES = {
+    "duoc menh danh",
+    "la ai",
+    "ten gi",
+    "ten la gi",
+}
 
 
 class HistoryAnswerContractError(RuntimeError):
@@ -43,6 +75,60 @@ class ParsedHistoryAnswer:
     answer: str
     source_ids: list[str]
     raw_output: str
+
+
+def _normalize_text(value: str) -> str:
+    value = str(value).lower()
+    replacements = {
+        "à": "a", "á": "a", "ạ": "a", "ả": "a", "ã": "a", "â": "a", "ầ": "a", "ấ": "a", "ậ": "a", "ẩ": "a", "ẫ": "a", "ă": "a", "ằ": "a", "ắ": "a", "ặ": "a", "ẳ": "a", "ẵ": "a",
+        "è": "e", "é": "e", "ẹ": "e", "ẻ": "e", "ẽ": "e", "ê": "e", "ề": "e", "ế": "e", "ệ": "e", "ể": "e", "ễ": "e",
+        "ì": "i", "í": "i", "ị": "i", "ỉ": "i", "ĩ": "i",
+        "ò": "o", "ó": "o", "ọ": "o", "ỏ": "o", "õ": "o", "ô": "o", "ồ": "o", "ố": "o", "ộ": "o", "ổ": "o", "ỗ": "o", "ơ": "o", "ờ": "o", "ớ": "o", "ợ": "o", "ở": "o", "ỡ": "o",
+        "ù": "u", "ú": "u", "ụ": "u", "ủ": "u", "ũ": "u", "ư": "u", "ừ": "u", "ứ": "u", "ự": "u", "ử": "u", "ữ": "u",
+        "ỳ": "y", "ý": "y", "ỵ": "y", "ỷ": "y", "ỹ": "y", "đ": "d",
+    }
+    return "".join(replacements.get(char, char) for char in value)
+
+
+def _history_question_type(question: str) -> str:
+    normalized = _normalize_text(question)
+    if len(extract_comparison_targets(question)) >= 2:
+        return "compare"
+    if any(cue in normalized for cue in _ANALYSIS_CUES):
+        return "analysis"
+    if any(normalized == prefix or normalized.startswith(f"{prefix} ") for prefix in _FACTUAL_PREFIXES):
+        return "factual"
+    if any(cue in normalized for cue in _FACTUAL_CUES):
+        return "factual"
+    return "general"
+
+
+def _deep_depth_instruction(question: str) -> str:
+    question_type = _history_question_type(question)
+    if question_type == "compare":
+        return (
+            "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
+            "Trả lời theo hướng so sánh sâu nếu bằng chứng cho phép. Có thể dùng các mục "
+            "\"khái quát\", \"điểm giống nhau\", \"điểm khác nhau\" và \"nhận xét\"; "
+            "trong phần khác nhau, chỉ nêu các chiều cạnh được tài liệu hỗ trợ như bối cảnh, "
+            "mục tiêu/tính chất, lực lượng/đối phương, phương thức/quy mô, kết quả hoặc ý nghĩa. "
+            "Phải tổng hợp bằng chứng của cả hai đối tượng; Evidence chỉ cung cấp dữ kiện riêng từng nguồn, "
+            "History chịu trách nhiệm so sánh. Không ép nêu chiều cạnh không được tài liệu hỗ trợ."
+        )
+    if question_type == "factual":
+        return (
+            "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
+            "Trả lời trực tiếp ngay ở câu đầu. Sau đó, nếu bằng chứng hỗ trợ, nêu ngắn gọn nhân vật/sự kiện là ai, "
+            "bối cảnh liên quan và vì sao danh xưng hoặc vai trò đó quan trọng. Không biến câu hỏi sự kiện đơn giản "
+            "thành bài luận và không thêm ý ngoài tài liệu."
+        )
+    return (
+        "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
+        "Trả lời theo hướng tổng hợp sâu nếu bằng chứng cho phép: nêu kết luận trực tiếp, triển khai các khía cạnh "
+        "được tài liệu hỗ trợ, giải thích quan hệ nguyên nhân - hệ quả hoặc ý nghĩa trước mắt và lâu dài khi phù hợp, "
+        "rồi kết luận ngắn. Không dừng sau một ý đúng đầu tiên nếu còn bằng chứng quan trọng chưa dùng; "
+        "không đặt ngưỡng số từ và không thêm ý nào không được tài liệu hỗ trợ."
+    )
 
 
 def _canonical_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -85,12 +171,7 @@ def build_history_answerer_user_text(
     references = "\n\n".join(blocks)
     depth_instruction = ""
     if answer_depth == "deep":
-        depth_instruction = (
-            "\n\nYêu cầu độ sâu:\n"
-            "Trả lời theo hướng tổng hợp sâu nếu bằng chứng cho phép: nêu kết luận trực tiếp, "
-            "hệ quả trước mắt, ý nghĩa chính trị/chủ quyền hoặc tác động dài hạn. "
-            "Không thêm ý nào không được tài liệu hỗ trợ."
-        )
+        depth_instruction = _deep_depth_instruction(question)
     return f"{QUESTION_PREFIX}\n{question}{depth_instruction}\n\n{REFERENCES_PREFIX}\n{references}"
 
 
