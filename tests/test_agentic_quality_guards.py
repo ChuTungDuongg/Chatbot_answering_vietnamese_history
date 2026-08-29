@@ -8,7 +8,7 @@ from app.agents.evidence_agent import EvidenceCriticAgent
 from app.agents.history_answerer import HistoryAnswererAgent
 from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
 from app.agents.research_agent import ResearchAgent
-from app.agents.research_agent import _select_wikipedia_candidate
+from app.agents.research_agent import _external_research_reason, _select_wikipedia_candidate, needs_external_research
 from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore
 from app.tools.local_search import SearchHistoryTool
 from app.tools.registry import ToolRegistry
@@ -307,6 +307,35 @@ def test_research_sufficient_does_not_call_wikipedia():
     assert wiki_search.calls == []
     assert wiki_fetch.calls == []
     assert result.debug["generation_calls"] == 1
+
+
+def test_verification_query_prefetches_external_research_even_with_local_hits():
+    wiki_search = FakeWikipediaSearch()
+    wiki_fetch = FakeWikipediaFetch()
+    model = FakeResearchModel([{
+        "action": "finish",
+        "sufficient": True,
+        "missing_information": [],
+    }])
+    agent = _research_agent([{
+        "chunk_id": "ev_local",
+        "title": "Một nguồn nội bộ",
+        "text": "Nguồn nội bộ nêu một nhận định cần kiểm chứng.",
+    }], model, wiki_search=wiki_search, wiki_fetch=wiki_fetch)
+
+    result = asyncio.run(agent.run("Có thật sự tin đồn này đúng không?", final_k=6))
+
+    assert len(wiki_search.calls) == 1
+    assert len(wiki_fetch.calls) == 1
+    assert result.debug["external_research_needed"] is True
+    assert result.debug["external_research_reason"] == "verification_or_rumor"
+
+
+def test_external_research_policy_classifies_query_and_keeps_simple_factual_local():
+    assert needs_external_research("Có thật sự tin đồn này đúng không?", {"local_result_count": 4})
+    assert _external_research_reason("Nhận định gây tranh cãi này có mâu thuẫn không?", {"local_result_count": 4}) == "disputed_claim"
+    assert _external_research_reason("Ai là người giỏi nhất?", {"local_result_count": 4}) == "evaluative_superlative"
+    assert not needs_external_research("Nhà Trần thành lập năm nào?", {"local_result_count": 4})
 
 
 def test_wikipedia_year_filtering_prefers_matching_938_page_over_1288():

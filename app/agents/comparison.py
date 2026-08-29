@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.rag.retrieval import extract_comparison_targets, match_norm
+from app.rag.retrieval import extract_comparison_targets, match_norm, text_matches_target
 
 
 ComparisonTarget = str
@@ -42,6 +42,54 @@ _WEAK_TARGET_TERMS = {
     "su",
     "kien",
     "nam",
+}
+_NON_EVENT_SUBJECT_TITLE_CUES = {
+    "tuong dai",
+    "bao tang",
+    "duong",
+    "pho",
+    "quan",
+    "huyen",
+    "thanh pho",
+    "san bay",
+    "truong",
+    "ky niem",
+    "ngay ky niem",
+    "le hoi",
+    "dia danh",
+    "di tich",
+}
+
+COMPARISON_DIMENSION_PATTERNS: dict[str, tuple[str, ...]] = {
+    "context": (
+        "boi canh", "hoan canh", "truoc khi", "sau khi", "trong khi",
+        "xam luoc", "chiem dong",
+    ),
+    "objective_nature": (
+        "muc tieu", "nham ", "tinh chat", "nhiem vu", "muc dich",
+    ),
+    "participants_opponent": (
+        "luc luong", "quan doi", "nhan dan", "viet minh", "thuc dan",
+        "de quoc", "phat xit", "quan phap", "quan nhat", "doi phuong",
+    ),
+    "method": (
+        "khoi nghia", "tong khoi nghia", "chien dich", "tien cong",
+        "dau tranh", "vu trang", "quan su", "chinh tri", "ngoai giao",
+    ),
+    "result": (
+        "ket qua", "gianh chinh quyen", "gianh doc lap", "chien thang",
+        "thang loi", "that bai", "cham dut", "thanh lap", "dau hang",
+        "ky ket", "giai phong",
+    ),
+    "consequence": (
+        "hau qua", "he qua", "dan den", "buoc ", "lam pha san",
+        "tao dieu kien", "tao tien de",
+    ),
+    "significance": (
+        "y nghia", "danh dau", "mo ra", "khang dinh", "gop phan",
+        "buoc ngoat", "vai tro", "tac dong",
+    ),
+    "time": ("nam ", "thang ", "ngay ", "thoi gian", "giai doan"),
 }
 
 
@@ -127,6 +175,18 @@ def _contains_terms(haystack: str, terms: list[str]) -> bool:
     return hits >= required
 
 
+def _target_is_event_like(target: str) -> bool:
+    normalized = match_norm(target)
+    return any(normalized.startswith(prefix + " ") or normalized == prefix for prefix in _LEADING_EVENT_PREFIXES)
+
+
+def _non_event_subject_penalty(target: str, title: str) -> float:
+    title_norm = match_norm(title)
+    if not (_target_is_event_like(target) and title_norm):
+        return 0.0
+    return 2.15 if any(cue in title_norm for cue in _NON_EVENT_SUBJECT_TITLE_CUES) else 0.0
+
+
 def _metadata_text(metadata: Any) -> str:
     if isinstance(metadata, dict):
         parts: list[str] = []
@@ -177,7 +237,31 @@ def _target_support(target: str, item: dict[str, Any]) -> tuple[float, list[str]
             score += 1.25
             reasons.append("metadata_terms")
 
+    penalty = _non_event_subject_penalty(target, title)
+    if penalty:
+        score -= penalty
+        reasons.append("non_event_subject_title_penalty")
+
     return score, reasons
+
+
+def comparison_target_relevance(target: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic directness details, penalizing incidental body mentions."""
+    score, reasons = _target_support(target, item)
+    title_direct = any(reason.startswith("title_") for reason in reasons)
+    metadata_direct = any(reason.startswith("metadata_") for reason in reasons)
+    non_subject = "non_event_subject_title_penalty" in reasons
+    body_only = bool(reasons) and not title_direct and not metadata_direct
+    incidental_penalty = 1.25 if body_only else 0.0
+    direct_subject_score = max(0.0, score - incidental_penalty)
+    return {
+        "score": direct_subject_score,
+        "raw_score": score,
+        "incidental_penalty": incidental_penalty,
+        "direct": (title_direct or metadata_direct) and not non_subject,
+        "direct_subject_score": direct_subject_score,
+        "reasons": reasons,
+    }
 
 
 def classify_comparison_target(question: str, item: dict[str, Any]) -> TargetAttribution:
@@ -200,6 +284,94 @@ def classify_comparison_target(question: str, item: dict[str, Any]) -> TargetAtt
     if score_b >= threshold:
         return TargetAttribution(label=TARGET_B, scores=scores, reasons=reasons)
     return TargetAttribution(label=UNKNOWN, scores=scores, reasons=reasons)
+
+
+def _claim_dimensions(claim: str) -> set[str]:
+    normalized = match_norm(claim)
+    if not normalized:
+        return set()
+    dimensions = {
+        name
+        for name, patterns in COMPARISON_DIMENSION_PATTERNS.items()
+        if any(pattern in normalized for pattern in patterns)
+    }
+    if re.search(r"(?<!\d)\d{3,4}(?!\d)", normalized):
+        dimensions.add("time")
+    return dimensions
+
+
+def _item_claims(item: dict[str, Any]) -> list[str]:
+    claims = item.get("claims")
+    if isinstance(claims, list) and any(str(claim).strip() for claim in claims):
+        return [str(claim).strip() for claim in claims if str(claim).strip()]
+    text = str(item.get("text") or item.get("compressed_text") or "").strip()
+    return [
+        span.strip()
+        for span in re.split(r"(?<=[.!?。！？])\s+|\n+", text)
+        if span.strip()
+    ]
+
+
+def comparison_dimension_coverage(
+    question: str,
+    evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a compact claim-grounded, two-sided comparison support map."""
+    targets = comparison_target_names(question)
+    if not targets:
+        return {}
+
+    supported: dict[str, dict[str, list[str]]] = {TARGET_A: {}, TARGET_B: {}}
+    shared_dimensions: dict[str, list[str]] = {}
+    for raw_item in evidence:
+        item = dict(raw_item)
+        label = str(item.get("comparison_target") or "").strip()
+        if label not in {TARGET_A, TARGET_B, SHARED, UNKNOWN}:
+            label = classify_comparison_target(question, item).label
+        evidence_id = str(item.get("chunk_id") or item.get("evidence_id") or "").strip()
+        if not evidence_id:
+            continue
+        for claim in _item_claims(item):
+            dimensions = _claim_dimensions(claim)
+            if label in {TARGET_A, TARGET_B}:
+                for dimension in dimensions:
+                    supported[label].setdefault(dimension, []).append(evidence_id)
+            elif label == SHARED:
+                for dimension in dimensions:
+                    shared_dimensions.setdefault(dimension, []).append(evidence_id)
+                    matches_a = text_matches_target(claim, targets[TARGET_A])
+                    matches_b = text_matches_target(claim, targets[TARGET_B])
+                    if matches_a and matches_b:
+                        supported[TARGET_A].setdefault(dimension, []).append(evidence_id)
+                        supported[TARGET_B].setdefault(dimension, []).append(evidence_id)
+
+    for target_support in supported.values():
+        for dimension, ids in list(target_support.items()):
+            target_support[dimension] = list(dict.fromkeys(ids))
+    for dimension, ids in list(shared_dimensions.items()):
+        shared_dimensions[dimension] = list(dict.fromkeys(ids))
+
+    dimensions_a = set(supported[TARGET_A])
+    dimensions_b = set(supported[TARGET_B])
+    two_sided = sorted(dimensions_a & dimensions_b)
+    one_sided = {
+        TARGET_A: sorted(dimensions_a - dimensions_b),
+        TARGET_B: sorted(dimensions_b - dimensions_a),
+    }
+    return {
+        TARGET_A: {
+            "name": targets[TARGET_A],
+            "supported_dimensions": supported[TARGET_A],
+        },
+        TARGET_B: {
+            "name": targets[TARGET_B],
+            "supported_dimensions": supported[TARGET_B],
+        },
+        "two_sided_dimensions": two_sided,
+        "one_sided_dimensions": one_sided,
+        "shared_dimensions": shared_dimensions,
+        "limited_to_supported_dimensions": not bool(two_sided),
+    }
 
 
 def group_comparison_evidence(question: str, evidence: list[dict[str, Any]]) -> dict[str, Any]:

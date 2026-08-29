@@ -5,6 +5,7 @@ import re
 import time
 import uuid
 from contextlib import suppress
+from datetime import datetime, timezone
 from typing import Any, Iterator
 from uuid import UUID
 
@@ -192,45 +193,218 @@ def _get_generation_runtime(
     return service, runtime, selected_mode
 
 
+_TRACE_SECRET_KEY_RE = re.compile(
+    r"(?:authorization|cookie|api[_-]?key|secret|credential|password|environment|headers?|modal)",
+    re.I,
+)
+_TRACE_OMITTED_KEYS = {
+    "chain_of_thought",
+    "developer_prompt",
+    "hidden_reasoning",
+    "messages",
+    "prompt",
+    "rationale",
+    "raw_output",
+    "reasoning",
+    "scratchpad",
+    "system_prompt",
+    "user_prompt",
+    "validated_source_text",
+}
+
+
+def _safe_trace_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > 8:
+        return "[bounded]"
+    if isinstance(value, dict):
+        return {
+            str(key): _safe_trace_value(item, depth=depth + 1)
+            for key, item in value.items()
+            if not _TRACE_SECRET_KEY_RE.search(str(key))
+            and str(key).lower() not in _TRACE_OMITTED_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_safe_trace_value(item, depth=depth + 1) for item in list(value)[:100]]
+    if isinstance(value, str):
+        safe = re.sub(
+            r"(?i)\b(api[_ -]?key|authorization|bearer|token|secret|password)\b\s*[:=]\s*\S+",
+            r"\1=[redacted]",
+            value,
+        )
+        safe = re.sub(r"(?i)\b[A-Z]:\\(?:Users|ProgramData|Windows)\\[^\s\"']+", "[filesystem-path]", safe)
+        safe = re.sub(r"/(?:home|root|etc|var)/[^\s\"']+", "[filesystem-path]", safe)
+        return safe if len(safe) <= 800 else safe[:797].rstrip() + "..."
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:800]
+
+
+def _trace_candidate(item: dict[str, Any], rank: int) -> dict[str, Any]:
+    return {
+        "rank": rank,
+        "chunk_id": str(item.get("chunk_id") or item.get("evidence_id") or ""),
+        "title": item.get("title"),
+        "source_kind": item.get("source_kind") or item.get("source_type") or "history",
+        "retrieval_hits": item.get("retrieval_hits") or [],
+        "retrieval_query_roles": item.get("retrieval_query_roles") or [],
+        "best_dense_score": item.get("best_dense_score"),
+        "best_bm25_score": item.get("best_bm25_score"),
+        "rrf_score": item.get("rrf_score"),
+        "reranker_score": item.get("reranker_score"),
+        "final_retrieval_score": item.get("final_retrieval_score"),
+        "comparison_target": item.get("comparison_target"),
+        "incidental_target_penalty": item.get("incidental_target_penalty"),
+        "text_preview": str(item.get("text_preview") or item.get("text") or "")[:260],
+    }
+
+
+def _research_retrieval_trace(research: dict[str, Any]) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+    plan: dict[str, Any] = {}
+    merged: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {"target_a": [], "target_b": [], "global": []}
+    for step in research.get("tools", []) if isinstance(research, dict) else []:
+        if not plan and isinstance(step.get("target_specific_queries"), dict):
+            plan = dict(step["target_specific_queries"])
+        for item in step.get("evidence", []) if isinstance(step, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            chunk_id = str(item.get("chunk_id") or "")
+            if chunk_id:
+                merged.setdefault(chunk_id, item)
+            label = str(item.get("comparison_target") or "")
+            roles = item.get("retrieval_query_roles") or []
+            for role in ("target_a", "target_b", "global"):
+                if label == role or role in roles:
+                    grouped[role].append(item)
+    ranked_groups = {
+        role: [_trace_candidate(item, index) for index, item in enumerate(items[:10], 1)]
+        for role, items in grouped.items()
+    }
+    ranked_groups["merged"] = [
+        _trace_candidate(item, index)
+        for index, item in enumerate(list(merged.values())[:30], 1)
+    ]
+    return plan, ranked_groups
+
+
 def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
     retrieval = result.get("retrieval") or {}
-
-    return {
-        "mode": result.get("inference_mode"),
-        "answer_provenance": result.get("answer_provenance", {}),
-        "research": result.get("research_debug", {}),
-        "evidence": result.get("evidence_debug", {}),
-        "history": result.get("history_debug", {}),
-        "analysis": result.get("analysis"),
-        "tool_trace": result.get("tool_trace", []),
-        "prompt_budget": result.get("prompt_budget"),
-        "support_score": result.get("support_score"),
-        "quality_warnings": result.get("quality_warnings", []),
-        "initial_quality_issues": result.get("initial_quality_issues", []),
-        "repair_attempted": result.get("repair_attempted", False),
-        "repair_diagnostics": result.get("repair_diagnostics"),
-        "structured_expansion_used": result.get("structured_expansion_used", False),
-        "model_source_ids": result.get("model_source_ids", []),
-        "invalid_source_ids": result.get("invalid_source_ids", []),
-        "unsupported_years": result.get("unsupported_years", []),
-        "format_ok": result.get("format_ok"),
-        "is_ood": retrieval.get("is_ood", False),
-        "ood_reason": retrieval.get("ood_reason", ""),
-        "global_ood_reason": retrieval.get("global_ood_reason"),
-        "domain_gate_result": retrieval.get("domain_gate_result"),
-        "domain_gate_reason": retrieval.get("domain_gate_reason"),
-        "history_anchor": (retrieval.get("intent") or {}).get("history_anchor"),
-        "ood_anchor": (retrieval.get("intent") or {}).get("ood_anchor"),
-        "domain_margin": (retrieval.get("intent") or {}).get("margin"),
-        "query_variants": retrieval.get("query_variants", []),
-        "retrieval_question": retrieval.get("retrieval_question"),
-        "history_message_count": result.get("history_message_count", 0),
-        "history_used_for_retrieval": retrieval.get("history_used_for_retrieval", False),
-        "global_context_count": retrieval.get("global_context_count", 0),
-        "temporary_context_count": retrieval.get("temporary_context_count", 0),
-        "temporary_context_relevant": retrieval.get("temporary_context_relevant", False),
-        "retrieval_latency_ms": result.get("retrieval_latency_sec", 0.0) * 1000,
+    research = result.get("research_debug") or {}
+    evidence = result.get("evidence_debug") or {}
+    history = result.get("history_debug") or {}
+    provenance = result.get("answer_provenance") or {}
+    analysis = result.get("analysis") or retrieval.get("analysis") or {}
+    target_plan, research_rankings = _research_retrieval_trace(research)
+    target_plan = retrieval.get("target_specific_queries") or target_plan
+    retrieval_rankings = retrieval.get("target_retrieval_results") or research_rankings
+    candidates = list(retrieval.get("candidates20") or [])
+    merged_candidates = (
+        [_trace_candidate(item, index) for index, item in enumerate(candidates[:30], 1)]
+        if candidates
+        else research_rankings.get("merged", [])
+    )
+    selected_contexts = [
+        _trace_candidate(item, index)
+        for index, item in enumerate((retrieval.get("final_context") or [])[:20], 1)
+    ]
+    normalized_rankings = {
+        role: [
+            _trace_candidate(item, index) if isinstance(item, dict) and "rank" not in item else item
+            for index, item in enumerate(items[:10], 1)
+        ]
+        for role, items in retrieval_rankings.items()
+        if isinstance(items, list)
     }
+    source_chunks = result.get("source_chunks") or []
+    sources = [
+        {
+            "chunk_id": str(item.get("chunk_id") or ""),
+            "title": item.get("title"),
+            "source_kind": item.get("source_kind") or item.get("source_type") or "history",
+        }
+        for item in source_chunks
+        if item.get("chunk_id")
+    ]
+    research_latency_ms = sum(
+        float(attempt.get("elapsed_ms") or 0.0)
+        for attempt in research.get("attempts", [])
+        if isinstance(attempt, dict)
+    )
+    performance_debug = result.get("performance_debug") or {}
+    trace = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": result.get("inference_mode"),
+        "request": {
+            "mode": result.get("inference_mode"),
+            "question": result.get("question") or retrieval.get("question"),
+            "question_type": history.get("question_type") or evidence.get("question_type") or analysis.get("facet"),
+            "facet": analysis.get("facet"),
+            "facets": analysis.get("facets") or [],
+            "comparison_targets": evidence.get("comparison_targets") or analysis.get("comparison_targets") or [],
+            "domain_result": retrieval.get("domain_gate_result"),
+            "domain_reason": retrieval.get("domain_gate_reason"),
+        },
+        "retrieval": {
+            "retrieval_question": retrieval.get("retrieval_question") or research.get("retrieval_question"),
+            "query_variants": retrieval.get("query_variants") or [],
+            "target_specific_queries": target_plan or {},
+            "target_rankings": normalized_rankings,
+            "merged_candidates": merged_candidates,
+            "selected_contexts": selected_contexts,
+            "comparison_balance": retrieval.get("comparison_balance") or {},
+            "is_ood": retrieval.get("is_ood", False),
+            "max_dense": retrieval.get("max_dense"),
+        },
+        "research": research if result.get("inference_mode") == "agentic_rag" else {},
+        "evidence": evidence if result.get("inference_mode") == "agentic_rag" else {},
+        "history": {
+            **history,
+            "invalid_source_ids": result.get("invalid_source_ids", []),
+            "unsupported_years": result.get("unsupported_years", []),
+            "structured_expansion_used": result.get("structured_expansion_used", False),
+        },
+        "sources": sources,
+        "performance": {
+            "retrieval_latency_ms": float(result.get("retrieval_latency_sec") or 0.0) * 1000 or None,
+            "research_latency_ms": research_latency_ms or None,
+            "history_first_latency_ms": history.get("first_latency_ms"),
+            "history_retry_latency_ms": history.get("retry_latency_ms"),
+            "history_total_latency_ms": history.get("total_latency_ms"),
+            "total_latency_ms": float(result.get("total_latency_sec") or result.get("latency_sec") or 0.0) * 1000 or None,
+            "research_generation_calls": provenance.get("research_generation_calls"),
+            "evidence_generation_calls": provenance.get("evidence_generation_calls"),
+            "history_generation_calls": provenance.get("history_generation_calls"),
+            "total_llm_calls": provenance.get("total_llm_calls"),
+            **performance_debug,
+        },
+        "errors": [],
+        "analysis": analysis,
+        "tool_trace": result.get("tool_trace", []),
+        "answer_provenance": provenance,
+    }
+    return _safe_trace_value(trace)
+
+
+def _failure_debug_trace(
+    *,
+    payload: ChatRequest,
+    mode: InferenceMode,
+    stage: str,
+    code: str,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _safe_trace_value({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": mode,
+        "request": {"mode": mode, "question": payload.question},
+        "retrieval": {},
+        "research": {},
+        "evidence": {},
+        "history": {},
+        "sources": [],
+        "performance": {},
+        "errors": [{"stage": stage, "code": code, **(diagnostics or {})}],
+    })
 
 
 def _gpu_name() -> str | None:
@@ -304,6 +478,7 @@ def _execute_chat(
 
         sources = _result_sources(service, result)
         stored_sources = [source.model_dump(mode="json") for source in sources]
+        debug_trace = _build_debug(result) if bool(getattr(payload, "debug", False)) else None
 
         assistant_message = store.add_message(
             owner_id=owner_id,
@@ -311,12 +486,14 @@ def _execute_chat(
             role="assistant",
             content=result["answer"],
             sources=stored_sources,
+            debug_trace=debug_trace,
             status="done",
         )
 
         result["conversation_id"] = conversation_id
         result["message_id"] = str(assistant_message["id"])
         result["user_message_id"] = str(user_message["id"])
+        result["debug_trace"] = debug_trace
         result_status = "success"
         return result
     except EvidenceModelContractError as exc:
@@ -469,7 +646,7 @@ async def chat(
         sources=_result_sources(service, result),
         latency_ms=latency_ms,
         rewrite_used=result.get("rewrite_used", False),
-        debug=_build_debug(result) if payload.debug else None,
+        debug=result.get("debug_trace") if payload.debug else None,
     )
 
 
@@ -557,7 +734,12 @@ async def chat_stream(
 
             result = await task
         except LookupError as exc:
-            yield _sse("error", {"type": "not_found", "message": str(exc)})
+            error_payload = {"type": "not_found", "message": str(exc)}
+            if payload.debug:
+                error_payload["debug_trace"] = _failure_debug_trace(
+                    payload=payload, mode=selected_mode, stage="conversation", code="not_found"
+                )
+            yield _sse("error", error_payload)
             yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except EvidenceModelContractError as exc:
@@ -571,16 +753,42 @@ async def chat_stream(
                     "validation_errors": exc.validation_errors,
                 },
             )
-            yield _sse("error", _evidence_contract_error_payload(exc))
+            error_payload = _evidence_contract_error_payload(exc)
+            if payload.debug:
+                error_payload["debug_trace"] = _failure_debug_trace(
+                    payload=payload,
+                    mode=selected_mode,
+                    stage=exc.stage,
+                    code=exc.code,
+                    diagnostics={
+                        "evidence_ids": exc.evidence_ids,
+                        "repair_attempted": exc.repair_attempted,
+                        "validation_errors": exc.validation_errors,
+                    },
+                )
+            yield _sse("error", error_payload)
             yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except ValueError as exc:
-            yield _sse("error", {"type": "bad_request", "message": str(exc)})
+            error_payload = {"type": "bad_request", "message": str(exc)}
+            if payload.debug:
+                error_payload["debug_trace"] = _failure_debug_trace(
+                    payload=payload, mode=selected_mode, stage="request", code="bad_request"
+                )
+            yield _sse("error", error_payload)
             yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except RuntimeError as exc:
             logger.exception("Streaming generation runtime error")
-            yield _sse("error", {"type": "runtime_error", "message": str(exc)})
+            error_payload = {"type": "runtime_error", "message": str(exc)}
+            if payload.debug:
+                error_payload["debug_trace"] = _failure_debug_trace(
+                    payload=payload,
+                    mode=selected_mode,
+                    stage="runtime",
+                    code=type(exc).__name__,
+                )
+            yield _sse("error", error_payload)
             yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         except asyncio.CancelledError:
@@ -589,15 +797,20 @@ async def chat_stream(
                 with suppress(asyncio.CancelledError):
                     await task
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("Unexpected streaming chat error")
-            yield _sse(
-                "error",
-                {
-                    "type": "internal_error",
-                    "message": "Internal generation error.",
-                },
-            )
+            error_payload = {
+                "type": "internal_error",
+                "message": "Internal generation error.",
+            }
+            if payload.debug:
+                error_payload["debug_trace"] = _failure_debug_trace(
+                    payload=payload,
+                    mode=selected_mode,
+                    stage="unknown",
+                    code=type(exc).__name__,
+                )
+            yield _sse("error", error_payload)
             yield _sse("done", {"status": "error", "latency_ms": (time.perf_counter() - stream_started) * 1000})
             return
         finally:
@@ -651,7 +864,7 @@ async def chat_stream(
         )
 
         if payload.debug:
-            yield _sse("debug", _build_debug(result))
+            yield _sse("debug_trace", result.get("debug_trace") or _build_debug(result))
 
         elapsed_ms = (time.perf_counter() - stream_started) * 1000
 

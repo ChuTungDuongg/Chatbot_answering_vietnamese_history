@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 MessageRole = Literal["user", "assistant"]
@@ -179,9 +179,15 @@ class MessageItem(BaseModel):
     sources: list[SourceItem] = Field(
         default_factory=list,
     )
+    debug_trace: dict[str, Any] | None = None
 
     status: str = "done"
     created_at: datetime
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def normalize_null_sources(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 # ============================================================

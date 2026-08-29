@@ -7,6 +7,7 @@ from typing import Any
 from app.agents.comparison import (
     TARGET_A,
     TARGET_B,
+    comparison_dimension_coverage,
     group_comparison_evidence,
 )
 from app.rag.retrieval import extract_comparison_targets
@@ -181,6 +182,7 @@ def _comparison_group_instruction(question: str, evidence: list[dict[str, Any]])
     groups = group_comparison_evidence(question, evidence)
     if not groups:
         return ""
+    dimensions = comparison_dimension_coverage(question, evidence)
 
     def ids(items: list[dict[str, Any]]) -> str:
         values = [
@@ -190,12 +192,25 @@ def _comparison_group_instruction(question: str, evidence: list[dict[str, Any]])
         ]
         return ", ".join(f"[{value}]" for value in values) if values else "không có"
 
+    target_a_dimensions = sorted(dimensions.get(TARGET_A, {}).get("supported_dimensions", {}))
+    target_b_dimensions = sorted(dimensions.get(TARGET_B, {}).get("supported_dimensions", {}))
+    two_sided_dimensions = list(dimensions.get("two_sided_dimensions") or [])
+    one_sided = dimensions.get("one_sided_dimensions") or {}
+    limited_instruction = (
+        "Không có chiều so sánh hai phía đủ rõ; chỉ đối chiếu những điểm riêng được hỗ trợ và nói ngắn gọn về giới hạn đó."
+        if dimensions.get("limited_to_supported_dimensions")
+        else "Chỉ dùng các chiều hai phía dưới đây làm điểm giống/khác chung."
+    )
     return (
         "\n\nBản đồ bằng chứng so sánh:\n"
-        f"- target_a ({groups[TARGET_A]['name']}): {ids(groups[TARGET_A]['evidence'])}\n"
-        f"- target_b ({groups[TARGET_B]['name']}): {ids(groups[TARGET_B]['evidence'])}\n"
+        f"- target_a ({groups[TARGET_A]['name']}): {ids(groups[TARGET_A]['evidence'])}; chiều hỗ trợ: {', '.join(target_a_dimensions) or 'không rõ'}\n"
+        f"- target_b ({groups[TARGET_B]['name']}): {ids(groups[TARGET_B]['evidence'])}; chiều hỗ trợ: {', '.join(target_b_dimensions) or 'không rõ'}\n"
         f"- shared: {ids(groups['shared_evidence'])}\n"
         f"- unknown: {ids(groups['unknown_evidence'])}\n"
+        f"- chiều so sánh có hỗ trợ hai phía: {', '.join(two_sided_dimensions) or 'không có'}\n"
+        f"- thông tin một phía target_a: {', '.join(one_sided.get(TARGET_A, [])) or 'không có'}\n"
+        f"- thông tin một phía target_b: {', '.join(one_sided.get(TARGET_B, [])) or 'không có'}\n"
+        f"{limited_instruction}\n"
         "Quy tắc: bằng chứng target_a chỉ dùng cho phần riêng của target_a; target_b chỉ dùng cho phần riêng của target_b; "
         "shared có thể dùng cho điểm giống nhau; unknown không được ép gán cho target nào."
     )
@@ -204,9 +219,10 @@ def _comparison_group_instruction(question: str, evidence: list[dict[str, Any]])
 def _natural_opening_instruction() -> str:
     return (
         "Yêu cầu văn phong:\n"
-        "Trả lời trực tiếp bằng tiếng Việt tự nhiên. Không mở đầu bằng các cụm chung chung như "
-        "\"Theo tài liệu\", \"Theo các tài liệu\", \"Dựa trên tài liệu được cung cấp\" hoặc "
-        "\"Dựa trên các nguồn được cung cấp\". Vẫn giữ nguyên cách dẫn nguồn lịch sử có tên riêng khi tài liệu nêu rõ."
+        "Trả lời trực tiếp bằng tiếng Việt tự nhiên và tổng hợp tài liệu một cách thầm lặng. Không dùng lời dẫn chung chung như "
+        "\"Theo tài liệu\", \"Tài liệu nêu\", \"Tài liệu cho thấy\", \"Các nguồn cho thấy\", "
+        "\"Dựa trên các nguồn được cung cấp\"; không nhắc đến retrieval, evidence, bằng chứng đã chọn/kiểm chứng hoặc cách câu trả lời được tạo. "
+        "Vẫn giữ nguyên cách dẫn một sử liệu, tác giả hay hồi ký có tên riêng khi tài liệu nêu rõ."
     )
 
 

@@ -42,6 +42,12 @@ class RequestTelemetry:
     research_json_repairs: int = 0
     research_prefetch_used: bool = False
     external_fallback_triggered: bool = False
+    external_research_needed: bool = False
+    external_research_available: bool = False
+    external_research_reason: str | None = None
+    external_research_skip_reason: str | None = None
+    external_tools_called: list[str] = field(default_factory=list)
+    external_results_count: int = 0
     tool_calls: int = 0
     tool_calls_by_type: dict[str, int] = field(default_factory=dict)
     domain_gate_result: str | None = None
@@ -63,6 +69,8 @@ class RequestTelemetry:
     evidence_candidate_count: int = 0
     evidence_candidate_count_raw: int = 0
     evidence_candidate_count_model_visible: int = 0
+    evidence_model_input_chars: int = 0
+    evidence_model_input_tokens: int = 0
     evidence_dropped_for_budget_count: int = 0
     evidence_dropped_ids: list[str] = field(default_factory=list)
     evidence_source_kind_counts_raw: dict[str, int] = field(default_factory=dict)
@@ -92,6 +100,11 @@ class RequestTelemetry:
     target_a_model_visible_count: int = 0
     target_b_model_visible_count: int = 0
     comparison_target_coverage: dict[str, bool] = field(default_factory=dict)
+    candidate_roles: dict[str, str] = field(default_factory=dict)
+    direct_subject_scores: dict[str, float] = field(default_factory=dict)
+    affiliation_constraint_pass: dict[str, bool] = field(default_factory=dict)
+    broad_summary_facets_requested: list[str] = field(default_factory=list)
+    broad_summary_facets_covered: list[str] = field(default_factory=list)
     evidence_first_pass_latency_ms: float = 0.0
     evidence_guard_latency_ms: float = 0.0
     evidence_reconsideration_latency_ms: float = 0.0
@@ -174,6 +187,12 @@ class RequestTelemetry:
             "research_prefetch_used": self.research_prefetch_used,
             "research_generation_calls": self.research_llm_calls,
             "external_fallback_triggered": self.external_fallback_triggered,
+            "external_research_needed": self.external_research_needed,
+            "external_research_available": self.external_research_available,
+            "external_research_reason": self.external_research_reason,
+            "external_research_skip_reason": self.external_research_skip_reason,
+            "external_tools_called": self.external_tools_called,
+            "external_results_count": self.external_results_count,
             "tool_calls": self.tool_calls,
             "tool_calls_by_type": self.tool_calls_by_type,
             "domain_gate_result": self.domain_gate_result,
@@ -195,6 +214,8 @@ class RequestTelemetry:
             "evidence_candidate_count": self.evidence_candidate_count,
             "evidence_candidate_count_raw": self.evidence_candidate_count_raw,
             "evidence_candidate_count_model_visible": self.evidence_candidate_count_model_visible,
+            "evidence_model_input_chars": self.evidence_model_input_chars,
+            "evidence_model_input_tokens": self.evidence_model_input_tokens,
             "evidence_dropped_for_budget_count": self.evidence_dropped_for_budget_count,
             "evidence_dropped_ids": self.evidence_dropped_ids,
             "evidence_source_kind_counts_raw": self.evidence_source_kind_counts_raw,
@@ -225,6 +246,11 @@ class RequestTelemetry:
             "target_a_model_visible_count": self.target_a_model_visible_count,
             "target_b_model_visible_count": self.target_b_model_visible_count,
             "comparison_target_coverage": self.comparison_target_coverage,
+            "candidate_roles": self.candidate_roles,
+            "direct_subject_scores": self.direct_subject_scores,
+            "affiliation_constraint_pass": self.affiliation_constraint_pass,
+            "broad_summary_facets_requested": self.broad_summary_facets_requested,
+            "broad_summary_facets_covered": self.broad_summary_facets_covered,
             "evidence_first_pass_latency_ms": self.evidence_first_pass_latency_ms,
             "evidence_guard_latency_ms": self.evidence_guard_latency_ms,
             "evidence_reconsideration_latency_ms": self.evidence_reconsideration_latency_ms,

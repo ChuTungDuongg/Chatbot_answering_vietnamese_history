@@ -21,6 +21,7 @@ from app.agents.comparison import (
     TARGET_B,
     UNKNOWN,
     classify_comparison_target,
+    comparison_dimension_coverage,
     group_comparison_evidence,
 )
 from app.rag.retrieval import extract_comparison_targets, text_matches_target
@@ -29,13 +30,21 @@ from app.telemetry import current_request_telemetry, log_event
 WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
 YEAR_RE = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
-GENERIC_SOURCE_PREFIX_RE = re.compile(
-    r"^\s*(?:"
-    r"theo\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
-    r"|dựa\s+trên\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
-    r"|từ\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
-    r")\s*,\s*",
-    re.I,
+GENERIC_PROVENANCE_PREFIX_RE = re.compile(
+    r"(?P<boundary>\A|(?<=[.!?。！？])\s+|\n+)\s*(?:"
+    r"theo\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo|đã kiểm chứng))?"
+    r"|dựa\s+trên\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo|đã kiểm chứng))?"
+    r"|từ\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo|đã kiểm chứng))?"
+    r"|tài\s+liệu\s+(?:nêu(?:\s+rằng)?|cho\s+thấy(?:\s+rằng)?)"
+    r"|các\s+nguồn\s+(?:nêu(?:\s+rằng)?|cho\s+thấy(?:\s+rằng)?|cung\s+cấp\s+dữ\s+kiện(?:\s+rằng)?)"
+    r"|các\s+bằng\s+chứng(?:\s+đã\s+(?:chọn|kiểm\s+chứng))?\s+(?:nêu(?:\s+rằng)?|cho\s+thấy(?:\s+rằng)?)"
+    r"|nhóm\s+bằng\s+chứng\s+(?:nêu(?:\s+rằng)?|cho\s+thấy(?:\s+rằng)?)"
+    r"|các\s+dữ\s+kiện\s+được\s+cung\s+cấp\s+(?:nêu(?:\s+rằng)?|cho\s+thấy(?:\s+rằng)?)"
+    r"|từ\s+các\s+dữ\s+kiện\s+này"
+    r"|câu\s+trả\s+lời\s+nên\s+được\s+hiểu(?:\s+rằng)?"
+    r"|các\s+khía\s+cạnh\s+được\s+tài\s+liệu\s+hỗ\s+trợ(?:\s+(?:gồm|là))?"
+    r")\s*[,;:]?\s*",
+    re.I | re.M,
 )
 HISTORY_STOPWORDS = {
     "ai", "bao", "bi", "cai", "cho", "co", "cua", "da", "duoc", "gi",
@@ -80,9 +89,16 @@ INTERNAL_META_PHRASES = {
     "cac bang chung da chon",
     "cac nguon cung cap du kien rieng",
     "theo dung nhom bang chung da kiem chung",
+    "cac bang chung da kiem chung",
+    "cac nguon da kiem chung",
+    "nhom bang chung",
+    "retrieval",
+    "evidence",
+    "cac du kien duoc cung cap",
 }
 RETRYABLE_DEEP_ISSUES = {
     "deep_answer_collapse",
+    "shallow_comparison",
     "internal_meta_language",
     "comparison_target_leakage",
 }
@@ -141,7 +157,7 @@ def _candidate_sentences(text: str) -> list[str]:
 
 
 def _remove_generic_source_prefix(answer: str) -> str:
-    return GENERIC_SOURCE_PREFIX_RE.sub("", str(answer), count=1)
+    return GENERIC_PROVENANCE_PREFIX_RE.sub(lambda match: match.group("boundary"), str(answer)).strip()
 
 
 def _context_source_kind(context: dict[str, Any]) -> str:
@@ -168,14 +184,19 @@ def _history_input_claim_count(contexts: list[dict[str, Any]]) -> int:
     return sum(len(_context_claims(context)) for context in contexts)
 
 
-def _supported_years(question: str, contexts: list[dict[str, Any]]) -> set[str]:
-    text = " ".join([question, *[str(context.get("text") or "") for context in contexts]])
+def _supported_years(contexts: list[dict[str, Any]], cited_ids: list[str]) -> set[str]:
+    cited = set(cited_ids)
+    text = " ".join(
+        str(context.get("validated_source_text") or context.get("text") or "")
+        for context in contexts
+        if str(context.get("chunk_id") or "") in cited
+    )
     return set(YEAR_RE.findall(_normalize_text(text)))
 
 
-def _unsupported_years(answer: str, question: str, contexts: list[dict[str, Any]]) -> list[str]:
+def _unsupported_years(answer: str, contexts: list[dict[str, Any]], cited_ids: list[str]) -> list[str]:
     answer_years = set(YEAR_RE.findall(_normalize_text(answer)))
-    return sorted(answer_years - _supported_years(question, contexts))
+    return sorted(answer_years - _supported_years(contexts, cited_ids))
 
 
 def _question_years(question: str) -> set[str]:
@@ -363,6 +384,59 @@ def _comparison_target_leakage_issues(
     return []
 
 
+def _comparison_structure_issues(
+    question: str,
+    contexts: list[dict[str, Any]],
+    answer: str,
+) -> list[str]:
+    targets = extract_comparison_targets(question)
+    if len(targets) < 2:
+        return []
+    normalized_answer = _normalize_text(answer)
+    explicit_section_marker = any(
+        marker in normalized_answer
+        for marker in ("diem giong", "diem khac", "giong nhau", "khac nhau", "so voi")
+    )
+    comparative_clause = False
+    for sentence in _candidate_sentences(answer):
+        normalized_sentence = _normalize_text(sentence)
+        if "ca hai" in normalized_sentence and any(
+            cue in normalized_sentence for cue in ("deu", "nhung", "trong khi", "khac", "tuong dong")
+        ):
+            comparative_clause = True
+            break
+        mentions_both = all(text_matches_target(sentence, target) for target in targets[:2])
+        if mentions_both and any(
+            cue in normalized_sentence
+            for cue in ("nhung", "trong khi", "con ", "khac", "giong", "tuong dong", "trai lai")
+        ):
+            comparative_clause = True
+            break
+
+    if not (explicit_section_marker or comparative_clause):
+        return ["shallow_comparison"]
+
+    dimensions = comparison_dimension_coverage(question, contexts)
+    two_sided_dimensions = set(dimensions.get("two_sided_dimensions") or [])
+    if not two_sided_dimensions:
+        return []
+    dimension_cues = {
+        "context": ("boi canh", "hoan canh"),
+        "objective_nature": ("muc tieu", "tinh chat", "nhiem vu"),
+        "participants_opponent": ("luc luong", "doi phuong", "thuc dan", "de quoc", "nhan dan"),
+        "method": ("khoi nghia", "chien dich", "dau tranh", "quan su", "chinh tri"),
+        "result": ("ket qua", "gianh", "chien thang", "thang loi", "that bai", "cham dut"),
+        "consequence": ("hau qua", "he qua", "dan den", "buoc ", "tao tien de"),
+        "significance": ("y nghia", "danh dau", "mo ra", "gop phan", "buoc ngoat", "vai tro"),
+        "time": ("nam ", "thoi gian", "giai doan"),
+    }
+    discusses_supported_dimension = any(
+        any(cue in f" {normalized_answer} " for cue in dimension_cues.get(dimension, ()))
+        for dimension in two_sided_dimensions
+    )
+    return [] if discusses_supported_dimension else ["shallow_comparison"]
+
+
 def _deep_answer_quality_issues(
     question: str,
     contexts: list[dict[str, Any]],
@@ -387,11 +461,7 @@ def _deep_answer_quality_issues(
         missing_targets = _answer_mentions_supported_compare_targets(question, contexts, answer)
         issues.extend(f"missing_compare_target:{target}" for target in missing_targets)
         issues.extend(_comparison_target_leakage_issues(question, contexts, answer))
-        if (
-            (breadth >= 2 and sentence_count <= 1 and len(answer) < 320)
-            or (breadth >= 4 and answer_is_short and sentence_count <= 2)
-        ):
-            issues.append("deep_answer_collapse")
+        issues.extend(_comparison_structure_issues(question, contexts, answer))
     elif question_type in {"analysis", "cause", "significance"}:
         important_claims = _important_context_claims(
             question,
@@ -598,7 +668,7 @@ class HistoryAnswererAgent:
             answer_text,
             answer_depth=answer_depth,
         )
-        unsupported_years = _unsupported_years(answer_text, question, contexts)
+        unsupported_years = _unsupported_years(answer_text, contexts, parsed.source_ids)
         if unsupported_years:
             quality_issues = [
                 *quality_issues,
@@ -639,8 +709,7 @@ class HistoryAnswererAgent:
                 groups
                 and (
                     groups[TARGET_A]["evidence"]
-                    or groups[TARGET_B]["evidence"]
-                    or groups["shared_evidence"]
+                    and groups[TARGET_B]["evidence"]
                 )
                 and len(contexts) >= 2
             )
@@ -653,6 +722,12 @@ class HistoryAnswererAgent:
 
     @staticmethod
     def _retry_reason(first_quality_issues: list[str]) -> str | None:
+        for issue in first_quality_issues:
+            if issue == "comparison_target_leakage":
+                return issue
+        for issue in first_quality_issues:
+            if issue == "shallow_comparison":
+                return issue
         for issue in first_quality_issues:
             if issue == "deep_answer_collapse":
                 return issue
@@ -674,11 +749,11 @@ class HistoryAnswererAgent:
     @staticmethod
     def _retry_is_better(first: _HistoryGeneration, retry: _HistoryGeneration) -> bool:
         first_penalty = sum(
-            2 if issue == "deep_answer_collapse" else 1
+            2 if issue in {"deep_answer_collapse", "shallow_comparison"} else 1
             for issue in first.quality_issues
         )
         retry_penalty = sum(
-            2 if issue == "deep_answer_collapse" else 1
+            2 if issue in {"deep_answer_collapse", "shallow_comparison"} else 1
             for issue in retry.quality_issues
         )
         if retry_penalty < first_penalty:
@@ -802,15 +877,19 @@ class HistoryAnswererAgent:
         retry_reason = self._retry_reason(first_generation.quality_issues)
         history_retry_used = False
         retry_selected = False
+        retry_eligible = bool(
+            retry_reason
+            and self._should_retry_history(
+                inference_mode=inference_mode,
+                answer_depth=answer_depth,
+                question_type=question_type,
+                contexts=contexts,
+                first_quality_issues=first_generation.quality_issues,
+                question=question,
+            )
+        )
 
-        if retry_reason and self._should_retry_history(
-            inference_mode=inference_mode,
-            answer_depth=answer_depth,
-            question_type=question_type,
-            contexts=contexts,
-            first_quality_issues=first_generation.quality_issues,
-            question=question,
-        ):
+        if retry_eligible:
             history_retry_used = True
             log_event(
                 "HISTORY_RETRY_START",
@@ -921,6 +1000,7 @@ class HistoryAnswererAgent:
                 "history_generation_calls": generation_calls,
                 "history_retry_used": history_retry_used,
                 "history_retry_reason": retry_reason if history_retry_used else None,
+                "history_retry_decision": "retry" if retry_eligible else "skip",
                 "history_retry_selected": retry_selected,
                 "history_retry_error": retry_error,
                 "history_first_answer_chars": first_generation.answer_chars,
@@ -959,6 +1039,9 @@ class HistoryAnswererAgent:
                 "comparison_evidence_groups": _comparison_evidence_groups(question, contexts)
                 if question_type == "compare"
                 else {},
+                "comparison_dimension_coverage": comparison_dimension_coverage(question, contexts)
+                if question_type == "compare"
+                else {},
                 "cited_ids": source_ids,
                 "model_cited_ids": final_generation.parsed.source_ids,
                 "conversation_history_used": False,
@@ -967,6 +1050,7 @@ class HistoryAnswererAgent:
                 "structured_expansion_used": False,
                 "history_retry_used": history_retry_used,
                 "history_retry_reason": retry_reason if history_retry_used else None,
+                "history_retry_decision": "retry" if retry_eligible else "skip",
                 "history_retry_selected": retry_selected,
                 "history_retry_error": retry_error,
                 "first_answer_chars": first_generation.answer_chars,

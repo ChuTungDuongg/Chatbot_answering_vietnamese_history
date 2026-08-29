@@ -33,6 +33,7 @@ import {
   updateConversation,
   uploadAttachment,
 } from "./services/api";
+import { shouldShowDebugTrace } from "./services/debugTrace";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "vn-history-theme";
@@ -41,6 +42,7 @@ const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"
 const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_FILES_PER_UPLOAD = 5;
+const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
 const INFERENCE_MODES = [
   { value: "hybrid_rag", label: "Hybrid RAG — Fast", icon: Gauge },
   { value: "agentic_rag", label: "Agentic RAG — Deep Research", icon: Microscope },
@@ -122,7 +124,6 @@ function App() {
   const [attachments, setAttachments] = useState([]);
   const [pendingUploads, setPendingUploads] = useState([]);
   const [sources, setSources] = useState([]);
-  const [debugData, setDebugData] = useState(null);
   const [question, setQuestion] = useState("");
   const [inferenceMode, setInferenceMode] = useState("agentic_rag");
   const [status, setStatus] = useState("idle");
@@ -207,7 +208,6 @@ function App() {
       setMessages(detail.messages);
       setAttachments(detail.attachments);
       setSources(getLatestSources(detail.messages));
-      setDebugData(null);
       setStatus("idle");
       return detail;
     } finally {
@@ -227,7 +227,6 @@ function App() {
     setMessages([]);
     setAttachments([]);
     setSources([]);
-    setDebugData(null);
     setQuestion("");
     setStatus("idle");
     return conversation;
@@ -309,7 +308,6 @@ function App() {
 
     setQuestion("");
     setError("");
-    setDebugData(null);
     setStatus("processing");
 
     let conversationId;
@@ -352,7 +350,7 @@ function App() {
         question: trimmedQuestion,
         mode: inferenceMode,
         finalK: 6,
-        debug: import.meta.env.DEV,
+        debug: SHOW_DEBUG_TRACE,
         signal: controller.signal,
         onEvent: ({ event: eventName, data }) => {
           if (eventName === "status") {
@@ -380,8 +378,8 @@ function App() {
             return;
           }
 
-          if (eventName === "debug") {
-            setDebugData(data);
+          if (eventName === "debug_trace" || eventName === "debug") {
+            updateMessage(assistantMessageId, { debug_trace: data });
             return;
           }
 
@@ -397,6 +395,7 @@ function App() {
               ...current,
               content: current.content || assistantErrorMessage,
               status: "error",
+              debug_trace: data?.debug_trace ?? current.debug_trace,
             }));
             return;
           }
@@ -615,6 +614,7 @@ function App() {
                 message={message}
                 isStreaming={message.role === "assistant" && message.status === "streaming"}
                 onShowSources={() => showMessageSources(message)}
+                enableDebugTrace={SHOW_DEBUG_TRACE}
               />
             ))}
 
@@ -688,12 +688,6 @@ function App() {
             </div>
           )}
 
-          {import.meta.env.DEV && debugData && (
-            <details className="debug-panel">
-              <summary>Retrieval trace</summary>
-              <pre>{JSON.stringify(debugData, null, 2)}</pre>
-            </details>
-          )}
         </div>
       </aside>
 

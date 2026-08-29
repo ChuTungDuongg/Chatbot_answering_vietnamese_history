@@ -242,6 +242,212 @@ def text_matches_target(text: str, target: str) -> bool:
     return target_norm in text_norm or hits >= max(1, min(len(target_terms), 2))
 
 
+COMPARISON_TARGET_QUERY_SUFFIX = (
+    "bối cảnh mục tiêu tính chất lực lượng hình thức đấu tranh kết quả hệ quả ý nghĩa lịch sử"
+)
+
+
+def build_comparison_target_queries(
+    question: str,
+    analysis: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build deterministic compare queries without a generative query planner."""
+    targets = extract_comparison_targets(question)
+    if len(targets) < 2:
+        return {}
+    analysis = analysis or {}
+    requested_facets = [
+        facet
+        for facet in analysis.get("facets", [])
+        if facet not in {"general", "compare", "time"} and facet in FACET_QUERY_SUFFIX
+    ]
+    facet_suffix = " ".join(FACET_QUERY_SUFFIX[facet] for facet in requested_facets[:2]).strip()
+    intent_suffix = facet_suffix or COMPARISON_TARGET_QUERY_SUFFIX
+    return {
+        "targets": {"target_a": targets[0], "target_b": targets[1]},
+        "target_a_query": clean_text(f"{targets[0]} {intent_suffix}"),
+        "target_b_query": clean_text(f"{targets[1]} {intent_suffix}"),
+        "global_query": clean_text(question),
+        "strategy": "target_entity+requested_historical_facet+comparison_dimensions",
+    }
+
+
+NON_EVENT_SUBJECT_TITLE_CUES = {
+    "tuong dai",
+    "bao tang",
+    "duong",
+    "pho",
+    "thanh pho",
+    "san bay",
+    "truong",
+    "ky niem",
+    "le hoi",
+    "dia danh",
+    "di tich",
+}
+EVENT_TARGET_PREFIXES = {
+    "chien thang",
+    "chien dich",
+    "tran",
+    "cach mang",
+    "cuoc cach mang",
+    "tong khoi nghia",
+    "cuoc khoi nghia",
+    "khoi nghia",
+    "phong trao",
+    "su kien",
+}
+
+
+def _event_target_non_subject_penalty(target: str, title: str) -> float:
+    target_norm = match_norm(target)
+    title_norm = match_norm(title)
+    if not target_norm or not title_norm:
+        return 0.0
+    is_event = any(target_norm == prefix or target_norm.startswith(prefix + " ") for prefix in EVENT_TARGET_PREFIXES)
+    if not is_event:
+        return 0.0
+    return 0.28 if any(cue in title_norm for cue in NON_EVENT_SUBJECT_TITLE_CUES) else 0.0
+
+
+def _target_direct_relevance(target: str, chunk: dict[str, Any]) -> dict[str, Any]:
+    target_norm = match_norm(target)
+    title_norm = match_norm(chunk.get("title", ""))
+    text_norm = match_norm(chunk.get("text", ""))
+    metadata_norm = match_norm(str(chunk.get("metadata") or ""))
+    target_terms = [term for term in target_norm.split() if len(term) > 2]
+    title_hits = sum(1 for term in target_terms if re.search(rf"\b{re.escape(term)}\b", title_norm))
+    text_hits = sum(1 for term in target_terms if re.search(rf"\b{re.escape(term)}\b", text_norm))
+    title_ratio = title_hits / max(len(target_terms), 1)
+    text_ratio = text_hits / max(len(target_terms), 1)
+    reasons: list[str] = []
+    score = 0.0
+    if target_norm and target_norm in title_norm:
+        score = 1.0
+        reasons.append("title_phrase")
+    elif title_ratio >= 0.67:
+        score = 0.82
+        reasons.append("title_terms")
+    elif target_norm and target_norm in metadata_norm:
+        score = 0.62
+        reasons.append("metadata_phrase")
+    elif target_norm and target_norm in text_norm:
+        score = 0.42
+        reasons.append("text_phrase")
+    elif text_ratio >= 0.67:
+        score = 0.32
+        reasons.append("text_terms")
+    non_subject_penalty = _event_target_non_subject_penalty(target, title_norm)
+    if non_subject_penalty:
+        score -= non_subject_penalty
+        reasons.append("non_event_subject_title_penalty")
+    incidental_penalty = 0.18 if score and not any(reason.startswith("title_") for reason in reasons) else 0.0
+    direct_subject_score = max(0.0, score - incidental_penalty)
+    return {
+        "score": direct_subject_score,
+        "incidental_penalty": incidental_penalty,
+        "direct": any(reason.startswith("title_") for reason in reasons) and not non_subject_penalty,
+        "direct_subject_score": direct_subject_score,
+        "reasons": reasons,
+    }
+
+
+def balance_comparison_candidates(
+    question: str,
+    candidates: list[dict[str, Any]],
+    final_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Reserve useful model-visible capacity for both compare targets."""
+    targets = extract_comparison_targets(question)
+    if len(targets) < 2 or not candidates:
+        return candidates[:final_k], {}
+
+    annotated: list[dict[str, Any]] = []
+    for candidate in candidates:
+        item = candidate
+        relevance_a = _target_direct_relevance(targets[0], item)
+        relevance_b = _target_direct_relevance(targets[1], item)
+        item["comparison_target_relevance"] = {
+            "target_a": relevance_a,
+            "target_b": relevance_b,
+        }
+        best_label, best_relevance = max(
+            (("target_a", relevance_a), ("target_b", relevance_b)),
+            key=lambda pair: pair[1]["score"],
+        )
+        if relevance_a["score"] >= 0.45 and relevance_b["score"] >= 0.45 and abs(relevance_a["score"] - relevance_b["score"]) <= 0.12:
+            label = "shared"
+        elif best_relevance["score"] > 0:
+            label = best_label
+        else:
+            label = "unknown"
+        role_labels = set(item.get("retrieval_query_roles") or [])
+        if "target_b" in role_labels and "target_a" not in role_labels:
+            label = "target_b"
+        elif "target_a" in role_labels and "target_b" not in role_labels:
+            label = "target_a"
+        item["comparison_target"] = label
+        item["incidental_target_penalty"] = float(best_relevance["incidental_penalty"])
+        item["comparison_adjusted_score"] = float(
+            item.get("final_retrieval_score", 0.0)
+            + 0.12 * best_relevance["score"]
+            - best_relevance["incidental_penalty"]
+        )
+        annotated.append(item)
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    reserved_ids: dict[str, list[str]] = {"target_a": [], "target_b": []}
+    reserve_per_target = min(2, max(1, final_k // 3))
+    for label, target in (("target_a", targets[0]), ("target_b", targets[1])):
+        ranked = sorted(
+            annotated,
+            key=lambda item: (
+                item["comparison_target_relevance"][label]["direct"],
+                item["comparison_target_relevance"][label]["score"],
+                item.get("final_retrieval_score", 0.0),
+            ),
+            reverse=True,
+        )
+        for item in ranked:
+            chunk_id = str(item.get("chunk_id") or "")
+            directness = item["comparison_target_relevance"][label]
+            if not chunk_id or chunk_id in selected_ids or directness["score"] < 0.24:
+                continue
+            if len(reserved_ids[label]) >= reserve_per_target:
+                break
+            selected.append(item)
+            selected_ids.add(chunk_id)
+            reserved_ids[label].append(chunk_id)
+
+    for item in sorted(annotated, key=lambda value: value["comparison_adjusted_score"], reverse=True):
+        if len(selected) >= final_k:
+            break
+        chunk_id = str(item.get("chunk_id") or "")
+        if chunk_id and chunk_id not in selected_ids:
+            selected.append(item)
+            selected_ids.add(chunk_id)
+
+    report = {
+        "targets": {"target_a": targets[0], "target_b": targets[1]},
+        "reserve_per_target": reserve_per_target,
+        "reserved_ids": reserved_ids,
+        "target_a_candidate_count": sum(
+            item["comparison_target_relevance"]["target_a"]["score"] >= 0.24 for item in annotated
+        ),
+        "target_b_candidate_count": sum(
+            item["comparison_target_relevance"]["target_b"]["score"] >= 0.24 for item in annotated
+        ),
+        "incidental_penalty_ids": [
+            str(item.get("chunk_id"))
+            for item in annotated
+            if item.get("incidental_target_penalty", 0.0) > 0
+        ],
+        "final_ids": [str(item.get("chunk_id")) for item in selected[:final_k]],
+    }
+    return selected[:final_k], report
+
+
 # ============================================================
 # Hybrid Retriever
 # ============================================================
@@ -713,13 +919,15 @@ class HybridRetriever:
         info = defaultdict(
             lambda: {
                 "retrieval_hits": [],
+                "retrieval_query_roles": [],
                 "best_dense_score": None,
                 "best_bm25_score": None,
             }
         )
 
         for query_index, run in enumerate(runs):
-            weight = 1.0 if query_index == 0 else self.query_expansion_weight
+            weight = float(run.get("weight", 1.0 if query_index == 0 else self.query_expansion_weight))
+            query_role = str(run.get("role") or f"query_{query_index}")
 
             for rank, (corpus_index, score) in enumerate(run["dense"], 1):
                 fused[corpus_index] += weight / (self.rrf_k + rank)
@@ -727,6 +935,7 @@ class HybridRetriever:
                 info[corpus_index]["retrieval_hits"].append(
                     f"dense:q{query_index}@{rank}"
                 )
+                info[corpus_index]["retrieval_query_roles"].append(query_role)
 
                 current = info[corpus_index]["best_dense_score"]
 
@@ -739,6 +948,7 @@ class HybridRetriever:
                 info[corpus_index]["retrieval_hits"].append(
                     f"bm25:q{query_index}@{rank}"
                 )
+                info[corpus_index]["retrieval_query_roles"].append(query_role)
 
                 current = info[corpus_index]["best_bm25_score"]
 
@@ -759,6 +969,7 @@ class HybridRetriever:
             chunk["_corpus_idx"] = corpus_index
             chunk["rrf_score"] = float(fused[corpus_index])
             chunk.update(info[corpus_index])
+            chunk["retrieval_query_roles"] = list(dict.fromkeys(chunk["retrieval_query_roles"]))
 
             output.append(chunk)
 
@@ -904,7 +1115,24 @@ class HybridRetriever:
         final_k = final_k or self.final_context_k
 
         analysis = self.analyze_question(question)
-        query_variants = self.plan_query_variants(question)
+        comparison_query_plan = build_comparison_target_queries(question, analysis)
+        if comparison_query_plan:
+            query_specs = [
+                {"query": comparison_query_plan["global_query"], "role": "global", "weight": 0.7},
+                {"query": comparison_query_plan["target_a_query"], "role": "target_a", "weight": 1.0},
+                {"query": comparison_query_plan["target_b_query"], "role": "target_b", "weight": 1.0},
+            ]
+            query_variants = [spec["query"] for spec in query_specs]
+        else:
+            query_variants = self.plan_query_variants(question)
+            query_specs = [
+                {
+                    "query": query,
+                    "role": "global" if index == 0 else "global_expansion",
+                    "weight": 1.0 if index == 0 else self.query_expansion_weight,
+                }
+                for index, query in enumerate(query_variants)
+            ]
         classification = self.classify_question(question)
         public_intent = classification.get("intent", {})
 
@@ -927,6 +1155,9 @@ class HybridRetriever:
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
+                "target_specific_queries": comparison_query_plan,
+                "target_retrieval_results": {},
+                "comparison_balance": {},
                 "candidates20": [],
                 "final_context": [],
                 "max_dense": None,
@@ -958,7 +1189,8 @@ class HybridRetriever:
 
         runs = []
 
-        for query in query_variants:
+        for query_spec in query_specs:
+            query = str(query_spec["query"])
             embedding_started = time.perf_counter()
             embedding = self.service.embedder.encode(
                 [query_for_embedding(query)],
@@ -983,12 +1215,15 @@ class HybridRetriever:
             runs.append(
                 {
                     "query": query,
+                    "role": query_spec["role"],
+                    "weight": query_spec["weight"],
                     "dense": dense,
                     "bm25": bm25,
                 }
             )
 
-        original_dense = runs[0]["dense"] if runs else []
+        global_run = next((run for run in runs if run.get("role") == "global"), runs[0] if runs else None)
+        original_dense = global_run["dense"] if global_run else []
 
         max_dense = (
             original_dense[0][1]
@@ -1013,6 +1248,9 @@ class HybridRetriever:
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
+                "target_specific_queries": comparison_query_plan,
+                "target_retrieval_results": {},
+                "comparison_balance": {},
                 "candidates20": [],
                 "final_context": [],
                 "max_dense": float(max_dense),
@@ -1048,6 +1286,29 @@ class HybridRetriever:
             runs,
             top_k=self.rrf_top_k,
         )
+        if comparison_query_plan:
+            by_corpus_index = {int(item["_corpus_idx"]): item for item in candidates}
+            per_target_k = max(6, final_k * 3)
+            for role in ("target_a", "target_b"):
+                role_runs = [run for run in runs if run.get("role") == role]
+                for item in self.multi_query_rrf(role_runs, top_k=per_target_k):
+                    corpus_index = int(item["_corpus_idx"])
+                    existing = by_corpus_index.get(corpus_index)
+                    if existing is None:
+                        candidates.append(item)
+                        by_corpus_index[corpus_index] = item
+                        continue
+                    existing["retrieval_hits"] = list(dict.fromkeys([
+                        *existing.get("retrieval_hits", []),
+                        *item.get("retrieval_hits", []),
+                    ]))
+                    existing["retrieval_query_roles"] = list(dict.fromkeys([
+                        *existing.get("retrieval_query_roles", []),
+                        *item.get("retrieval_query_roles", []),
+                    ]))
+                    for score_key in ("best_dense_score", "best_bm25_score"):
+                        values = [value for value in (existing.get(score_key), item.get(score_key)) if value is not None]
+                        existing[score_key] = max(values) if values else None
         fusion_ms = (time.perf_counter() - fusion_started) * 1000
 
         if not candidates:
@@ -1060,6 +1321,9 @@ class HybridRetriever:
                 "intent": public_intent,
                 "analysis": analysis,
                 "query_variants": query_variants,
+                "target_specific_queries": comparison_query_plan,
+                "target_retrieval_results": {},
+                "comparison_balance": {},
                 "candidates20": [],
                 "final_context": [],
                 "max_dense": float(max_dense),
@@ -1149,16 +1413,45 @@ class HybridRetriever:
             reverse=True,
         )
 
-        candidates = candidates[:self.rrf_top_k]
-
         # ----------------------------------------------------
         # Final context diversity
         # ----------------------------------------------------
+        if comparison_query_plan:
+            final_context, comparison_balance = balance_comparison_candidates(
+                question,
+                candidates,
+                final_k,
+            )
+        else:
+            final_context = self.select_diverse_contexts(
+                candidates,
+                analysis,
+                final_k,
+            )
+            comparison_balance = {}
 
-        final_context = self.select_diverse_contexts(
-            candidates,
-            analysis,
-            final_k,
+        target_retrieval_results: dict[str, list[dict[str, Any]]] = {}
+        if comparison_query_plan:
+            for role in ("target_a", "target_b", "global"):
+                role_items = [
+                    item
+                    for item in candidates
+                    if role in item.get("retrieval_query_roles", [])
+                ]
+                role_items.sort(
+                    key=lambda item: (
+                        item.get("comparison_target_relevance", {}).get(role, {}).get("direct", False),
+                        item.get("comparison_target_relevance", {}).get(role, {}).get("score", 0.0),
+                        item.get("final_retrieval_score", 0.0),
+                    ),
+                    reverse=True,
+                )
+                target_retrieval_results[role] = role_items[:10]
+
+        trace_candidates = candidates[:self.rrf_top_k]
+        trace_ids = {str(item.get("chunk_id")) for item in trace_candidates}
+        trace_candidates.extend(
+            item for item in final_context if str(item.get("chunk_id")) not in trace_ids
         )
 
         result = {
@@ -1170,8 +1463,11 @@ class HybridRetriever:
             "intent": public_intent,
             "analysis": analysis,
             "query_variants": query_variants,
-            "candidates20": candidates,
+            "candidates20": trace_candidates,
             "final_context": final_context,
+            "target_specific_queries": comparison_query_plan,
+            "target_retrieval_results": target_retrieval_results,
+            "comparison_balance": comparison_balance,
             "max_dense": float(max_dense),
             "context_title_diversity": self.context_title_diversity(
                 final_context
@@ -1180,6 +1476,7 @@ class HybridRetriever:
                 "question_analyzer",
                 "query_planner",
                 f"multi_query_faiss_bm25:{len(query_variants)}q",
+                *( ["compare:target_specific_retrieval", "compare:target_balanced_pool"] if comparison_query_plan else [] ),
                 "weighted_rrf:top20",
                 "cross_encoder_reranker",
                 "metadata_intent_boost",

@@ -963,6 +963,128 @@ summary:focus-visible {
   height: 14px;
 }
 
+.developer-trace {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-raised) 76%, transparent);
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.developer-trace > summary {
+  width: max-content;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+}
+
+.developer-trace > summary::-webkit-details-marker,
+.trace-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.developer-trace > summary svg {
+  width: 14px;
+  height: 14px;
+}
+
+.developer-trace .trace-chevron {
+  transition: transform 150ms ease;
+}
+
+.developer-trace[open] .trace-chevron {
+  transform: rotate(180deg);
+}
+
+.trace-panel-body {
+  max-width: 100%;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.trace-panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.trace-panel-toolbar button {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.trace-panel-toolbar button:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.trace-panel-toolbar button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.trace-section {
+  border-top: 1px solid var(--border);
+}
+
+.trace-section > summary {
+  padding: 8px 2px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-soft);
+  font-size: 10.5px;
+  font-weight: 750;
+}
+
+.trace-section > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 14px;
+  color: var(--text-muted);
+}
+
+.trace-section[open] > summary::before {
+  content: "−";
+}
+
+.trace-section pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0 0 9px;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.trace-section-error > summary {
+  color: var(--danger);
+}
+
 .stream-cursor {
   width: 7px;
   height: 15px;

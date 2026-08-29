@@ -107,6 +107,8 @@ class EvidenceCritique(BaseModel):
     model_input_evidence: list[dict[str, Any]] = Field(default_factory=list)
     raw_candidate_count: int = 0
     model_visible_candidate_count: int = 0
+    evidence_model_input_chars: int = 0
+    evidence_model_input_tokens: int = 0
     dropped_for_budget_count: int = 0
     dropped_ids: list[str] = Field(default_factory=list)
     dropped_reasons: dict[str, str] = Field(default_factory=dict)
@@ -123,7 +125,17 @@ class EvidenceCritique(BaseModel):
     target_a_model_visible_count: int = 0
     target_b_model_visible_count: int = 0
     comparison_target_coverage: dict[str, bool] = Field(default_factory=dict)
+    comparison_dimension_coverage: dict[str, Any] = Field(default_factory=dict)
+    comparison_evidence_sufficient: bool = False
+    comparison_evidence_limited: bool = False
     comparison_target_map: dict[str, str] = Field(default_factory=dict)
+    candidate_roles: dict[str, str] = Field(default_factory=dict)
+    direct_subject_scores: dict[str, float] = Field(default_factory=dict)
+    affiliation_constraint_pass: dict[str, bool] = Field(default_factory=dict)
+    broad_summary_facets_requested: list[str] = Field(default_factory=list)
+    broad_summary_facets_covered: list[str] = Field(default_factory=list)
+    target_reserved_ids: dict[str, list[str]] = Field(default_factory=dict)
+    incidental_target_penalty_ids: list[str] = Field(default_factory=list)
     target_a_selected_evidence: list[str] = Field(default_factory=list)
     target_b_selected_evidence: list[str] = Field(default_factory=list)
     shared_selected_evidence: list[str] = Field(default_factory=list)

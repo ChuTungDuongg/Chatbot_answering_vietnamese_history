@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
                     service._log_gpu_memory_stage("adapters_loaded")
                     log_event(
                         "MODEL_PLACEMENT",
-                        embedder_device=str(getattr(getattr(service.embedder, "_target_device", None), "type", None)),
+                        embedder_device=str(getattr(getattr(service.embedder, "device", None), "type", None)),
                         reranker_device=str(getattr(service.reranker, "device", None)),
                     )
                 else:

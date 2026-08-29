@@ -20,6 +20,8 @@ from app.agents.comparison import (
     TARGET_B,
     UNKNOWN,
     classify_comparison_target,
+    comparison_dimension_coverage,
+    comparison_target_relevance,
 )
 from app.agents.evidence_validation import (
     compressed_derived_from_own_claims,
@@ -42,9 +44,9 @@ QUESTION_STOPWORDS = {
 RECOVERY_STOPWORDS = QUESTION_STOPWORDS | {
     "ay", "bang", "cau", "chi", "do", "nay", "nen", "thuoc",
 }
-EVIDENCE_TEXT_BUDGET = 14_000
-MAX_EVIDENCE_ITEM_CHARS = 3_200
-MIN_EVIDENCE_ITEM_CHARS = 1_200
+EVIDENCE_TEXT_BUDGET = 7_200
+MAX_EVIDENCE_ITEM_CHARS = 1_600
+MIN_EVIDENCE_ITEM_CHARS = 650
 MAX_RECOVERY_SPAN_CHARS = 700
 SEMANTIC_RELEVANCE_MARGIN = 0.24
 SEMANTIC_RELEVANCE_FLOOR = 0.34
@@ -103,6 +105,35 @@ NAVIGATION_NOISE_CUES = {
     "chu thich",
     "tham khao",
     "lien ket ngoai",
+    "the loai",
+    "chu de",
+    "danh muc",
+    "bai viet lien quan",
+    "cong thong tin",
+    "tro choi dien tu",
+    "video game",
+    "danh sach",
+    "phim truyen hinh",
+    "truyen thong dai chung",
+    "thu muc",
+    "isbn",
+}
+SUMMARY_CUES = {"tom tat", "tong quan", "khai quat", "so luoc"}
+SUPERLATIVE_CUES = {
+    "gioi nhat",
+    "xuat sac nhat",
+    "quan trong nhat",
+    "tot nhat",
+    "vi dai nhat",
+    "duoc danh gia cao nhat",
+}
+BROAD_SUMMARY_FACETS = ["timeframe_context", "actors", "course", "result", "significance"]
+EXPLANATORY_CLAIM_CUES = {
+    " la ", " da ", " gianh ", " dien ra", " danh ", " khien ",
+    " buoc ", " dan den", " thanh lap", " mo ra", " danh dau",
+    " cham dut", " nham ", " tro thanh", " bat dau", " ket thuc",
+    " to chuc", " lanh dao", " tan cong", " tien cong", " thang loi",
+    " that bai", " gop phan", " ky ket",
 }
 logger = logging.getLogger(__name__)
 
@@ -231,6 +262,10 @@ def _evidence_question_type(question: str) -> str:
     normalized = _normalized_text(question)
     if len(extract_comparison_targets(question)) >= 2:
         return "compare"
+    if any(cue in normalized for cue in SUPERLATIVE_CUES):
+        return "evaluative"
+    if any(cue in normalized for cue in SUMMARY_CUES):
+        return "broad_summary"
     if any(cue in normalized for cue in CAUSE_CUES):
         return "cause"
     if any(cue in normalized for cue in SIGNIFICANCE_CUES):
@@ -268,10 +303,39 @@ def _text_factor_labels(value: str) -> set[str]:
     }
 
 
+def _claim_noise_reason(value: str) -> str | None:
+    raw = " ".join(str(value).split()).strip()
+    normalized = f" {_normalized_text(raw)[:700]} "
+    if not raw:
+        return "empty_claim"
+    cue_hits = sum(1 for cue in NAVIGATION_NOISE_CUES if cue in normalized)
+    if cue_hits >= 1:
+        return "navigation_or_metadata"
+    words = WORD_RE.findall(raw)
+    if len(words) < 5:
+        return "malformed_fragment"
+    repeated_vietnam = len(re.findall(r"\bvi[eệ]t\s+nam\b", raw, flags=re.I))
+    has_explanation = any(cue in normalized for cue in EXPLANATORY_CLAIM_CUES)
+    capitalized = sum(1 for word in words if word[:1].isupper())
+    without_terminal_punctuation = raw.rstrip(".!?。！？").strip()
+    looks_like_entity_list = (
+        len(words) >= 12
+        and not re.search(r"[.!?。！？]", without_terminal_punctuation)
+        and not has_explanation
+        and (repeated_vietnam >= 2 or capitalized / max(len(words), 1) >= 0.34)
+    )
+    if looks_like_entity_list:
+        return "entity_or_tag_enumeration"
+    return None
+
+
 def _navigation_noise_penalty(value: str) -> float:
-    normalized = _normalized_text(value)[:700]
-    hits = sum(1 for cue in NAVIGATION_NOISE_CUES if cue in normalized)
-    return 0.45 if hits >= 2 else 0.0
+    reason = _claim_noise_reason(value)
+    if reason in {"navigation_or_metadata", "entity_or_tag_enumeration"}:
+        return 0.85
+    if reason:
+        return 0.45
+    return 0.0
 
 
 def _retrieval_score(value: Any) -> float:
@@ -363,6 +427,8 @@ def _comparison_claim_relevance_score(
         detail_bonus += 0.06
     if text_matches_target(str(candidate_title or ""), target):
         detail_bonus += 0.08
+    else:
+        detail_bonus -= 0.18
 
     target_score = (target_overlap * 0.62) + detail_bonus
     target_score -= _navigation_noise_penalty(claim)
@@ -395,7 +461,7 @@ def _selected_useful_claims(
     claims = [
         claim
         for claim in item.claims
-        if (
+        if not _claim_noise_reason(claim) and (
             _comparison_claim_relevance_score(
                 question,
                 compare_target,
@@ -424,6 +490,8 @@ def _best_candidate_claims(
         span = span.strip()
         if not span:
             continue
+        if _claim_noise_reason(span):
+            continue
         if len(span) > MAX_RECOVERY_SPAN_CHARS:
             span = question_relevant_excerpt(span, question, max_chars=MAX_RECOVERY_SPAN_CHARS)
         if not grounded_in_source(span, source_text):
@@ -448,6 +516,7 @@ def _best_candidate_claims(
     if (
         excerpt
         and grounded_in_source(excerpt, source_text)
+        and not _claim_noise_reason(excerpt)
         and (
             _comparison_claim_relevance_score(
                 question,
@@ -530,6 +599,16 @@ def _candidate_quality(question: str, item: dict[str, Any]) -> float:
     )
     if _title_year_conflicts_question(question, str(item.get("title") or "")):
         quality -= 0.6
+    comparison_targets = extract_comparison_targets(question)
+    if len(comparison_targets) >= 2:
+        relevance = [comparison_target_relevance(target, item) for target in comparison_targets[:2]]
+        best = max(relevance, key=lambda detail: detail["score"])
+        quality += min(0.18, 0.06 * float(best["score"]))
+        quality -= min(0.24, 0.12 * float(best["incidental_penalty"]))
+        if not bool(best.get("direct")) and any(bool(detail.get("direct")) for detail in relevance):
+            quality -= 0.18
+    if not _candidate_affiliation_constraint_pass(question, item):
+        quality -= 0.75
     return max(0.0, quality)
 
 
@@ -548,6 +627,26 @@ def _candidate_title_matches_target(item: Any, target: str) -> bool:
     return text_matches_target(str(title or ""), target)
 
 
+def _comparison_target_from_existing_role(candidate: Any, targets: list[str]) -> str | None:
+    if len(targets) < 2:
+        return None
+    raw = candidate if isinstance(candidate, dict) else {
+        "comparison_target": getattr(candidate, "comparison_target", None),
+        "retrieval_query_roles": getattr(candidate, "retrieval_query_roles", []),
+    }
+    label = str(raw.get("comparison_target") or "").strip()
+    if label == TARGET_A:
+        return targets[0]
+    if label == TARGET_B:
+        return targets[1]
+    roles = set(raw.get("retrieval_query_roles") or [])
+    if TARGET_B in roles and TARGET_A not in roles:
+        return targets[1]
+    if TARGET_A in roles and TARGET_B not in roles:
+        return targets[0]
+    return None
+
+
 def _selected_matches_target(item: SelectedEvidence, candidate: Any, target: str) -> bool:
     return text_matches_target(
         f"{getattr(candidate, 'title', '') or ''} {item.compressed_text} {' '.join(item.claims)}",
@@ -556,13 +655,81 @@ def _selected_matches_target(item: SelectedEvidence, candidate: Any, target: str
 
 
 def _candidate_best_comparison_target(candidate: Any, targets: list[str]) -> str | None:
-    for target in targets:
-        if _candidate_title_matches_target(candidate, target):
-            return target
+    existing = _comparison_target_from_existing_role(candidate, targets)
+    if existing:
+        return existing
+    raw = candidate if isinstance(candidate, dict) else {
+        "title": getattr(candidate, "title", ""),
+        "text": getattr(candidate, "text", ""),
+        "metadata": getattr(candidate, "metadata", {}),
+    }
+    ranked = sorted(
+        ((comparison_target_relevance(target, raw)["score"], target) for target in targets),
+        reverse=True,
+    )
+    if ranked and ranked[0][0] >= 2.5:
+        return ranked[0][1]
     for target in targets:
         if _candidate_matches_target(candidate, target):
             return target
     return None
+
+
+def _extract_affiliation_constraint(question: str) -> dict[str, str] | None:
+    normalized = _normalized_text(question)
+    patterns = (
+        r"\b(?:tuong|nhan vat|nguoi|lanh dao|si quan)\s+(?:phe|thuoc|cua)\s+([a-z0-9 ]{2,40})",
+        r"\bphe\s+([a-z0-9][a-z0-9 ]{1,38})",
+        r"\b(?:vua|quan|tuong)\s+nha\s+([a-z0-9 ]{2,40})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        group = match.group(1).strip(" ?.,;:")
+        group = re.split(r"\b(?:nao|gioi|xuat|quan trong|tot|vi dai|co|la)\b", group, maxsplit=1)[0].strip()
+        if group:
+            return {"group": group}
+    return None
+
+
+def _candidate_affiliation_constraint_pass(question: str, item: dict[str, Any]) -> bool:
+    constraint = _extract_affiliation_constraint(question)
+    if not constraint:
+        return True
+    group = constraint["group"]
+    title = _normalized_text(str(item.get("title") or ""))
+    metadata = _normalized_text(str(item.get("metadata") or ""))
+    text = _normalized_text(str(item.get("text") or ""))
+    subject = f"{title} {metadata}".strip()
+    negative_window = rf"\b(?:chong|danh bai|thang|tien cong|doi dau|giao tranh voi)\s+{re.escape(group)}\b"
+    if re.search(negative_window, text):
+        return False
+    if re.search(rf"\b{re.escape(group)}\b", subject):
+        return True
+    positive_patterns = (
+        rf"\b(?:thuoc|cua|phe|phia|trong|phuc vu|chi huy|tuong|si quan|quan luc|quan doi)\s+{re.escape(group)}\b",
+        rf"\b{re.escape(group)}\s+(?:cong hoa|luc luong|quan luc|quan doi|tuong|si quan|chi huy)\b",
+    )
+    if any(re.search(pattern, text) for pattern in positive_patterns):
+        return not bool(re.search(negative_window, text))
+    return False
+
+
+def _broad_summary_facets_for_text(value: str) -> set[str]:
+    normalized = _normalized_text(value)
+    facets: set[str] = set()
+    if YEAR_RE.search(normalized) or any(cue in normalized for cue in ("giai doan", "bat dau", "ket thuc", "boi canh")):
+        facets.add("timeframe_context")
+    if any(cue in normalized for cue in ("luc luong", "chinh quyen", "quan doi", "tuong ", "chi huy", "my", "phap", "vnch", "viet nam dan chu cong hoa", "viet minh")):
+        facets.add("actors")
+    if any(cue in normalized for cue in ("dien bien", "chien dich", "tan cong", "tong tien cong", "giai doan", "leo thang")):
+        facets.add("course")
+    if any(cue in normalized for cue in ("ket qua", "ket thuc", "chien thang", "that bai", "thang loi", "hiep dinh", "sup do", "giai phong")):
+        facets.add("result")
+    if any(cue in normalized for cue in ("y nghia", "he qua", "hau qua", "tac dong", "dan den", "thong nhat", "chia cat", "buoc ngoat", "mo ra")):
+        facets.add("significance")
+    return facets
 
 
 class EvidenceCriticAgent:
@@ -691,9 +858,14 @@ class EvidenceCriticAgent:
                 continue
             raw_available[chunk_id] = item
 
-        visible_limit = min(max(final_k, 1), self.max_contexts)
         comparison_targets = extract_comparison_targets(question)
         question_type = _evidence_question_type(question)
+        if question_type == "factual":
+            visible_limit = min(max(3, final_k), self.max_contexts, 5)
+        elif question_type in {"compare", "cause", "analysis", "significance", "broad_summary", "evaluative"}:
+            visible_limit = min(max(final_k, 6), self.max_contexts)
+        else:
+            visible_limit = min(max(final_k, 1), self.max_contexts, 6)
         ranked = sorted(
             raw_available.items(),
             key=lambda pair: (_candidate_quality(question, pair[1]), -list(raw_available).index(pair[0])),
@@ -701,8 +873,11 @@ class EvidenceCriticAgent:
         )
         selected_ids: list[str] = []
         target_candidate_counts: list[int] = []
+        target_reserved_ids: dict[str, list[str]] = {TARGET_A: [], TARGET_B: []}
         if len(comparison_targets) >= 2 and visible_limit >= 2:
-            for target in comparison_targets[:2]:
+            reserve_per_target = min(2, max(1, visible_limit // 3))
+            for target_index, target in enumerate(comparison_targets[:2]):
+                target_label = TARGET_A if target_index == 0 else TARGET_B
                 matches = [
                     (chunk_id, item)
                     for chunk_id, item in ranked
@@ -710,17 +885,23 @@ class EvidenceCriticAgent:
                 ]
                 matches.sort(
                     key=lambda pair: (
-                        _candidate_title_matches_target(pair[1], target),
+                        comparison_target_relevance(target, pair[1])["direct"],
+                        comparison_target_relevance(target, pair[1])["score"],
                         _candidate_quality(question, pair[1]),
                     ),
                     reverse=True,
                 )
                 target_candidate_counts.append(len(matches))
-                best = next((chunk_id for chunk_id, _ in matches if chunk_id not in selected_ids), None)
-                if best is not None:
-                    selected_ids.append(best)
-                if len(selected_ids) >= visible_limit:
-                    break
+                for chunk_id, item in matches:
+                    if len(selected_ids) >= visible_limit or len(target_reserved_ids[target_label]) >= reserve_per_target:
+                        break
+                    if chunk_id in selected_ids:
+                        continue
+                    directness = comparison_target_relevance(target, item)
+                    if directness["score"] < 1.0 or not _candidate_affiliation_constraint_pass(question, item):
+                        continue
+                    selected_ids.append(chunk_id)
+                    target_reserved_ids[target_label].append(chunk_id)
         else:
             target_candidate_counts = [0, 0]
         while len(target_candidate_counts) < 2:
@@ -730,7 +911,9 @@ class EvidenceCriticAgent:
                 (
                     chunk_id
                     for chunk_id, item in ranked
-                    if _source_kind(item) == preferred_kind and chunk_id not in selected_ids
+                    if _source_kind(item) == preferred_kind
+                    and chunk_id not in selected_ids
+                    and _candidate_affiliation_constraint_pass(question, item)
                 ),
                 None,
             )
@@ -741,7 +924,7 @@ class EvidenceCriticAgent:
         for chunk_id, _ in ranked:
             if len(selected_ids) >= visible_limit:
                 break
-            if chunk_id not in selected_ids:
+            if chunk_id not in selected_ids and _candidate_affiliation_constraint_pass(question, raw_available[chunk_id]):
                 selected_ids.append(chunk_id)
         available = {chunk_id: raw_available[chunk_id] for chunk_id in selected_ids}
         dropped_ids = [chunk_id for chunk_id in raw_available if chunk_id not in available]
@@ -758,25 +941,52 @@ class EvidenceCriticAgent:
             MAX_EVIDENCE_ITEM_CHARS,
             max(MIN_EVIDENCE_ITEM_CHARS, EVIDENCE_TEXT_BUDGET // max(len(available), 1)),
         )
+        evidence_payload = [
+            {
+                "evidence_id": chunk_id,
+                "source_type": _source_kind(item),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "chunk_id": chunk_id,
+                "text": question_relevant_excerpt(
+                    str(item.get("text", "")),
+                    question,
+                    max_chars=per_item_limit,
+                ),
+                "retrieval_score": item.get("final_retrieval_score") or item.get("score") or item.get("reranker_score"),
+            }
+            for chunk_id, item in available.items()
+        ]
         request = EvidenceAgentRequest.model_validate({
             "question": question,
             "max_selected": min(max(final_k, 1), self.max_contexts),
-            "evidence": [
-                {
-                    "evidence_id": chunk_id,
-                    "source_type": _source_kind(item),
-                    "title": item.get("title"),
-                    "url": item.get("url"),
-                    "chunk_id": chunk_id,
-                    "text": question_relevant_excerpt(
-                        str(item.get("text", "")),
-                        question,
-                        max_chars=per_item_limit,
-                    ),
-                    "retrieval_score": item.get("final_retrieval_score") or item.get("score") or item.get("reranker_score"),
-                }
-                for chunk_id, item in available.items()
-            ],
+            "evidence": evidence_payload,
+        })
+        request_dump = request.model_dump()
+        model_input_chars = len(json.dumps(request_dump, ensure_ascii=False, sort_keys=True))
+        candidate_roles: dict[str, str] = {}
+        direct_subject_scores: dict[str, float] = {}
+        affiliation_pass: dict[str, bool] = {}
+        for chunk_id, item in raw_available.items():
+            role = str(item.get("comparison_target") or "")
+            if not role and len(comparison_targets) >= 2:
+                target = _candidate_best_comparison_target(item, comparison_targets[:2])
+                role = TARGET_A if target == comparison_targets[0] else TARGET_B if target == comparison_targets[1] else UNKNOWN
+            candidate_roles[chunk_id] = role or UNKNOWN
+            if len(comparison_targets) >= 2:
+                direct_subject_scores[chunk_id] = max(
+                    float(comparison_target_relevance(target, item).get("direct_subject_score", 0.0))
+                    for target in comparison_targets[:2]
+                )
+            affiliation_pass[chunk_id] = _candidate_affiliation_constraint_pass(question, item)
+        broad_facets_by_candidate = {
+            chunk_id: sorted(_broad_summary_facets_for_text(f"{item.get('title') or ''} {item.get('text') or ''}"))
+            for chunk_id, item in raw_available.items()
+        }
+        broad_facets_covered = sorted({
+            facet
+            for chunk_id in selected_ids
+            for facet in broad_facets_by_candidate.get(chunk_id, [])
         })
         budget_report = {
             "raw_candidate_count": len(raw_available),
@@ -788,11 +998,29 @@ class EvidenceCriticAgent:
             "source_kind_counts_raw": dict(raw_kind_counts),
             "source_kind_counts_visible": dict(visible_kind_counts),
             "question_type": question_type,
+            "model_input_chars": model_input_chars,
+            "model_input_tokens_estimate": max(1, model_input_chars // 4) if model_input_chars else 0,
+            "candidate_roles": candidate_roles,
+            "direct_subject_scores": direct_subject_scores,
+            "affiliation_constraint_pass": affiliation_pass,
+            "broad_summary_facets_requested": BROAD_SUMMARY_FACETS if question_type == "broad_summary" else [],
+            "broad_summary_facets_covered": broad_facets_covered if question_type == "broad_summary" else [],
+            "broad_summary_facets_by_candidate": broad_facets_by_candidate if question_type == "broad_summary" else {},
             "comparison_targets": comparison_targets[:2],
             "target_a_candidate_count": target_candidate_counts[0],
             "target_b_candidate_count": target_candidate_counts[1],
             "target_a_model_visible_count": target_visible_counts[0],
             "target_b_model_visible_count": target_visible_counts[1],
+            "target_reserved_ids": target_reserved_ids,
+            "incidental_target_penalty_ids": [
+                chunk_id
+                for chunk_id, item in raw_available.items()
+                if comparison_targets
+                and max(
+                    comparison_target_relevance(target, item)["incidental_penalty"]
+                    for target in comparison_targets[:2]
+                ) > 0
+            ],
         }
         return request, available, budget_report
 
@@ -1248,6 +1476,17 @@ class EvidenceCriticAgent:
         ]
         if year_conflict_ids:
             relevance_triggered = True
+        affiliation_failed_ids = [
+            item.evidence_id
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+            and not _candidate_affiliation_constraint_pass(
+                request.question,
+                candidates_by_id[item.evidence_id].model_dump(),
+            )
+        ]
+        if affiliation_failed_ids:
+            relevance_triggered = True
 
         retained_selected_ids = [
             item.evidence_id
@@ -1255,6 +1494,7 @@ class EvidenceCriticAgent:
             if item.evidence_id in candidates_by_id
             and item.evidence_id not in weak_selected_ids
             and item.evidence_id not in year_conflict_ids
+            and item.evidence_id not in affiliation_failed_ids
             and selected_useful_claims_by_id.get(item.evidence_id)
         ]
         selected_useful_claims = [
@@ -1306,6 +1546,8 @@ class EvidenceCriticAgent:
         for score, evidence_id, candidate in ranked:
             if _title_year_conflicts_question(request.question, candidate.title):
                 continue
+            if not _candidate_affiliation_constraint_pass(request.question, candidate.model_dump()):
+                continue
             if score < SEMANTIC_RELEVANCE_FLOOR:
                 continue
             factors = _text_factor_labels(f"{candidate.title or ''} {candidate.text}")
@@ -1329,6 +1571,8 @@ class EvidenceCriticAgent:
         comparison_target_coverage: dict[str, bool] = {}
         missing_comparison_targets: list[str] = []
         comparison_candidate_ids: list[str] = []
+        broad_summary_facets_requested: list[str] = []
+        broad_summary_facets_covered: list[str] = []
         if len(comparison_targets) >= 2:
             for target in comparison_targets[:2]:
                 target_candidates = []
@@ -1336,6 +1580,8 @@ class EvidenceCriticAgent:
                     if score < SEMANTIC_RELEVANCE_FLOOR:
                         continue
                     if _title_year_conflicts_question(request.question, candidate.title):
+                        continue
+                    if not _candidate_affiliation_constraint_pass(request.question, candidate.model_dump()):
                         continue
                     if not _candidate_matches_target(candidate, target):
                         continue
@@ -1393,6 +1639,36 @@ class EvidenceCriticAgent:
                 relevance_triggered = bool(year_conflict_ids or weak_selected_ids)
         if len(comparison_targets) >= 2:
             coverage_triggered = bool(missing_comparison_targets)
+        elif question_type == "broad_summary":
+            broad_summary_facets_requested = BROAD_SUMMARY_FACETS
+            selected_facet_set = {
+                facet
+                for evidence_id in retained_selected_ids
+                if evidence_id in candidates_by_id
+                for facet in _broad_summary_facets_for_text(
+                    f"{candidates_by_id[evidence_id].title or ''} {candidates_by_id[evidence_id].text}"
+                )
+            }
+            candidate_facet_ids: list[str] = []
+            seen_facets = set(selected_facet_set)
+            for score, evidence_id, candidate in ranked:
+                if score < SEMANTIC_RELEVANCE_FLOOR * 0.7:
+                    continue
+                if evidence_id in retained_selected_ids:
+                    continue
+                candidate_facets = _broad_summary_facets_for_text(f"{candidate.title or ''} {candidate.text}")
+                if not candidate_facets - seen_facets:
+                    continue
+                candidate_facet_ids.append(evidence_id)
+                seen_facets.update(candidate_facets)
+                if len(seen_facets) >= 3:
+                    break
+            broad_summary_facets_covered = sorted(selected_facet_set)
+            if len(selected_facet_set) <= 1 and candidate_facet_ids:
+                coverage_triggered = True
+                novel_candidate_ids = _dedupe_preserve_order([*candidate_facet_ids, *novel_candidate_ids])
+            else:
+                coverage_triggered = False
         else:
             coverage_triggered = (
                 analytical
@@ -1427,11 +1703,14 @@ class EvidenceCriticAgent:
             "best_direct_selected_score": best_direct_selected,
             "weak_selected_ids": weak_selected_ids,
             "year_conflict_ids": year_conflict_ids,
+            "affiliation_failed_ids": affiliation_failed_ids,
             "candidate_factors": sorted(candidate_factors),
             "selected_factors": sorted(selected_factors),
             "comparison_targets": comparison_targets[:2],
             "missing_comparison_targets": missing_comparison_targets,
             "comparison_target_coverage": comparison_target_coverage,
+            "broad_summary_facets_requested": broad_summary_facets_requested,
+            "broad_summary_facets_covered": broad_summary_facets_covered,
             "retained_selected_ids": retained_selected_ids,
             "evidence_pruned_claim_count": evidence_pruned_claim_count,
             "evidence_supplemented_count": len([
@@ -1498,14 +1777,21 @@ class EvidenceCriticAgent:
         candidate_ids = _dedupe_preserve_order([str(evidence_id) for evidence_id in candidate_ids])
         weak_selected_ids = set(findings.get("weak_selected_ids") or [])
         year_conflict_ids = set(findings.get("year_conflict_ids") or [])
+        affiliation_failed_ids = set(findings.get("affiliation_failed_ids") or [])
         candidates_by_id = {item.evidence_id: item for item in request.evidence}
         for evidence_id in candidate_ids:
             candidate = candidates_by_id.get(str(evidence_id))
             if candidate is None:
                 continue
-            if candidate.evidence_id in weak_selected_ids or candidate.evidence_id in year_conflict_ids:
+            if (
+                candidate.evidence_id in weak_selected_ids
+                or candidate.evidence_id in year_conflict_ids
+                or candidate.evidence_id in affiliation_failed_ids
+            ):
                 continue
             if _title_year_conflicts_question(request.question, candidate.title):
+                continue
+            if not _candidate_affiliation_constraint_pass(request.question, candidate.model_dump()):
                 continue
             compare_target = (
                 _candidate_best_comparison_target(candidate, comparison_targets[:2])
@@ -1817,8 +2103,14 @@ class EvidenceCriticAgent:
     ) -> tuple[EvidenceCritique, list[dict[str, Any]]]:
         selected = model_output.selected_evidence[: self.max_contexts]
         contexts: list[dict[str, Any]] = []
+        request_by_id = {item.evidence_id: item for item in request.evidence}
         for item in selected:
             context = dict(available[item.evidence_id])
+            # Citation validation must use the original stored source, while
+            # ``context["text"]`` remains the compact model-visible excerpt.
+            context["validated_source_text"] = str(
+                context.get("text") or request_by_id[item.evidence_id].text
+            )
             context["text"] = item.compressed_text or str(context.get("text", ""))
             context["claims"] = list(item.claims)
             if len(budget_report.get("comparison_targets", [])) >= 2:
@@ -1870,6 +2162,17 @@ class EvidenceCriticAgent:
                 for request_item in request.evidence
                 if request_item.evidence_id == item.evidence_id
             )
+        dimension_coverage = (
+            comparison_dimension_coverage(question, contexts)
+            if len(budget_report.get("comparison_targets", [])) >= 2
+            else {}
+        )
+        comparison_targets_covered = bool(comparison_coverage) and all(comparison_coverage.values())
+        comparison_limited = bool(
+            comparison_targets_covered
+            and dimension_coverage
+            and not dimension_coverage.get("two_sided_dimensions")
+        )
         critique = EvidenceCritique(
             status=model_output.status,
             selected_evidence=selected,
@@ -1897,6 +2200,8 @@ class EvidenceCriticAgent:
             ],
             raw_candidate_count=int(budget_report["raw_candidate_count"]),
             model_visible_candidate_count=int(budget_report["model_visible_candidate_count"]),
+            evidence_model_input_chars=int(budget_report.get("model_input_chars", 0)),
+            evidence_model_input_tokens=int(budget_report.get("model_input_tokens_estimate", 0)),
             dropped_for_budget_count=int(budget_report["dropped_for_budget_count"]),
             dropped_ids=list(budget_report["dropped_ids"]),
             dropped_reasons=dict(budget_report["dropped_reasons"]),
@@ -1913,7 +2218,17 @@ class EvidenceCriticAgent:
             target_a_model_visible_count=int(budget_report.get("target_a_model_visible_count", 0)),
             target_b_model_visible_count=int(budget_report.get("target_b_model_visible_count", 0)),
             comparison_target_coverage=comparison_coverage,
+            comparison_dimension_coverage=dimension_coverage,
+            comparison_evidence_sufficient=comparison_targets_covered,
+            comparison_evidence_limited=comparison_limited,
             comparison_target_map=comparison_target_map,
+            candidate_roles=dict(budget_report.get("candidate_roles") or {}),
+            direct_subject_scores=dict(budget_report.get("direct_subject_scores") or {}),
+            affiliation_constraint_pass=dict(budget_report.get("affiliation_constraint_pass") or {}),
+            broad_summary_facets_requested=list(budget_report.get("broad_summary_facets_requested") or []),
+            broad_summary_facets_covered=list(budget_report.get("broad_summary_facets_covered") or []),
+            target_reserved_ids=dict(budget_report.get("target_reserved_ids") or {}),
+            incidental_target_penalty_ids=list(budget_report.get("incidental_target_penalty_ids") or []),
             target_a_selected_evidence=target_a_selected_evidence,
             target_b_selected_evidence=target_b_selected_evidence,
             shared_selected_evidence=shared_selected_evidence,
@@ -1942,7 +2257,14 @@ class EvidenceCriticAgent:
         if telemetry is not None:
             telemetry.evidence_attempts += 1
         request, available, budget_report = self._build_evidence_request(question, evidence, final_k=final_k)
-        visible_sources = {item.evidence_id: item.text for item in request.evidence}
+        # Keep the compact excerpts sent to the model separate from the full
+        # source text used for citation/grounding validation.  A shortened
+        # excerpt is an input-size optimization, not a replacement for the
+        # authoritative text stored in ``available``.
+        visible_sources = {
+            item.evidence_id: str(available.get(item.evidence_id, {}).get("text") or item.text)
+            for item in request.evidence
+        }
         selected_candidate_count = min(max(final_k, 1), self.max_contexts)
         generation_calls = 1
         repair_used = False
@@ -1981,6 +2303,17 @@ class EvidenceCriticAgent:
             telemetry.target_b_candidate_count = int(budget_report["target_b_candidate_count"])
             telemetry.target_a_model_visible_count = int(budget_report["target_a_model_visible_count"])
             telemetry.target_b_model_visible_count = int(budget_report["target_b_model_visible_count"])
+            telemetry.evidence_model_input_chars = int(budget_report.get("model_input_chars", 0))
+            telemetry.evidence_model_input_tokens = int(budget_report.get("model_input_tokens_estimate", 0))
+            telemetry.candidate_roles = dict(budget_report.get("candidate_roles") or {})
+            telemetry.direct_subject_scores = dict(budget_report.get("direct_subject_scores") or {})
+            telemetry.affiliation_constraint_pass = dict(budget_report.get("affiliation_constraint_pass") or {})
+            telemetry.broad_summary_facets_requested = list(
+                budget_report.get("broad_summary_facets_requested") or []
+            )
+            telemetry.broad_summary_facets_covered = list(
+                budget_report.get("broad_summary_facets_covered") or []
+            )
             telemetry.external_evidence_collected_count = sum(
                 count for kind, count in telemetry.evidence_source_kind_counts_raw.items()
                 if kind in {"wikipedia", "web"}

@@ -34,12 +34,25 @@ def serialize_sources(
 def deserialize_sources(value: str | None) -> list[dict[str, Any]]:
     if not value:
         return []
-
     try:
         result = json.loads(value)
         return result if isinstance(result, list) else []
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return []
+
+
+def serialize_debug_trace(debug_trace: dict[str, Any] | None) -> str:
+    return json.dumps(debug_trace or {}, ensure_ascii=False, default=str)
+
+
+def deserialize_debug_trace(value: str | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    try:
+        result = json.loads(value)
+        return result if isinstance(result, dict) and result else None
+    except json.JSONDecodeError:
+        return None
 
 
 def clean_title(value: str | None) -> str:
@@ -120,6 +133,7 @@ class ConversationStore:
                             CHECK(role IN ('user', 'assistant')),
                         content TEXT NOT NULL,
                         sources_json TEXT NOT NULL DEFAULT '[]',
+                        debug_json TEXT NOT NULL DEFAULT '{}',
                         status TEXT NOT NULL DEFAULT 'done',
                         created_at TEXT NOT NULL,
                         FOREIGN KEY(conversation_id)
@@ -184,6 +198,15 @@ class ConversationStore:
                     ON temporary_chunks(attachment_id);
                     """
                 )
+
+                message_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(messages)").fetchall()
+                }
+                if "debug_json" not in message_columns:
+                    connection.execute(
+                        "ALTER TABLE messages ADD COLUMN debug_json TEXT NOT NULL DEFAULT '{}'"
+                    )
 
                 connection.commit()
 
@@ -388,6 +411,7 @@ class ConversationStore:
         role: str,
         content: str,
         sources: list[dict[str, Any]] | None = None,
+        debug_trace: dict[str, Any] | None = None,
         status: str = "done",
     ) -> dict[str, Any]:
         if role not in {"user", "assistant"}:
@@ -433,10 +457,11 @@ class ConversationStore:
                         role,
                         content,
                         sources_json,
+                        debug_json,
                         status,
                         created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         message_id,
@@ -444,6 +469,7 @@ class ConversationStore:
                         role,
                         content,
                         serialize_sources(sources),
+                        serialize_debug_trace(debug_trace),
                         status,
                         timestamp,
                     ),
@@ -501,6 +527,7 @@ class ConversationStore:
                     m.role,
                     m.content,
                     m.sources_json,
+                    m.debug_json,
                     m.status,
                     m.created_at
                 FROM messages m
@@ -525,6 +552,7 @@ class ConversationStore:
         result["sources"] = deserialize_sources(
             result.pop("sources_json", None)
         )
+        result["debug_trace"] = deserialize_debug_trace(result.pop("debug_json", None))
 
         return result
 
@@ -546,6 +574,7 @@ class ConversationStore:
                         m.role,
                         m.content,
                         m.sources_json,
+                        m.debug_json,
                         m.status,
                         m.created_at
                     FROM messages m
@@ -572,6 +601,7 @@ class ConversationStore:
                             m.role,
                             m.content,
                             m.sources_json,
+                            m.debug_json,
                             m.status,
                             m.created_at
                         FROM messages m
@@ -599,6 +629,7 @@ class ConversationStore:
             message["sources"] = deserialize_sources(
                 message.pop("sources_json", None)
             )
+            message["debug_trace"] = deserialize_debug_trace(message.pop("debug_json", None))
             messages.append(message)
 
         return messages

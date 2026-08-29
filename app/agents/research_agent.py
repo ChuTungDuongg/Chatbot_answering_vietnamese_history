@@ -18,6 +18,7 @@ from app.agents.policy_schema import (
     validate_runtime_decision,
 )
 from app.agents.schemas import ResearchResult
+from app.rag.retrieval import build_comparison_target_queries
 from app.tools.evidence_tools import SessionEvidenceStore
 from app.tools.registry import ToolExecutionContext, ToolRegistry
 from app.telemetry import current_request_telemetry, log_event
@@ -25,6 +26,31 @@ from app.telemetry import current_request_telemetry, log_event
 
 logger = logging.getLogger(__name__)
 YEAR_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]{2}|9[0-9]{2})\b")
+EXTERNAL_TOOL_NAMES = {"search_wikipedia", "fetch_wikipedia_page", "search_web", "fetch_web_page"}
+VERIFICATION_CUES = {
+    "co that su",
+    "co dung la",
+    "tin don",
+    "thuc hu",
+    "bang chung",
+    "kiem chung",
+    "that hay khong",
+}
+DISPUTED_CUES = {
+    "tranh cai",
+    "gay tranh cai",
+    "bat dong",
+    "mau thuan",
+    "phu nhan",
+}
+EVALUATIVE_CUES = {
+    "gioi nhat",
+    "xuat sac nhat",
+    "quan trong nhat",
+    "tot nhat",
+    "vi dai nhat",
+    "duoc danh gia cao nhat",
+}
 
 
 def owner_context_ready(context: ToolExecutionContext) -> bool:
@@ -41,6 +67,44 @@ def _tokens(value: str) -> set[str]:
         for token in re.findall(r"[0-9A-Za-zÀ-ỹĐđ]+", str(value).lower())
         if len(token) > 1 and token not in {"năm", "nao", "nào", "nhu", "như", "the", "thế", "nào", "chiến", "thắng"}
     }
+
+
+def _normalize_text(value: str) -> str:
+    value = str(value).lower()
+    replacements = {
+        "à": "a", "á": "a", "ạ": "a", "ả": "a", "ã": "a", "â": "a", "ầ": "a", "ấ": "a", "ậ": "a", "ẩ": "a", "ẫ": "a", "ă": "a", "ằ": "a", "ắ": "a", "ặ": "a", "ẳ": "a", "ẵ": "a",
+        "è": "e", "é": "e", "ẹ": "e", "ẻ": "e", "ẽ": "e", "ê": "e", "ề": "e", "ế": "e", "ệ": "e", "ể": "e", "ễ": "e",
+        "ì": "i", "í": "i", "ị": "i", "ỉ": "i", "ĩ": "i",
+        "ò": "o", "ó": "o", "ọ": "o", "ỏ": "o", "õ": "o", "ô": "o", "ồ": "o", "ố": "o", "ộ": "o", "ổ": "o", "ỗ": "o", "ơ": "o", "ờ": "o", "ớ": "o", "ợ": "o", "ở": "o", "ỡ": "o",
+        "ù": "u", "ú": "u", "ụ": "u", "ủ": "u", "ũ": "u", "ư": "u", "ừ": "u", "ứ": "u", "ự": "u", "ử": "u", "ữ": "u",
+        "ỳ": "y", "ý": "y", "ỵ": "y", "ỷ": "y", "ỹ": "y", "đ": "d",
+    }
+    return "".join(replacements.get(char, char) for char in value)
+
+
+def _external_research_reason(question: str, local_state: dict[str, Any] | None = None) -> str | None:
+    normalized = _normalize_text(question)
+    local_state = local_state or {}
+    local_count = int(local_state.get("local_result_count") or 0)
+    source_kinds = set(local_state.get("source_kinds") or [])
+    if any(cue in normalized for cue in VERIFICATION_CUES):
+        return "verification_or_rumor"
+    if any(cue in normalized for cue in DISPUTED_CUES):
+        return "disputed_claim"
+    if any(cue in normalized for cue in EVALUATIVE_CUES):
+        return "evaluative_superlative"
+    if local_count == 0 and re.search(
+        r"\b(lich su|su kien|tran|chien dich|chien thang|nha [a-z]|nam \d{3,4}|vua|tuong|khoi nghia)\b",
+        normalized,
+    ):
+        return "no_local_evidence"
+    if source_kinds and source_kinds <= {"history"} and re.search(r"\b(kiem chung|danh gia|tranh cai)\b", normalized):
+        return "source_diversity"
+    return None
+
+
+def needs_external_research(question: str, local_state: dict[str, Any] | None = None) -> bool:
+    return _external_research_reason(question, local_state) is not None
 
 
 def _wikipedia_candidate_score(question: str, row: dict[str, Any]) -> tuple[float, bool]:
@@ -199,6 +263,33 @@ class ResearchAgent:
             if item.get("chunk_id")
         ))
         evidence = [all_evidence[evidence_id] for evidence_id in observed_ids if evidence_id in all_evidence]
+        external_steps = [
+            step for step in policy_steps
+            if step.get("external_research") or step.get("external_fallback")
+        ]
+        external_tools_called = [
+            str(step.get("tool_name"))
+            for step in external_steps
+            if step.get("action") == "tool" and step.get("tool_name")
+        ]
+        external_needed = any(bool(step.get("external_research_needed")) for step in policy_steps)
+        external_available = any(bool(step.get("external_research_available")) for step in policy_steps)
+        external_skip_reason = next(
+            (
+                str(step.get("external_research_skip_reason"))
+                for step in policy_steps
+                if step.get("external_research_skip_reason")
+            ),
+            None,
+        )
+        external_reason = next(
+            (
+                str(step.get("external_research_reason"))
+                for step in policy_steps
+                if step.get("external_research_reason")
+            ),
+            None,
+        )
         return ResearchResult(
             question=question,
             evidence=evidence,
@@ -224,6 +315,12 @@ class ResearchAgent:
                 "evidence_ids": [str(item.get("chunk_id")) for item in evidence],
                 "retrieval_question": retrieval_question,
                 "history_used_for_retrieval": history_used,
+                "external_research_needed": external_needed,
+                "external_research_available": external_available,
+                "external_research_reason": external_reason,
+                "external_research_skip_reason": external_skip_reason,
+                "external_tools_called": external_tools_called,
+                "external_results_count": sum(int(step.get("result_count") or 0) for step in external_steps),
             },
         )
 
@@ -270,22 +367,28 @@ class ResearchAgent:
             "result_count": len(chunks),
             "error": record.error,
             "evidence": [self._evidence_preview(item) for item in chunks[:10]],
+            "target_specific_queries": build_comparison_target_queries(
+                question,
+                self.retrieval_runtime.retriever.analyze_question(question),
+            ),
         })
-        if not attachment_chunks and not chunks and self.max_steps > 1 and "search_web" in self.registry.names():
-            web_rows, web_record = await self.registry.call("search_web", {"query": question, "top_k": 5})
-            tool_trace.append(
-                f"{web_record.name}:{web_record.result_count}" if not web_record.error else f"{web_record.name}:error"
+        local_state = self._local_state_from_observations([
+            {"tool": "search_uploaded_documents", "result_count": len(attachment_chunks), "result": attachment_chunks[:5]},
+            {"tool": "search_history", "result_count": len(chunks), "result": chunks[:5]},
+        ])
+        external_reason = _external_research_reason(question, local_state)
+        if external_reason:
+            external_trace, external_steps, _ = await self._run_external_research(
+                question=question,
+                session_id=session_id,
+                start_step=len(policy_steps) + 1,
+                tool_context=tool_context,
+                request_id=None,
+                reason=external_reason,
+                fallback=external_reason == "no_local_evidence",
             )
-            self.evidence_store.add_documents(session_id, web_rows or [])
-            policy_steps.append({
-                "step": len(policy_steps) + 1,
-                "action": "tool",
-                "tool_name": "search_web",
-                "arguments": {"query": question, "top_k": 5},
-                "result_count": len(web_rows or []),
-                "error": web_record.error,
-                "evidence": [self._evidence_preview(item) for item in (web_rows or [])[:10]],
-            })
+            tool_trace.extend(external_trace)
+            policy_steps.extend(external_steps)
         return tool_trace, policy_steps
 
     async def _run_model_policy(
@@ -308,6 +411,23 @@ class ResearchAgent:
         )
         trace: list[str] = prefetch_trace
         policy_steps: list[dict[str, Any]] = prefetch_steps
+        external_reason = _external_research_reason(
+            question,
+            self._local_state_from_observations(observations),
+        )
+        if external_reason:
+            external_trace, external_steps, external_observations = await self._run_external_research(
+                question=question,
+                session_id=session_id,
+                start_step=len(policy_steps) + 1,
+                tool_context=tool_context,
+                request_id=request_id,
+                reason=external_reason,
+                fallback=external_reason == "no_local_evidence",
+            )
+            trace.extend(external_trace)
+            policy_steps.extend(external_steps)
+            observations.extend(external_observations)
         seen_tool_requests: set[str] = set()
         wikipedia_searches = 0
         web_searches = 0
@@ -600,12 +720,14 @@ class ResearchAgent:
                 }
             )
         if self._needs_external_fallback(policy_steps, observations):
-            fallback_trace, fallback_steps, fallback_observations = await self._run_external_fallback(
+            fallback_trace, fallback_steps, fallback_observations = await self._run_external_research(
                 question=question,
                 session_id=session_id,
                 start_step=len(policy_steps) + 1,
                 tool_context=tool_context,
                 request_id=request_id,
+                reason="insufficient_local_evidence",
+                fallback=True,
             )
             trace.extend(fallback_trace)
             policy_steps.extend(fallback_steps)
@@ -702,6 +824,10 @@ class ResearchAgent:
             "json_repairs": 0,
             "elapsed_ms": tool_elapsed_ms,
             "deterministic_prefetch": True,
+            "target_specific_queries": build_comparison_target_queries(
+                question,
+                self.retrieval_runtime.retriever.analyze_question(question),
+            ),
         }
         policy_steps.append(step)
         observations.append({
@@ -752,7 +878,32 @@ class ResearchAgent:
         )
         return not external_success
 
-    async def _run_external_fallback(
+    @staticmethod
+    def _local_state_from_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
+        local_tools = {"search_history", "search_uploaded_documents", "retrieve_evidence", "inspect_evidence"}
+        local_result_count = sum(
+            int(observation.get("result_count") or 0)
+            for observation in observations
+            if observation.get("tool") in local_tools
+        )
+        source_kinds: set[str] = set()
+        titles: list[str] = []
+        for observation in observations:
+            if observation.get("tool") not in local_tools:
+                continue
+            for item in observation.get("result") or []:
+                if not isinstance(item, dict):
+                    continue
+                source_kinds.add(str(item.get("source_kind") or item.get("source_type") or "history"))
+                if item.get("title"):
+                    titles.append(str(item.get("title")))
+        return {
+            "local_result_count": local_result_count,
+            "source_kinds": sorted(source_kinds),
+            "titles": list(dict.fromkeys(titles)),
+        }
+
+    async def _run_external_research(
         self,
         *,
         question: str,
@@ -760,87 +911,223 @@ class ResearchAgent:
         start_step: int,
         tool_context: ToolExecutionContext | None,
         request_id: str | None,
+        reason: str,
+        fallback: bool,
     ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
-        if self.max_wikipedia_searches <= 0 or "search_wikipedia" not in self.registry.names():
-            return [], [], []
+        registry_names = set(self.registry.names())
+        available_names = registry_names & EXTERNAL_TOOL_NAMES
+        if not available_names or (
+            self.max_wikipedia_searches <= 0
+            and self.max_web_searches <= 0
+        ):
+            telemetry = current_request_telemetry()
+            if telemetry is not None:
+                telemetry.external_research_needed = True
+                telemetry.external_research_available = False
+                telemetry.external_research_reason = reason
+                telemetry.external_research_skip_reason = "no_configured_external_tools"
+            return [
+                "external_research:unavailable"
+            ], [{
+                "step": start_step,
+                "action": "external_research_skipped",
+                "external_research": True,
+                "external_research_needed": True,
+                "external_research_available": False,
+                "external_research_reason": reason,
+                "external_research_skip_reason": "no_configured_external_tools",
+                "result_count": 0,
+                "actual_generation_calls": 0,
+                "json_repairs": 0,
+                "elapsed_ms": 0.0,
+            }], []
 
         telemetry = current_request_telemetry()
         if telemetry is not None:
-            telemetry.external_fallback_triggered = True
-        log_event("RESEARCH_EXTERNAL_FALLBACK_START", request_id=request_id)
+            telemetry.external_fallback_triggered = telemetry.external_fallback_triggered or fallback
+            telemetry.external_research_needed = True
+            telemetry.external_research_available = True
+            telemetry.external_research_reason = reason
+        log_event("RESEARCH_EXTERNAL_RESEARCH_START", request_id=request_id, reason=reason)
         trace: list[str] = []
         policy_steps: list[dict[str, Any]] = []
         observations: list[dict[str, Any]] = []
 
         search_query = question
-        search_started = time.perf_counter()
-        search_rows, search_record = await self.registry.call(
-            "search_wikipedia",
-            {"query": search_query, "language": "vi", "top_k": 5},
-            context=tool_context,
-        )
-        search_elapsed_ms = (time.perf_counter() - search_started) * 1000
-        search_rows = search_rows or []
-        selected_wiki, year_conflicts = _select_wikipedia_candidate(question, search_rows)
-        if selected_wiki is None and _years(question):
-            reformulated_query = " ".join(
-                token
-                for token in ["Trận Bạch Đằng", *sorted(_years(question))]
-                if token
-            )
-            search_query = reformulated_query
-            reform_started = time.perf_counter()
+        if "search_wikipedia" in registry_names and self.max_wikipedia_searches > 0:
+            search_started = time.perf_counter()
             search_rows, search_record = await self.registry.call(
                 "search_wikipedia",
                 {"query": search_query, "language": "vi", "top_k": 5},
                 context=tool_context,
             )
-            search_elapsed_ms += (time.perf_counter() - reform_started) * 1000
+            search_elapsed_ms = (time.perf_counter() - search_started) * 1000
             search_rows = search_rows or []
-            selected_wiki, reform_conflicts = _select_wikipedia_candidate(question, search_rows)
-            year_conflicts += reform_conflicts
-        search_evidence = self._evidence_rows("search_wikipedia", search_rows)
-        self.evidence_store.add_documents(session_id, search_evidence)
-        trace.append(
-            f"{search_record.name}:{search_record.result_count}" if not search_record.error else f"{search_record.name}:error"
-        )
-        if telemetry is not None:
-            telemetry.tool_calls += 1
-            telemetry.tool_calls_by_type["search_wikipedia"] = telemetry.tool_calls_by_type.get("search_wikipedia", 0) + 1
-            telemetry.wikipedia_calls += 1
-            telemetry.wikipedia_search_count += 1
-            telemetry.wikipedia_ms += search_elapsed_ms
-            telemetry.wikipedia_query = search_query
-            telemetry.wikipedia_candidate_titles = [str(row.get("title") or "") for row in search_evidence]
-            telemetry.wikipedia_selected_title = str(selected_wiki.get("title") or "") if selected_wiki else None
-            telemetry.wikipedia_year_conflict_rejections += year_conflicts
-        policy_steps.append({
-            "step": start_step,
-            "action": "tool",
-            "tool_name": "search_wikipedia",
-            "arguments": {"query": search_query, "language": "vi", "top_k": 5},
-            "result_count": len(search_evidence),
-            "error": search_record.error,
-            "evidence": [self._evidence_preview(item) for item in search_evidence[:10]],
-            "actual_generation_calls": 0,
-            "json_repairs": 0,
-            "elapsed_ms": search_elapsed_ms,
-            "external_fallback": True,
-            "wikipedia_candidate_titles": [str(row.get("title") or "") for row in search_evidence],
-            "wikipedia_selected_title": str(selected_wiki.get("title") or "") if selected_wiki else None,
-            "wikipedia_year_conflict_rejections": year_conflicts,
-        })
-        observations.append({
-            "tool": "search_wikipedia",
-            "result_count": len(search_evidence),
-            "evidence_ids": [row.get("chunk_id") for row in search_evidence[:10] if row.get("chunk_id")],
-            "result": [self._evidence_preview(item) for item in search_evidence[:5]],
-            **({"error": search_record.error} if search_record.error else {}),
-        })
-        if search_record.error or selected_wiki is None or "fetch_wikipedia_page" not in self.registry.names():
+            selected_wiki, year_conflicts = _select_wikipedia_candidate(question, search_rows)
+            if selected_wiki is None and _years(question):
+                reformulated_query = " ".join(
+                    token
+                    for token in ["Trận Bạch Đằng", *sorted(_years(question))]
+                    if token
+                )
+                search_query = reformulated_query
+                reform_started = time.perf_counter()
+                search_rows, search_record = await self.registry.call(
+                    "search_wikipedia",
+                    {"query": search_query, "language": "vi", "top_k": 5},
+                    context=tool_context,
+                )
+                search_elapsed_ms += (time.perf_counter() - reform_started) * 1000
+                search_rows = search_rows or []
+                selected_wiki, reform_conflicts = _select_wikipedia_candidate(question, search_rows)
+                year_conflicts += reform_conflicts
+            search_evidence = self._evidence_rows("search_wikipedia", search_rows)
+            self.evidence_store.add_documents(session_id, search_evidence)
+            trace.append(
+                f"{search_record.name}:{search_record.result_count}" if not search_record.error else f"{search_record.name}:error"
+            )
+            if telemetry is not None:
+                telemetry.tool_calls += 1
+                telemetry.tool_calls_by_type["search_wikipedia"] = telemetry.tool_calls_by_type.get("search_wikipedia", 0) + 1
+                telemetry.wikipedia_calls += 1
+                telemetry.wikipedia_search_count += 1
+                telemetry.wikipedia_ms += search_elapsed_ms
+                telemetry.wikipedia_query = search_query
+                telemetry.wikipedia_candidate_titles = [str(row.get("title") or "") for row in search_evidence]
+                telemetry.wikipedia_selected_title = str(selected_wiki.get("title") or "") if selected_wiki else None
+                telemetry.wikipedia_year_conflict_rejections += year_conflicts
+                telemetry.external_tools_called = list(dict.fromkeys([
+                    *telemetry.external_tools_called,
+                    "search_wikipedia",
+                ]))
+                telemetry.external_results_count += len(search_evidence)
+            policy_steps.append({
+                "step": start_step,
+                "action": "tool",
+                "tool_name": "search_wikipedia",
+                "arguments": {"query": search_query, "language": "vi", "top_k": 5},
+                "result_count": len(search_evidence),
+                "error": search_record.error,
+                "evidence": [self._evidence_preview(item) for item in search_evidence[:10]],
+                "actual_generation_calls": 0,
+                "json_repairs": 0,
+                "elapsed_ms": search_elapsed_ms,
+                "external_fallback": fallback,
+                "external_research": True,
+                "external_research_needed": True,
+                "external_research_available": True,
+                "external_research_reason": reason,
+                "wikipedia_candidate_titles": [str(row.get("title") or "") for row in search_evidence],
+                "wikipedia_selected_title": str(selected_wiki.get("title") or "") if selected_wiki else None,
+                "wikipedia_year_conflict_rejections": year_conflicts,
+            })
+            observations.append({
+                "tool": "search_wikipedia",
+                "result_count": len(search_evidence),
+                "evidence_ids": [row.get("chunk_id") for row in search_evidence[:10] if row.get("chunk_id")],
+                "result": [self._evidence_preview(item) for item in search_evidence[:5]],
+                **({"error": search_record.error} if search_record.error else {}),
+            })
+            if not search_record.error and selected_wiki is not None and "fetch_wikipedia_page" in registry_names:
+                fetch_trace, fetch_steps, fetch_observations = await self._fetch_best_wikipedia_page(
+                    question=question,
+                    session_id=session_id,
+                    start_step=start_step + 1,
+                    tool_context=tool_context,
+                    best=selected_wiki,
+                    fallback=fallback,
+                    reason=reason,
+                )
+                trace.extend(fetch_trace)
+                policy_steps.extend(fetch_steps)
+                observations.extend(fetch_observations)
             return trace, policy_steps, observations
 
-        best = selected_wiki
+        if "search_web" in registry_names and self.max_web_searches > 0:
+            search_started = time.perf_counter()
+            web_rows, web_record = await self.registry.call(
+                "search_web",
+                {"query": question, "top_k": 5},
+                context=tool_context,
+            )
+            search_elapsed_ms = (time.perf_counter() - search_started) * 1000
+            web_evidence = self._evidence_rows("search_web", web_rows or [])
+            self.evidence_store.add_documents(session_id, web_evidence)
+            trace.append(
+                f"{web_record.name}:{web_record.result_count}" if not web_record.error else f"{web_record.name}:error"
+            )
+            if telemetry is not None:
+                telemetry.tool_calls += 1
+                telemetry.tool_calls_by_type["search_web"] = telemetry.tool_calls_by_type.get("search_web", 0) + 1
+                telemetry.generic_web_calls += 1
+                telemetry.generic_web_ms += search_elapsed_ms
+                telemetry.external_tools_called = list(dict.fromkeys([
+                    *telemetry.external_tools_called,
+                    "search_web",
+                ]))
+                telemetry.external_results_count += len(web_evidence)
+            policy_steps.append({
+                "step": start_step,
+                "action": "tool",
+                "tool_name": "search_web",
+                "arguments": {"query": question, "top_k": 5},
+                "result_count": len(web_evidence),
+                "error": web_record.error,
+                "evidence": [self._evidence_preview(item) for item in web_evidence[:10]],
+                "actual_generation_calls": 0,
+                "json_repairs": 0,
+                "elapsed_ms": search_elapsed_ms,
+                "external_fallback": fallback,
+                "external_research": True,
+                "external_research_needed": True,
+                "external_research_available": True,
+                "external_research_reason": reason,
+            })
+            observations.append({
+                "tool": "search_web",
+                "result_count": len(web_evidence),
+                "evidence_ids": [row.get("chunk_id") for row in web_evidence[:10] if row.get("chunk_id")],
+                "result": [self._evidence_preview(item) for item in web_evidence[:5]],
+                **({"error": web_record.error} if web_record.error else {}),
+            })
+            return trace, policy_steps, observations
+
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.external_research_needed = True
+            telemetry.external_research_available = False
+            telemetry.external_research_reason = reason
+            telemetry.external_research_skip_reason = "external_tool_budget_exhausted"
+        return [
+            "external_research:unavailable"
+        ], [{
+            "step": start_step,
+            "action": "external_research_skipped",
+            "external_research": True,
+            "external_research_needed": True,
+            "external_research_available": False,
+            "external_research_reason": reason,
+            "external_research_skip_reason": "external_tool_budget_exhausted",
+            "result_count": 0,
+            "actual_generation_calls": 0,
+            "json_repairs": 0,
+            "elapsed_ms": 0.0,
+        }], []
+
+    async def _fetch_best_wikipedia_page(
+        self,
+        *,
+        question: str,
+        session_id: str,
+        start_step: int,
+        tool_context: ToolExecutionContext | None,
+        best: dict[str, Any],
+        fallback: bool,
+        reason: str,
+    ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
+        trace: list[str] = []
+        policy_steps: list[dict[str, Any]] = []
+        observations: list[dict[str, Any]] = []
         metadata = best.get("metadata") if isinstance(best.get("metadata"), dict) else {}
         page_key = str(metadata.get("page_id") or best.get("title") or "").strip()
         if not page_key:
@@ -858,12 +1145,18 @@ class ResearchAgent:
         trace.append(
             f"{fetch_record.name}:{fetch_record.result_count}" if not fetch_record.error else f"{fetch_record.name}:error"
         )
+        telemetry = current_request_telemetry()
         if telemetry is not None:
             telemetry.tool_calls += 1
             telemetry.tool_calls_by_type["fetch_wikipedia_page"] = telemetry.tool_calls_by_type.get("fetch_wikipedia_page", 0) + 1
             telemetry.wikipedia_calls += 1
             telemetry.wikipedia_fetch_count += 1
             telemetry.wikipedia_ms += fetch_elapsed_ms
+            telemetry.external_tools_called = list(dict.fromkeys([
+                *telemetry.external_tools_called,
+                "fetch_wikipedia_page",
+            ]))
+            telemetry.external_results_count += len(fetched_rows)
         policy_steps.append({
             "step": start_step + 1,
             "action": "tool",
@@ -875,7 +1168,11 @@ class ResearchAgent:
             "actual_generation_calls": 0,
             "json_repairs": 0,
             "elapsed_ms": fetch_elapsed_ms,
-            "external_fallback": True,
+            "external_fallback": fallback,
+            "external_research": True,
+            "external_research_needed": True,
+            "external_research_available": True,
+            "external_research_reason": reason,
         })
         observations.append({
             "tool": "fetch_wikipedia_page",
@@ -885,9 +1182,8 @@ class ResearchAgent:
             **({"error": fetch_record.error} if fetch_record.error else {}),
         })
         log_event(
-            "RESEARCH_EXTERNAL_FALLBACK_END",
-            request_id=request_id,
-            wikipedia_search_count=len(search_evidence),
+            "RESEARCH_EXTERNAL_RESEARCH_END",
+            request_id=tool_context.request_id if tool_context is not None else None,
             wikipedia_fetch_count=len(fetched_rows),
         )
         return trace, policy_steps, observations
@@ -938,6 +1234,9 @@ class ResearchAgent:
             "rrf_score": item.get("rrf_score"),
             "reranker_score": item.get("reranker_score"),
             "final_retrieval_score": item.get("final_retrieval_score"),
+            "retrieval_query_roles": item.get("retrieval_query_roles") or [],
+            "comparison_target": item.get("comparison_target"),
+            "incidental_target_penalty": item.get("incidental_target_penalty"),
         }
 
     @staticmethod

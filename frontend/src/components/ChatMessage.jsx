@@ -3,8 +3,9 @@ import { BookOpenText, Check, Copy, UserRound } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LogoMark from "./LogoMark";
+import DeveloperTrace from "./DeveloperTrace";
 
-function ChatMessage({ message, isStreaming = false, onShowSources }) {
+function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugTrace = false }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const sourceCount = message.sources?.length ?? 0;
@@ -67,6 +68,10 @@ function ChatMessage({ message, isStreaming = false, onShowSources }) {
               </button>
             )}
           </div>
+        )}
+
+        {enableDebugTrace && !isUser && message.debug_trace && (
+          <DeveloperTrace trace={message.debug_trace} />
         )}
       </div>
     </article>
