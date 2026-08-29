@@ -153,6 +153,38 @@ def test_compare_coverage_deterministically_adds_missing_target_without_retry():
     assert [context["comparison_target"] for context in contexts] == ["target_a", "target_b"]
 
 
+def test_compare_guard_accepts_target_local_claim_for_missing_side():
+    target_local_a = "Tháng Tám năm 1945 giành chính quyền."
+    runtime = FakeEvidenceModel([{
+        "status": "sufficient",
+        "selected_evidence": [
+            {"evidence_id": B_ID, "relevance": 1.0, "claims": [B_CLAIM], "compressed_text": B_CLAIM},
+        ],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Chỉ có phía B.",
+    }])
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        QUESTION,
+        [
+            {"chunk_id": "ev_august_short", "title": "Tháng Tám", "text": target_local_a, "source_kind": "history"},
+            {"chunk_id": B_ID, "title": "Chiến thắng Điện Biên Phủ", "text": B_CLAIM, "source_kind": "history"},
+        ],
+        final_k=4,
+    )
+
+    assert len(runtime.calls) == 1
+    assert critique.repair_path == "deterministic_semantic_guard"
+    assert critique.comparison_target_coverage == {
+        "Cách mạng Tháng Tám": True,
+        "chiến thắng Điện Biên Phủ": True,
+    }
+    assert critique.target_a_selected_evidence == ["ev_august_short"]
+    assert critique.target_b_selected_evidence == [B_ID]
+    assert [context["comparison_target"] for context in contexts] == ["target_a", "target_b"]
+
+
 def test_compare_parse_failure_uses_source_local_deterministic_evidence():
     runtime = FakeEvidenceModel([ValueError("Model output does not contain a JSON object.")])
 
@@ -376,8 +408,9 @@ def test_compare_history_prompt_owns_synthesis_shape():
     )
 
     prompt = runtime.calls[0][0]["content"]
-    assert "Trả lời theo hướng so sánh sâu" in prompt
-    assert "điểm giống nhau" in prompt
+    assert "Xác định rõ hai đối tượng được so sánh" in prompt
+    assert "Nêu điểm giống nhau chỉ khi có nguồn shared" in prompt
+    assert "không hoán đổi dữ kiện một phía" in prompt
     assert set(result["source_ids"]) == {A_ID, B_ID}
 
 

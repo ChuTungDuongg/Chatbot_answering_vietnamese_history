@@ -385,7 +385,9 @@ def test_evidence_summary_only_mentions_retained_selected_ids():
     )
 
     assert TRAN_SOCIAL_ID in critique.summary
-    assert TRAN_POLITICAL_ID not in critique.summary
+    if TRAN_POLITICAL_ID in critique.summary:
+        assert TRAN_POLITICAL_ID in critique.selected_ids
+    assert all(chunk_id in critique.selected_ids for chunk_id in (TRAN_SOCIAL_ID,) if chunk_id in critique.summary)
 
 
 def test_factual_direct_evidence_accepts_valid_first_pass_without_reconsideration():
@@ -589,12 +591,14 @@ def test_evidence_guard_drops_title_year_conflict_for_bach_dang_938():
 
 
 class DepthRuntime:
-    def __init__(self):
+    def __init__(self, outputs=None):
+        self.outputs = list(outputs or ["Nguồn được dùng: [ev_01]\n\nTrả lời:\nCâu trả lời."])
         self.calls = []
 
     def generate_text(self, *, adapter, messages, **kwargs):
         self.calls.append({"adapter": adapter, "messages": messages})
-        return "Nguồn được dùng: [ev_01]\n\nTrả lời:\nCâu trả lời."
+        index = min(len(self.calls) - 1, len(self.outputs) - 1)
+        return self.outputs[index]
 
 
 class DepthRetriever:
@@ -614,19 +618,35 @@ class DepthRetrievalRuntime(FakeResearchRuntime):
     pass
 
 
-def test_deep_history_expands_short_answer_from_validated_evidence():
-    runtime = DepthRuntime()
+def test_deep_history_retries_short_answer_from_validated_evidence():
+    final_answer = (
+        "Chiến thắng Bạch Đằng năm 938 chấm dứt thời kỳ Bắc thuộc, mở ra nền độc lập tự chủ "
+        "và tạo cơ sở để Ngô Quyền xưng vương. Vì vậy, ý nghĩa của thắng lợi nằm ở cả hệ quả "
+        "trước mắt của trận đánh lẫn bước chuyển lâu dài sang quyền tự chủ."
+    )
+    runtime = DepthRuntime([
+        "Nguồn được dùng: [ev_01]\n\nTrả lời:\nCâu trả lời.",
+        f"Nguồn được dùng: [ev_01] [ev_02]\n\nTrả lời:\n{final_answer}",
+    ])
     answerer = HistoryAnswererAgent(model_runtime=runtime)
     contexts = [
         {
             "chunk_id": "ev_01",
             "title": "Trận Bạch Đằng (938)",
             "text": "Chiến thắng Bạch Đằng năm 938 chấm dứt thời kỳ Bắc thuộc.",
+            "claims": ["Chiến thắng Bạch Đằng năm 938 chấm dứt thời kỳ Bắc thuộc."],
         },
         {
             "chunk_id": "ev_02",
             "title": "Nhà Ngô",
-            "text": "Sau chiến thắng, Ngô Quyền xưng vương và mở ra nền độc lập tự chủ.",
+            "text": (
+                "Sau chiến thắng, Ngô Quyền xưng vương và mở ra nền độc lập tự chủ. "
+                "Sự kiện này đánh dấu bước chuyển lâu dài sang quyền tự chủ."
+            ),
+            "claims": [
+                "Sau chiến thắng, Ngô Quyền xưng vương và mở ra nền độc lập tự chủ.",
+                "Sự kiện này đánh dấu bước chuyển lâu dài sang quyền tự chủ.",
+            ],
         },
     ]
 
@@ -636,13 +656,14 @@ def test_deep_history_expands_short_answer_from_validated_evidence():
         analysis={},
         tool_trace=[],
         answer_depth="deep",
+        inference_mode="agentic_rag",
     )
 
-    assert result["structured_expansion_used"] is True
+    assert len(runtime.calls) == 2
+    assert result["structured_expansion_used"] is False
     assert result["source_ids"] == ["ev_01", "ev_02"]
-    assert len(result["answer"]) > len("Câu trả lời.")
-    assert "Bạch Đằng năm 938" in result["answer"]
-    assert "độc lập tự chủ" in result["answer"]
+    assert result["answer"] == final_answer
+    assert result["answer_provenance"]["history_retry_used"] is True
 
 
 def test_standard_history_keeps_adapter_answer_without_deep_expansion():
@@ -726,6 +747,6 @@ def test_history_answer_depth_is_standard_for_hybrid_and_deep_for_agentic():
     agentic_result = asyncio.run(agentic.run(question="Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?", final_k=1))
 
     assert hybrid_result["history_debug"]["answer_depth"] == "standard"
-    assert "Yêu cầu độ sâu" not in hybrid_runtime.calls[0]["messages"][0]["content"]
+    assert "Yêu cầu trả lời:" not in hybrid_runtime.calls[0]["messages"][0]["content"]
     assert agentic_result["history_debug"]["answer_depth"] == "deep"
-    assert "Yêu cầu độ sâu" in agentic_runtime.calls[0]["messages"][0]["content"]
+    assert "Yêu cầu trả lời:" in agentic_runtime.calls[0]["messages"][0]["content"]

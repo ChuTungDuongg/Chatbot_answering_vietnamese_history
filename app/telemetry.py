@@ -83,6 +83,9 @@ class RequestTelemetry:
     evidence_rebucket_moved_claim_count: int = 0
     evidence_rebucket_destination_ids: list[str] = field(default_factory=list)
     evidence_final_validation_result: str | None = None
+    evidence_pruned_claim_count: int = 0
+    evidence_supplemented_count: int = 0
+    evidence_supplemented_ids: list[str] = field(default_factory=list)
     comparison_targets: list[str] = field(default_factory=list)
     target_a_candidate_count: int = 0
     target_b_candidate_count: int = 0
@@ -99,6 +102,17 @@ class RequestTelemetry:
     wikipedia_year_conflict_rejections: int = 0
     history_ms: float = 0.0
     history_generation_calls: int = 0
+    history_retry_used: bool = False
+    history_retry_reason: str | None = None
+    history_first_answer_chars: int = 0
+    history_first_answer_words: int = 0
+    history_final_answer_chars: int = 0
+    history_final_answer_words: int = 0
+    history_first_quality_issues: list[str] = field(default_factory=list)
+    history_final_quality_issues: list[str] = field(default_factory=list)
+    history_first_latency_ms: float = 0.0
+    history_retry_latency_ms: float = 0.0
+    history_total_latency_ms: float = 0.0
     history_input_evidence_count: int = 0
     history_input_claim_count: int = 0
     history_input_source_kind_counts: dict[str, int] = field(default_factory=dict)
@@ -202,6 +216,9 @@ class RequestTelemetry:
             "evidence_rebucket_moved_claim_count": self.evidence_rebucket_moved_claim_count,
             "evidence_rebucket_destination_ids": self.evidence_rebucket_destination_ids,
             "evidence_final_validation_result": self.evidence_final_validation_result,
+            "evidence_pruned_claim_count": self.evidence_pruned_claim_count,
+            "evidence_supplemented_count": self.evidence_supplemented_count,
+            "evidence_supplemented_ids": self.evidence_supplemented_ids,
             "comparison_targets": self.comparison_targets,
             "target_a_candidate_count": self.target_a_candidate_count,
             "target_b_candidate_count": self.target_b_candidate_count,
@@ -218,6 +235,17 @@ class RequestTelemetry:
             "wikipedia_year_conflict_rejections": self.wikipedia_year_conflict_rejections,
             "history_ms": self.history_ms,
             "history_generation_calls": self.history_generation_calls,
+            "history_retry_used": self.history_retry_used,
+            "history_retry_reason": self.history_retry_reason,
+            "history_first_answer_chars": self.history_first_answer_chars,
+            "history_first_answer_words": self.history_first_answer_words,
+            "history_final_answer_chars": self.history_final_answer_chars,
+            "history_final_answer_words": self.history_final_answer_words,
+            "history_first_quality_issues": self.history_first_quality_issues,
+            "history_final_quality_issues": self.history_final_quality_issues,
+            "history_first_latency_ms": self.history_first_latency_ms,
+            "history_retry_latency_ms": self.history_retry_latency_ms,
+            "history_total_latency_ms": self.history_total_latency_ms,
             "history_input_evidence_count": self.history_input_evidence_count,
             "history_input_claim_count": self.history_input_claim_count,
             "history_input_source_kind_counts": self.history_input_source_kind_counts,

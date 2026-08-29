@@ -205,6 +205,7 @@ class HybridRAGOrchestrator:
             request_id=request_id,
             answer_depth="standard",
             avoid_generic_source_prefix=True,
+            inference_mode="hybrid_rag",
         )
         result["inference_mode"] = "hybrid_rag"
         result["agentic"] = False
@@ -347,6 +348,7 @@ class AgentOrchestrator:
                 history=history,
                 request_id=request_id,
                 answer_depth="deep",
+                inference_mode="agentic_rag",
             )
         finally:
             self.research_agent.evidence_store.remove_session(session_id)
@@ -423,6 +425,9 @@ class AgentOrchestrator:
             "target_b_selected_evidence": critique.target_b_selected_evidence,
             "shared_selected_evidence": critique.shared_selected_evidence,
             "unknown_selected_evidence": critique.unknown_selected_evidence,
+            "evidence_pruned_claim_count": critique.evidence_pruned_claim_count,
+            "evidence_supplemented_count": critique.evidence_supplemented_count,
+            "evidence_supplemented_ids": critique.evidence_supplemented_ids,
             "rebucket_attempted": (
                 telemetry.evidence_rebucket_attempted if telemetry is not None else False
             ),
@@ -506,6 +511,9 @@ class AgentOrchestrator:
             "external_evidence_rejected_count": telemetry.external_evidence_rejected_count if telemetry is not None else 0,
             "external_evidence_rejection_reasons": telemetry.external_evidence_rejection_reasons if telemetry is not None else {},
             "evidence_selected_count": len(critique.selected_evidence),
+            "evidence_pruned_claim_count": critique.evidence_pruned_claim_count,
+            "evidence_supplemented_count": critique.evidence_supplemented_count,
+            "evidence_supplemented_ids": critique.evidence_supplemented_ids,
             "evidence_relevance_guard_triggered": telemetry.evidence_relevance_guard_triggered if telemetry is not None else False,
             "evidence_coverage_guard_triggered": telemetry.evidence_coverage_guard_triggered if telemetry is not None else False,
             "evidence_reconsideration_used": telemetry.evidence_reconsideration_used if telemetry is not None else False,

@@ -39,18 +39,22 @@ _OUTPUT_RE = re.compile(
     re.I | re.S,
 )
 _BRACKET_ID_RE = re.compile(r"\[([^\]]+)\]")
-_ANALYSIS_CUES = {
+_CAUSE_CUES = {
     "nguyen nhan",
     "vi sao",
     "tai sao",
     "dan den",
     "suy yeu",
+}
+_SIGNIFICANCE_CUES = {
     "y nghia",
     "vai tro",
-    "phan tich",
-    "danh gia",
     "he qua",
     "tac dong",
+}
+_ANALYSIS_CUES = _CAUSE_CUES | _SIGNIFICANCE_CUES | {
+    "phan tich",
+    "danh gia",
 }
 _FACTUAL_PREFIXES = {
     "ai",
@@ -99,6 +103,10 @@ def _history_question_type(question: str) -> str:
     normalized = _normalize_text(question)
     if len(extract_comparison_targets(question)) >= 2:
         return "compare"
+    if any(cue in normalized for cue in _CAUSE_CUES):
+        return "cause"
+    if any(cue in normalized for cue in _SIGNIFICANCE_CUES):
+        return "significance"
     if any(cue in normalized for cue in _ANALYSIS_CUES):
         return "analysis"
     if any(normalized == prefix or normalized.startswith(f"{prefix} ") for prefix in _FACTUAL_PREFIXES):
@@ -112,30 +120,41 @@ def _deep_depth_instruction(question: str) -> str:
     question_type = _history_question_type(question)
     if question_type == "compare":
         return (
-            "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
-            "Trả lời theo hướng so sánh sâu nếu bằng chứng cho phép, theo các mục "
-            "\"khái quát\", \"điểm giống nhau\", \"điểm khác nhau\" và \"nhận xét\". "
-            "Nếu thông điệp có Bản đồ bằng chứng so sánh, phải giữ đúng nhóm target_a/target_b/shared/unknown. "
-            "Không đưa dữ kiện chỉ thuộc target_b vào phần riêng của target_a, hoặc ngược lại. "
-            "Chỉ nêu điểm giống nhau khi có bằng chứng shared hoặc có bằng chứng riêng hỗ trợ cho cả hai target; "
-            "trong phần khác nhau, chỉ nêu các chiều cạnh được tài liệu hỗ trợ như bối cảnh, "
-            "mục tiêu/tính chất, lực lượng/đối phương, phương thức/quy mô, kết quả hoặc ý nghĩa. "
-            "Phải tổng hợp bằng chứng của cả hai đối tượng; Evidence chỉ cung cấp dữ kiện riêng từng nguồn, "
-            "History chịu trách nhiệm so sánh. Không ép nêu chiều cạnh không được tài liệu hỗ trợ."
+            "Yêu cầu trả lời:\n"
+            "- Xác định rõ hai đối tượng được so sánh.\n"
+            "- Nêu điểm giống nhau chỉ khi có nguồn shared hoặc có hỗ trợ riêng cho cả hai đối tượng.\n"
+            "- Nêu điểm khác nhau với đúng đối tượng được nguồn hỗ trợ; không hoán đổi dữ kiện một phía.\n"
+            "- Kết thúc bằng nhận định lịch sử ngắn, chỉ dựa trên tài liệu tham khảo.\n"
+            "- Có thể dùng đoạn văn, bảng ngắn hoặc các mục nếu phù hợp; không ép khuôn cố định."
         )
     if question_type == "factual":
         return (
-            "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
-            "Trả lời trực tiếp ngay ở câu đầu. Sau đó, nếu bằng chứng hỗ trợ, nêu ngắn gọn nhân vật/sự kiện là ai, "
-            "bối cảnh liên quan và vì sao danh xưng hoặc vai trò đó quan trọng. Không biến câu hỏi sự kiện đơn giản "
-            "thành bài luận và không thêm ý ngoài tài liệu."
+            "Yêu cầu trả lời:\n"
+            "- Trả lời trực tiếp ngay ở câu đầu.\n"
+            "- Nếu nguồn hỗ trợ, thêm bối cảnh ngắn về nhân vật/sự kiện và ý nghĩa của danh xưng hoặc vai trò.\n"
+            "- Không biến câu hỏi sự kiện đơn giản thành bài luận."
+        )
+    if question_type == "cause":
+        return (
+            "Yêu cầu trả lời:\n"
+            "- Nêu kết luận chung về nguyên nhân trước.\n"
+            "- Triển khai các nguyên nhân trực tiếp, khác nhau và được nguồn hỗ trợ.\n"
+            "- Giải thích quan hệ giữa các nguyên nhân khi tài liệu cho phép.\n"
+            "- Tổng hợp ngắn, không thêm nguyên nhân ngoài tài liệu."
+        )
+    if question_type == "significance":
+        return (
+            "Yêu cầu trả lời:\n"
+            "- Nêu trực tiếp ý nghĩa lịch sử của sự kiện.\n"
+            "- Phân biệt hệ quả trước mắt, tác động chính trị/chủ quyền và ý nghĩa lâu dài nếu nguồn hỗ trợ.\n"
+            "- Liên kết các ý thành nhận định lịch sử mạch lạc, không chỉ liệt kê dữ kiện."
         )
     return (
-        "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
-        "Trả lời theo hướng tổng hợp sâu nếu bằng chứng cho phép: nêu kết luận trực tiếp, triển khai các khía cạnh "
-        "được tài liệu hỗ trợ, giải thích quan hệ nguyên nhân - hệ quả hoặc ý nghĩa trước mắt và lâu dài khi phù hợp, "
-        "rồi kết luận ngắn. Không dừng sau một ý đúng đầu tiên nếu còn bằng chứng quan trọng chưa dùng; "
-        "không đặt ngưỡng số từ và không thêm ý nào không được tài liệu hỗ trợ."
+        "Yêu cầu trả lời:\n"
+        "- Trả lời trực tiếp câu hỏi lịch sử.\n"
+        "- Tổng hợp các ý quan trọng, không trùng lặp, được tài liệu tham khảo hỗ trợ.\n"
+        "- Giải thích quan hệ nguyên nhân, hệ quả hoặc ý nghĩa khi nguồn cho phép.\n"
+        "- Không thêm ý ngoài tài liệu."
     )
 
 
@@ -184,10 +203,26 @@ def _comparison_group_instruction(question: str, evidence: list[dict[str, Any]])
 
 def _natural_opening_instruction() -> str:
     return (
-        "\n\nYêu cầu văn phong:\n"
+        "Yêu cầu văn phong:\n"
         "Trả lời trực tiếp bằng tiếng Việt tự nhiên. Không mở đầu bằng các cụm chung chung như "
         "\"Theo tài liệu\", \"Theo các tài liệu\", \"Dựa trên tài liệu được cung cấp\" hoặc "
         "\"Dựa trên các nguồn được cung cấp\". Vẫn giữ nguyên cách dẫn nguồn lịch sử có tên riêng khi tài liệu nêu rõ."
+    )
+
+
+def _history_retry_instruction(
+    *,
+    retry_reason: str,
+    previous_quality_issues: list[str] | None,
+) -> str:
+    issue_text = ", ".join(previous_quality_issues or []) or retry_reason
+    return (
+        "Yêu cầu trả lời lại:\n"
+        f"- Lần trả lời trước còn thiếu thông tin quan trọng đã có trong cùng tài liệu tham khảo ({issue_text}).\n"
+        "- Chỉ dùng các tài liệu tham khảo bên dưới; không thêm dữ kiện ngoài nguồn.\n"
+        "- Trả lời đúng câu hỏi lịch sử của người dùng, tổng hợp các ý trực tiếp liên quan và không trùng lặp.\n"
+        "- Giải thích quan hệ giữa các ý khi tài liệu hỗ trợ; không nhắc đến quy trình truy xuất hay đánh giá bằng chứng.\n"
+        "- Giữ đúng định dạng output: Nguồn được dùng: ... rồi Trả lời: ..."
     )
 
 
@@ -197,6 +232,8 @@ def build_history_answerer_user_text(
     *,
     answer_depth: str = "standard",
     avoid_generic_source_prefix: bool = False,
+    retry_reason: str | None = None,
+    previous_quality_issues: list[str] | None = None,
 ) -> str:
     """Render the exact user-message structure used by canonical History SFT."""
     question = str(question).strip()
@@ -211,19 +248,26 @@ def build_history_answerer_user_text(
         blocks.append(f"{header}\n{item['text']}")
 
     references = "\n\n".join(blocks)
-    depth_instruction = ""
+    policy_parts: list[str] = []
     if answer_depth == "deep":
-        depth_instruction = _deep_depth_instruction(question)
-    comparison_instruction = (
-        _comparison_group_instruction(question, evidence)
-        if answer_depth == "deep" and len(extract_comparison_targets(question)) >= 2
-        else ""
-    )
-    style_instruction = _natural_opening_instruction() if avoid_generic_source_prefix else ""
-    return (
-        f"{QUESTION_PREFIX}\n{question}{depth_instruction}{comparison_instruction}{style_instruction}"
-        f"\n\n{REFERENCES_PREFIX}\n{references}"
-    )
+        policy_parts.append(_deep_depth_instruction(question))
+    if answer_depth == "deep" and len(extract_comparison_targets(question)) >= 2:
+        policy_parts.append(_comparison_group_instruction(question, evidence).strip())
+    if avoid_generic_source_prefix:
+        policy_parts.append(_natural_opening_instruction())
+    if retry_reason:
+        policy_parts.append(
+            _history_retry_instruction(
+                retry_reason=retry_reason,
+                previous_quality_issues=previous_quality_issues,
+            )
+        )
+
+    policy = "\n\n".join(part for part in policy_parts if part.strip())
+    question_block = f"{QUESTION_PREFIX}\n{question}"
+    if policy:
+        question_block = f"{question_block}\n\n{policy}"
+    return f"{question_block}\n\n{REFERENCES_PREFIX}\n{references}"
 
 
 def build_history_answerer_messages(
@@ -232,6 +276,8 @@ def build_history_answerer_messages(
     *,
     answer_depth: str = "standard",
     avoid_generic_source_prefix: bool = False,
+    retry_reason: str | None = None,
+    previous_quality_issues: list[str] | None = None,
 ) -> list[dict[str, str]]:
     # Canonical History SFT contains no system or conversation-history message.
     return [
@@ -242,6 +288,8 @@ def build_history_answerer_messages(
                 evidence,
                 answer_depth=answer_depth,
                 avoid_generic_source_prefix=avoid_generic_source_prefix,
+                retry_reason=retry_reason,
+                previous_quality_issues=previous_quality_issues,
             ),
         }
     ]

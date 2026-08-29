@@ -128,6 +128,9 @@ class EvidenceCritique(BaseModel):
     target_b_selected_evidence: list[str] = Field(default_factory=list)
     shared_selected_evidence: list[str] = Field(default_factory=list)
     unknown_selected_evidence: list[str] = Field(default_factory=list)
+    evidence_pruned_claim_count: int = 0
+    evidence_supplemented_count: int = 0
+    evidence_supplemented_ids: list[str] = Field(default_factory=list)
     generation_calls: int = 0
     repair_used: bool = False
     repair_path: str | None = None

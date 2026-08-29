@@ -48,9 +48,28 @@ MIN_EVIDENCE_ITEM_CHARS = 1_200
 MAX_RECOVERY_SPAN_CHARS = 700
 SEMANTIC_RELEVANCE_MARGIN = 0.24
 SEMANTIC_RELEVANCE_FLOOR = 0.34
-ANALYTICAL_CUES = {
-    "nguyen nhan", "vi sao", "tai sao", "dan den", "suy yeu", "y nghia",
-    "vai tro", "so sanh", "phan tich", "danh gia", "he qua", "tac dong",
+CLAIM_RELEVANCE_FLOOR = 0.34
+CAUSE_CUES = {
+    "nguyen nhan", "vi sao", "tai sao", "dan den", "suy yeu",
+}
+SIGNIFICANCE_CUES = {
+    "y nghia", "vai tro", "he qua", "tac dong",
+}
+ANALYTICAL_CUES = CAUSE_CUES | SIGNIFICANCE_CUES | {
+    "so sanh", "phan tich", "danh gia",
+}
+ANALYTICAL_CLAIM_CUES = {
+    "nguyen nhan", "vi ", "do ", "boi ", "dan den", "lam ", "khien",
+    "that bai", "suy yeu", "phu thuoc", "chien luoc", "quan su",
+    "chinh tri", "kinh te", "xa hoi",
+}
+SIGNIFICANCE_CLAIM_CUES = {
+    "y nghia", "cham dut", "mo ra", "doc lap", "tu chu", "bac thuoc",
+    "danh dau", "xung vuong", "chu quyen", "that bai", "ke hoach", "dai tiep",
+}
+COMPARISON_DETAIL_CUES = {
+    "boi canh", "dien bien", "gianh", "chinh quyen", "thanh lap", "doc lap",
+    "chien dich", "chien thang", "quan su", "ke hoach", "hiep dinh", "phap", "my",
 }
 FACTUAL_PREFIXES = {
     "ai",
@@ -212,6 +231,10 @@ def _evidence_question_type(question: str) -> str:
     normalized = _normalized_text(question)
     if len(extract_comparison_targets(question)) >= 2:
         return "compare"
+    if any(cue in normalized for cue in CAUSE_CUES):
+        return "cause"
+    if any(cue in normalized for cue in SIGNIFICANCE_CUES):
+        return "significance"
     if any(cue in normalized for cue in ANALYTICAL_CUES - {"so sanh"}):
         return "analysis"
     if any(normalized == prefix or normalized.startswith(f"{prefix} ") for prefix in FACTUAL_PREFIXES):
@@ -279,9 +302,124 @@ def _semantic_score(question: str, *, title: str | None, text: str, retrieval_sc
     return max(0.0, min(1.0, score))
 
 
-def _best_candidate_claims(question: str, candidate: Any, *, max_claims: int = 2) -> list[str]:
+def _claim_relevance_score(
+    question: str,
+    claim: str,
+    *,
+    question_type: str | None = None,
+) -> float:
+    question_type = question_type or _evidence_question_type(question)
+    question_terms = _content_terms(question)
+    claim_terms = _content_terms(claim)
+    if not question_terms or not claim_terms:
+        return 0.0
+    normalized_claim = _normalized_text(claim)
+    overlap = len(question_terms & claim_terms) / max(len(question_terms), 1)
+    score = overlap
+
+    question_years = _question_years(question)
+    claim_years = set(YEAR_RE.findall(normalized_claim))
+    if question_years and question_type != "compare":
+        if claim_years and question_years.isdisjoint(claim_years):
+            score -= 0.55
+        elif question_years & claim_years:
+            score += 0.16
+
+    if question_type == "significance":
+        if any(cue in normalized_claim for cue in SIGNIFICANCE_CLAIM_CUES):
+            score += 0.22
+        elif overlap < 0.75:
+            score -= 0.26
+    elif question_type in {"analysis", "cause"}:
+        if any(cue in normalized_claim for cue in ANALYTICAL_CLAIM_CUES):
+            score += 0.16
+        elif overlap < 0.65:
+            score -= 0.12
+    return max(0.0, min(1.0, score))
+
+
+def _comparison_claim_relevance_score(
+    question: str,
+    target: str,
+    claim: str,
+    *,
+    candidate_title: str | None = None,
+) -> float:
+    question_score = _claim_relevance_score(question, claim, question_type="compare")
+    target_terms = _content_terms(target)
+    claim_terms = _content_terms(f"{candidate_title or ''} {claim}")
+    if not target_terms or not claim_terms:
+        return question_score
+
+    target_overlap = len(target_terms & claim_terms) / max(len(target_terms), 1)
+    if not target_overlap and not text_matches_target(f"{candidate_title or ''} {claim}", target):
+        return question_score
+
+    normalized_claim = _normalized_text(claim)
+    detail_bonus = 0.0
+    if any(cue in normalized_claim for cue in COMPARISON_DETAIL_CUES):
+        detail_bonus += 0.12
+    if YEAR_RE.search(normalized_claim):
+        detail_bonus += 0.06
+    if text_matches_target(str(candidate_title or ""), target):
+        detail_bonus += 0.08
+
+    target_score = (target_overlap * 0.62) + detail_bonus
+    target_score -= _navigation_noise_penalty(claim)
+    return max(0.0, min(1.0, max(question_score, target_score)))
+
+
+def _claim_novelty_score(existing_claims: list[str], claim: str) -> float:
+    claim_terms = _content_terms(claim)
+    if not claim_terms:
+        return 0.0
+    if not existing_claims:
+        return 1.0
+    max_overlap = 0.0
+    for existing in existing_claims:
+        existing_terms = _content_terms(existing)
+        if not existing_terms:
+            continue
+        max_overlap = max(max_overlap, len(claim_terms & existing_terms) / max(len(claim_terms), 1))
+    return max(0.0, 1.0 - max_overlap)
+
+
+def _selected_useful_claims(
+    question: str,
+    item: SelectedEvidence,
+    *,
+    question_type: str,
+    compare_target: str | None = None,
+    candidate_title: str | None = None,
+) -> list[str]:
+    claims = [
+        claim
+        for claim in item.claims
+        if (
+            _comparison_claim_relevance_score(
+                question,
+                compare_target,
+                claim,
+                candidate_title=candidate_title,
+            )
+            if question_type == "compare" and compare_target
+            else _claim_relevance_score(question, claim, question_type=question_type)
+        ) >= CLAIM_RELEVANCE_FLOOR
+    ]
+    return _dedupe_preserve_order(claims)
+
+
+def _best_candidate_claims(
+    question: str,
+    candidate: Any,
+    *,
+    max_claims: int = 2,
+    compare_target: str | None = None,
+) -> list[str]:
     source_text = str(getattr(candidate, "text", "") or "")
     scored: list[tuple[float, int, str]] = []
+    question_type = _evidence_question_type(question)
+    candidate_title = str(getattr(candidate, "title", "") or "")
     for index, span in enumerate(_source_sentence_spans(source_text)):
         span = span.strip()
         if not span:
@@ -290,8 +428,16 @@ def _best_candidate_claims(question: str, candidate: Any, *, max_claims: int = 2
             span = question_relevant_excerpt(span, question, max_chars=MAX_RECOVERY_SPAN_CHARS)
         if not grounded_in_source(span, source_text):
             continue
-        score = _semantic_score(question, title=None, text=span, retrieval_score=None)
-        if score <= 0:
+        if question_type == "compare" and compare_target:
+            score = _comparison_claim_relevance_score(
+                question,
+                compare_target,
+                span,
+                candidate_title=candidate_title,
+            )
+        else:
+            score = _claim_relevance_score(question, span, question_type=question_type)
+        if score < CLAIM_RELEVANCE_FLOOR:
             continue
         scored.append((score, -index, span))
     scored.sort(reverse=True)
@@ -299,7 +445,22 @@ def _best_candidate_claims(question: str, candidate: Any, *, max_claims: int = 2
     if claims:
         return claims
     excerpt = question_relevant_excerpt(source_text, question, max_chars=MAX_RECOVERY_SPAN_CHARS)
-    return [excerpt] if excerpt and grounded_in_source(excerpt, source_text) else []
+    if (
+        excerpt
+        and grounded_in_source(excerpt, source_text)
+        and (
+            _comparison_claim_relevance_score(
+                question,
+                compare_target,
+                excerpt,
+                candidate_title=candidate_title,
+            )
+            if question_type == "compare" and compare_target
+            else _claim_relevance_score(question, excerpt, question_type=question_type)
+        ) >= CLAIM_RELEVANCE_FLOOR
+    ):
+        return [excerpt]
+    return []
 
 
 class EvidenceModelContractError(ValueError):
@@ -392,6 +553,16 @@ def _selected_matches_target(item: SelectedEvidence, candidate: Any, target: str
         f"{getattr(candidate, 'title', '') or ''} {item.compressed_text} {' '.join(item.claims)}",
         target,
     )
+
+
+def _candidate_best_comparison_target(candidate: Any, targets: list[str]) -> str | None:
+    for target in targets:
+        if _candidate_title_matches_target(candidate, target):
+            return target
+    for target in targets:
+        if _candidate_matches_target(candidate, target):
+            return target
+    return None
 
 
 class EvidenceCriticAgent:
@@ -911,17 +1082,83 @@ class EvidenceCriticAgent:
                 "comparison_targets": [],
                 "missing_comparison_targets": [],
                 "comparison_target_coverage": {},
+                "retained_selected_ids": [],
+                "evidence_pruned_claim_count": 0,
+                "evidence_supplemented_count": 0,
+                "evidence_supplemented_ids": [],
+            }
+        if question_type == "general":
+            return {
+                **base_findings,
+                "triggered": False,
+                "relevance_triggered": False,
+                "coverage_triggered": False,
+                "best_candidate_ids": [],
+                "candidate_factors": [],
+                "selected_factors": [],
+                "year_conflict_ids": [],
+                "comparison_targets": [],
+                "missing_comparison_targets": [],
+                "comparison_target_coverage": {},
+                "retained_selected_ids": [item.evidence_id for item in model_output.selected_evidence],
+                "evidence_pruned_claim_count": 0,
+                "evidence_supplemented_count": 0,
+                "evidence_supplemented_ids": [],
+                "guard_policy": "accept_valid_general_first_pass",
             }
 
         candidates_by_id = {item.evidence_id: item for item in request.evidence}
+        selected_ids = {item.evidence_id for item in model_output.selected_evidence}
+        comparison_targets = extract_comparison_targets(request.question)
+
+        candidate_claims: dict[str, list[str]] = {
+            item.evidence_id: _best_candidate_claims(
+                request.question,
+                item,
+                max_claims=2 if question_type == "factual" else 3,
+                compare_target=(
+                    _candidate_best_comparison_target(item, comparison_targets[:2])
+                    if question_type == "compare"
+                    else None
+                ),
+            )
+            for item in request.evidence
+        }
+        candidate_claim_scores: dict[str, float] = {
+            evidence_id: max(
+                (
+                    (
+                        _comparison_claim_relevance_score(
+                            request.question,
+                            compare_target,
+                            claim,
+                            candidate_title=candidates_by_id[evidence_id].title,
+                        )
+                        if question_type == "compare" and (compare_target := _candidate_best_comparison_target(candidates_by_id[evidence_id], comparison_targets[:2]))
+                        else _claim_relevance_score(
+                            request.question,
+                            claim,
+                            question_type=question_type,
+                        )
+                    )
+                    for claim in claims
+                ),
+                default=0.0,
+            )
+            for evidence_id, claims in candidate_claims.items()
+        }
         ranked = sorted(
             (
                 (
-                    _semantic_score(
-                        request.question,
-                        title=item.title,
-                        text=item.text,
-                        retrieval_score=item.retrieval_score,
+                    max(
+                        candidate_claim_scores.get(item.evidence_id, 0.0),
+                        0.35
+                        * _semantic_score(
+                            request.question,
+                            title=item.title,
+                            text=item.text,
+                            retrieval_score=item.retrieval_score,
+                        ),
                     ),
                     item.evidence_id,
                     item,
@@ -930,37 +1167,56 @@ class EvidenceCriticAgent:
             ),
             reverse=True,
         )
-        selected_ids = {item.evidence_id for item in model_output.selected_evidence}
+
+        selected_useful_claims_by_id = {
+            item.evidence_id: _selected_useful_claims(
+                request.question,
+                item,
+                question_type=question_type,
+                compare_target=(
+                    _candidate_best_comparison_target(candidates_by_id[item.evidence_id], comparison_targets[:2])
+                    if question_type == "compare"
+                    else None
+                ),
+                candidate_title=candidates_by_id[item.evidence_id].title,
+            )
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+        }
         selected_scores = [
             (
-                item.evidence_id,
-                _semantic_score(
-                    request.question,
-                    title=None,
-                    text=item.compressed_text,
-                    retrieval_score=None,
+                evidence_id,
+                max(
+                    (
+                        (
+                            _comparison_claim_relevance_score(
+                                request.question,
+                                compare_target,
+                                claim,
+                                candidate_title=candidates_by_id[evidence_id].title,
+                            )
+                            if question_type == "compare" and (compare_target := _candidate_best_comparison_target(candidates_by_id[evidence_id], comparison_targets[:2]))
+                            else _claim_relevance_score(
+                                request.question,
+                                claim,
+                                question_type=question_type,
+                            )
+                        )
+                        for claim in claims
+                    ),
+                    default=0.0,
                 ),
             )
-            for item in model_output.selected_evidence
-            if item.evidence_id in candidates_by_id
-        ]
-        selected_direct_scores = [
-            (
-                item.evidence_id,
-                _semantic_score(
-                    request.question,
-                    title=candidates_by_id[item.evidence_id].title,
-                    text=f"{item.compressed_text} {' '.join(item.claims)}",
-                    retrieval_score=None,
-                ),
-            )
-            for item in model_output.selected_evidence
-            if item.evidence_id in candidates_by_id
+            for evidence_id, claims in selected_useful_claims_by_id.items()
         ]
         best_selected = max((score for _, score in selected_scores), default=0.0)
-        best_direct_selected = max((score for _, score in selected_direct_scores), default=0.0)
+        best_direct_selected = best_selected
         best_unselected_score, best_unselected_id = next(
-            ((score, evidence_id) for score, evidence_id, _ in ranked if evidence_id not in selected_ids),
+            (
+                (score, evidence_id)
+                for score, evidence_id, _ in ranked
+                if evidence_id not in selected_ids and candidate_claims.get(evidence_id)
+            ),
             (0.0, None),
         )
         relevance_triggered = (
@@ -968,51 +1224,17 @@ class EvidenceCriticAgent:
             and best_unselected_score >= SEMANTIC_RELEVANCE_FLOOR
             and best_unselected_score > best_selected + SEMANTIC_RELEVANCE_MARGIN
         )
-        normalized_question = _normalized_text(request.question)
-        selected_title_text = " ".join(
-            str(candidates_by_id[item.evidence_id].title or "")
-            for item in model_output.selected_evidence
-            if item.evidence_id in candidates_by_id
-        )
-        selected_title_norm = _normalized_text(selected_title_text)
-        direct_entity_unselected = next(
-            (
-                (score, evidence_id)
-                for score, evidence_id, candidate in ranked
-                if evidence_id not in selected_ids
-                and "nha tran" in normalized_question
-                and "nha tran" in _normalized_text(f"{candidate.title or ''} {candidate.text}")
-                and "nha tran" not in selected_title_norm
-            ),
-            None,
-        )
-        if (
-            len(model_output.selected_evidence) == 1
-            and _question_is_analytical(request.question)
-            and direct_entity_unselected is not None
-            and direct_entity_unselected[0] >= max(SEMANTIC_RELEVANCE_FLOOR, best_selected - 0.05)
-        ):
-            relevance_triggered = True
         weak_selected_ids = [
-            evidence_id
-            for evidence_id, score in selected_scores
+            item.evidence_id
+            for item in model_output.selected_evidence
             if (
-                (
-                    score < SEMANTIC_RELEVANCE_FLOOR
-                    and max(best_unselected_score, best_selected) >= SEMANTIC_RELEVANCE_FLOOR + SEMANTIC_RELEVANCE_MARGIN
-                )
-                or (
-                    _navigation_noise_penalty(
-                        next(
-                            (
-                                item.compressed_text
-                                for item in model_output.selected_evidence
-                                if item.evidence_id == evidence_id
-                            ),
-                            "",
-                        )
+                item.evidence_id in candidates_by_id
+                and (
+                    not selected_useful_claims_by_id.get(item.evidence_id)
+                    or (
+                        _navigation_noise_penalty(item.compressed_text)
+                        and max(best_unselected_score, best_selected) >= SEMANTIC_RELEVANCE_FLOOR
                     )
-                    and best_unselected_score >= SEMANTIC_RELEVANCE_FLOOR
                 )
             )
         ]
@@ -1026,6 +1248,27 @@ class EvidenceCriticAgent:
         ]
         if year_conflict_ids:
             relevance_triggered = True
+
+        retained_selected_ids = [
+            item.evidence_id
+            for item in model_output.selected_evidence
+            if item.evidence_id in candidates_by_id
+            and item.evidence_id not in weak_selected_ids
+            and item.evidence_id not in year_conflict_ids
+            and selected_useful_claims_by_id.get(item.evidence_id)
+        ]
+        selected_useful_claims = [
+            claim
+            for evidence_id in retained_selected_ids
+            for claim in selected_useful_claims_by_id.get(evidence_id, [])
+        ]
+        selected_claim_total = sum(len(item.claims) for item in model_output.selected_evidence)
+        selected_claim_retained = sum(
+            len(selected_useful_claims_by_id.get(item.evidence_id, []))
+            for item in model_output.selected_evidence
+            if item.evidence_id in retained_selected_ids
+        )
+        evidence_pruned_claim_count = max(0, selected_claim_total - selected_claim_retained)
 
         if (
             question_type == "factual"
@@ -1050,47 +1293,64 @@ class EvidenceCriticAgent:
                 "comparison_targets": [],
                 "missing_comparison_targets": [],
                 "comparison_target_coverage": {},
+                "retained_selected_ids": list(retained_selected_ids),
+                "evidence_pruned_claim_count": 0,
+                "evidence_supplemented_count": 0,
+                "evidence_supplemented_ids": [],
                 "guard_policy": "accept_valid_factual_first_pass",
             }
 
-        analytical = _question_is_analytical(request.question)
-        strong_candidates: list[tuple[float, str, set[str]]] = []
-        seen_factor_fingerprints: set[tuple[str, ...]] = set()
+        analytical = question_type in {"analysis", "cause", "significance"} or _question_is_analytical(request.question)
+        strong_candidates: list[tuple[float, str, set[str], list[str]]] = []
+        novel_candidate_ids: list[str] = []
         for score, evidence_id, candidate in ranked:
             if _title_year_conflicts_question(request.question, candidate.title):
                 continue
             if score < SEMANTIC_RELEVANCE_FLOOR:
                 continue
             factors = _text_factor_labels(f"{candidate.title or ''} {candidate.text}")
-            if not factors:
+            claims = candidate_claims.get(evidence_id) or []
+            if not claims:
                 continue
-            fingerprint = tuple(sorted(factors))
-            if fingerprint in seen_factor_fingerprints:
+            if evidence_id in retained_selected_ids:
                 continue
-            seen_factor_fingerprints.add(fingerprint)
-            strong_candidates.append((score, evidence_id, factors))
-        candidate_factors = set().union(*(factors for _, _, factors in strong_candidates)) if strong_candidates else set()
+            best_novelty = max((_claim_novelty_score(selected_useful_claims, claim) for claim in claims), default=0.0)
+            if best_novelty < 0.28:
+                continue
+            strong_candidates.append((score, evidence_id, factors, claims))
+            if evidence_id not in selected_ids:
+                novel_candidate_ids.append(evidence_id)
+        candidate_factors = set().union(*(factors for _, _, factors, _ in strong_candidates)) if strong_candidates else set()
         selected_factors = set().union(*(
-            _text_factor_labels(f"{candidates_by_id[item.evidence_id].title or ''} {item.compressed_text}")
-            for item in model_output.selected_evidence
-            if item.evidence_id in candidates_by_id
+            _text_factor_labels(f"{candidates_by_id[evidence_id].title or ''} {' '.join(claims)}")
+            for evidence_id, claims in selected_useful_claims_by_id.items()
+            if evidence_id in candidates_by_id
         )) if selected_ids else set()
-        comparison_targets = extract_comparison_targets(request.question)
         comparison_target_coverage: dict[str, bool] = {}
         missing_comparison_targets: list[str] = []
         comparison_candidate_ids: list[str] = []
         if len(comparison_targets) >= 2:
             for target in comparison_targets[:2]:
-                target_candidates = [
-                    (score, evidence_id, candidate)
-                    for score, evidence_id, candidate in ranked
-                    if score >= SEMANTIC_RELEVANCE_FLOOR
-                    and not _title_year_conflicts_question(request.question, candidate.title)
-                    and _candidate_matches_target(candidate, target)
-                ]
+                target_candidates = []
+                for score, evidence_id, candidate in ranked:
+                    if score < SEMANTIC_RELEVANCE_FLOOR:
+                        continue
+                    if _title_year_conflicts_question(request.question, candidate.title):
+                        continue
+                    if not _candidate_matches_target(candidate, target):
+                        continue
+                    if not _best_candidate_claims(
+                        request.question,
+                        candidate,
+                        max_claims=3,
+                        compare_target=target,
+                    ):
+                        continue
+                    target_candidates.append((score, evidence_id, candidate))
                 target_candidates.sort(
                     key=lambda value: (
                         _candidate_title_matches_target(value[2], target),
+                        _navigation_noise_penalty(value[2].text) == 0.0,
                         value[0],
                     ),
                     reverse=True,
@@ -1136,10 +1396,16 @@ class EvidenceCriticAgent:
         else:
             coverage_triggered = (
                 analytical
-                and len(strong_candidates) >= 2
-                and len(candidate_factors) >= 2
-                and len(selected_factors) < min(2, len(candidate_factors))
+                and bool(novel_candidate_ids)
+                and (
+                    len(retained_selected_ids) <= 1
+                    or len(selected_useful_claims) <= 2
+                    or evidence_pruned_claim_count > 0
+                )
             )
+        evidence_supplemented_ids = _dedupe_preserve_order(
+            comparison_candidate_ids if len(comparison_targets) >= 2 else novel_candidate_ids[:2]
+        )
 
         return {
             **base_findings,
@@ -1150,8 +1416,9 @@ class EvidenceCriticAgent:
                 _dedupe_preserve_order(comparison_candidate_ids)
                 if len(comparison_targets) >= 2
                 else _dedupe_preserve_order([
-                    *comparison_candidate_ids,
-                    *[evidence_id for _, evidence_id, _ in strong_candidates[: self.max_contexts]],
+                    *retained_selected_ids,
+                    *evidence_supplemented_ids,
+                    *[evidence_id for _, evidence_id, _, _ in strong_candidates[: self.max_contexts]],
                 ])
             ),
             "best_unselected_id": best_unselected_id,
@@ -1165,6 +1432,14 @@ class EvidenceCriticAgent:
             "comparison_targets": comparison_targets[:2],
             "missing_comparison_targets": missing_comparison_targets,
             "comparison_target_coverage": comparison_target_coverage,
+            "retained_selected_ids": retained_selected_ids,
+            "evidence_pruned_claim_count": evidence_pruned_claim_count,
+            "evidence_supplemented_count": len([
+                evidence_id for evidence_id in evidence_supplemented_ids if evidence_id not in selected_ids
+            ]),
+            "evidence_supplemented_ids": [
+                evidence_id for evidence_id in evidence_supplemented_ids if evidence_id not in selected_ids
+            ],
         }
 
     def _semantic_reconsideration_messages(
@@ -1179,7 +1454,7 @@ class EvidenceCriticAgent:
                 "Return canonical JSON only.",
                 "Reconsider the evidence selection for semantic relevance to the exact question.",
                 "Do not select an evidence title whose explicit year conflicts with the explicit year in the question.",
-                "If direct high-relevance candidates support multiple analytical factors, do not collapse to one narrow source without justification.",
+                "For analytical questions, keep directly relevant grounded explanatory claims that add non-duplicate information; do not rely on broad factor labels alone.",
                 "Use only supplied evidence IDs.",
                 "Every claim must be copied verbatim/extractively from its own evidence text.",
                 "The summary may mention only selected_evidence IDs unless an ID is explicitly marked as rejected candidate evidence.",
@@ -1201,16 +1476,18 @@ class EvidenceCriticAgent:
         findings: dict[str, Any],
     ) -> EvidenceModelOutput | None:
         selected: list[SelectedEvidence] = []
-        candidate_ids = list(findings.get("best_candidate_ids") or [])
         comparison_targets = extract_comparison_targets(request.question)
-        if (
-            findings.get("question_type") == "analysis"
-            and findings.get("coverage_triggered")
-            and not findings.get("relevance_triggered")
-        ):
+        if len(comparison_targets) >= 2 and findings.get("coverage_triggered"):
+            candidate_ids = list(findings.get("best_candidate_ids") or [])
+        elif len(comparison_targets) >= 2 and findings.get("relevance_triggered"):
             candidate_ids = [
-                *list(findings.get("selected_ids") or []),
-                *candidate_ids,
+                *list(findings.get("best_candidate_ids") or []),
+                *list(findings.get("retained_selected_ids") or []),
+            ]
+        else:
+            candidate_ids = [
+                *list(findings.get("retained_selected_ids") or []),
+                *list(findings.get("best_candidate_ids") or []),
             ]
         if (
             len(comparison_targets) < 2
@@ -1230,16 +1507,40 @@ class EvidenceCriticAgent:
                 continue
             if _title_year_conflicts_question(request.question, candidate.title):
                 continue
-            claims = _best_candidate_claims(request.question, candidate)
+            compare_target = (
+                _candidate_best_comparison_target(candidate, comparison_targets[:2])
+                if len(comparison_targets) >= 2
+                else None
+            )
+            claims = _best_candidate_claims(
+                request.question,
+                candidate,
+                compare_target=compare_target,
+            )
             if not claims:
                 continue
-            claim_score = _semantic_score(
-                request.question,
-                title=None,
-                text=" ".join(claims),
-                retrieval_score=None,
+            question_type = str(findings.get("question_type") or _evidence_question_type(request.question))
+            claim_score = max(
+                (
+                    (
+                        _comparison_claim_relevance_score(
+                            request.question,
+                            compare_target,
+                            claim,
+                            candidate_title=candidate.title,
+                        )
+                        if question_type == "compare" and compare_target
+                        else _claim_relevance_score(
+                            request.question,
+                            claim,
+                            question_type=question_type,
+                        )
+                    )
+                    for claim in claims
+                ),
+                default=0.0,
             )
-            if claim_score < SEMANTIC_RELEVANCE_FLOOR:
+            if claim_score < CLAIM_RELEVANCE_FLOOR:
                 continue
             selected.append(SelectedEvidence(
                 evidence_id=candidate.evidence_id,
@@ -1394,16 +1695,26 @@ class EvidenceCriticAgent:
             candidate = target_ranked[0] if target_ranked else None
             if candidate is None:
                 continue
-            claims = _best_candidate_claims(request.question, candidate)
+            claims = _best_candidate_claims(
+                request.question,
+                candidate,
+                compare_target=target,
+            )
             if not claims:
                 continue
             selected.append(SelectedEvidence(
                 evidence_id=candidate.evidence_id,
-                relevance=_semantic_score(
-                    request.question,
-                    title=None,
-                    text=" ".join(claims),
-                    retrieval_score=None,
+                relevance=max(
+                    (
+                        _comparison_claim_relevance_score(
+                            request.question,
+                            target,
+                            claim,
+                            candidate_title=candidate.title,
+                        )
+                        for claim in claims
+                    ),
+                    default=0.0,
                 ),
                 claims=claims,
                 compressed_text=" ".join(claims),
@@ -1607,6 +1918,9 @@ class EvidenceCriticAgent:
             target_b_selected_evidence=target_b_selected_evidence,
             shared_selected_evidence=shared_selected_evidence,
             unknown_selected_evidence=unknown_selected_evidence,
+            evidence_pruned_claim_count=int(semantic_guard_findings.get("evidence_pruned_claim_count", 0)),
+            evidence_supplemented_count=int(semantic_guard_findings.get("evidence_supplemented_count", 0)),
+            evidence_supplemented_ids=list(semantic_guard_findings.get("evidence_supplemented_ids") or []),
             generation_calls=generation_calls,
             repair_used=repair_used,
             repair_path=repair_path,
@@ -1909,6 +2223,9 @@ class EvidenceCriticAgent:
                         comparison_target_coverage=guard_findings.get("comparison_target_coverage", {}),
                         question_type=guard_findings.get("question_type"),
                         guard_policy=guard_findings.get("guard_policy"),
+                        evidence_pruned_claim_count=guard_findings.get("evidence_pruned_claim_count", 0),
+                        evidence_supplemented_count=guard_findings.get("evidence_supplemented_count", 0),
+                        evidence_supplemented_ids=guard_findings.get("evidence_supplemented_ids", []),
                     )
                 deterministic_output = self._semantic_guard_output(
                     request=request,
@@ -1932,11 +2249,27 @@ class EvidenceCriticAgent:
                     model_output = deterministic_output
                     repair_used = True
                     repair_path = "deterministic_semantic_guard"
-                    guard_findings = deterministic_guard
-                    semantic_guard_findings = dict(deterministic_guard)
+                    guard_findings = {
+                        **deterministic_guard,
+                        "evidence_pruned_claim_count": guard_findings.get("evidence_pruned_claim_count", 0),
+                        "evidence_supplemented_count": guard_findings.get("evidence_supplemented_count", 0),
+                        "evidence_supplemented_ids": guard_findings.get("evidence_supplemented_ids", []),
+                        "guard_correction_triggered": True,
+                    }
+                    semantic_guard_findings = dict(guard_findings)
                     final_validation_issues = []
                     if telemetry is not None:
                         telemetry.evidence_recovery_used = True
+                        telemetry.evidence_pruned_claim_count += int(
+                            guard_findings.get("evidence_pruned_claim_count", 0)
+                        )
+                        telemetry.evidence_supplemented_count += int(
+                            guard_findings.get("evidence_supplemented_count", 0)
+                        )
+                        telemetry.evidence_supplemented_ids = _dedupe_preserve_order([
+                            *telemetry.evidence_supplemented_ids,
+                            *list(guard_findings.get("evidence_supplemented_ids") or []),
+                        ])
                         telemetry.comparison_target_coverage = dict(
                             deterministic_guard.get("comparison_target_coverage") or {}
                         )
@@ -2011,14 +2344,40 @@ class EvidenceCriticAgent:
                         if deterministic_output is None or deterministic_issues:
                             final_validation_issues = [issue.as_dict() for issue in deterministic_issues]
                             self._raise_contract_error(deterministic_issues, repair_attempted=True)
+                        deterministic_guard = self._semantic_guard_findings(deterministic_output, request)
+                        if deterministic_guard["triggered"]:
+                            deterministic_issues = [EvidenceValidationIssue(
+                                code="semantic_guard_failed",
+                                message="Evidence semantic guard replacement still failed semantic coverage.",
+                                recoverable=False,
+                            )]
+                            final_validation_issues = [issue.as_dict() for issue in deterministic_issues]
+                            self._raise_contract_error(deterministic_issues, repair_attempted=True)
                         model_output = deterministic_output
                         repair_used = True
                         repair_path = "deterministic_semantic_guard"
-                        guard_findings = self._semantic_guard_findings(model_output, request)
+                        correction_findings = guard_findings
+                        guard_findings = {
+                            **deterministic_guard,
+                            "evidence_pruned_claim_count": correction_findings.get("evidence_pruned_claim_count", 0),
+                            "evidence_supplemented_count": correction_findings.get("evidence_supplemented_count", 0),
+                            "evidence_supplemented_ids": correction_findings.get("evidence_supplemented_ids", []),
+                            "guard_correction_triggered": True,
+                        }
                         semantic_guard_findings = dict(guard_findings)
                         final_validation_issues = []
                         if telemetry is not None:
                             telemetry.evidence_recovery_used = True
+                            telemetry.evidence_pruned_claim_count += int(
+                                guard_findings.get("evidence_pruned_claim_count", 0)
+                            )
+                            telemetry.evidence_supplemented_count += int(
+                                guard_findings.get("evidence_supplemented_count", 0)
+                            )
+                            telemetry.evidence_supplemented_ids = _dedupe_preserve_order([
+                                *telemetry.evidence_supplemented_ids,
+                                *list(guard_findings.get("evidence_supplemented_ids") or []),
+                            ])
         finally:
             elapsed_guard_ms = (time.perf_counter() - guard_started) * 1000
             telemetry = current_request_telemetry()
@@ -2071,6 +2430,18 @@ class EvidenceCriticAgent:
         if telemetry is not None:
             telemetry.evidence_ms += elapsed_ms
             telemetry.evidence_selected_count = len(contexts)
+            telemetry.evidence_pruned_claim_count = max(
+                telemetry.evidence_pruned_claim_count,
+                critique.evidence_pruned_claim_count,
+            )
+            telemetry.evidence_supplemented_count = max(
+                telemetry.evidence_supplemented_count,
+                critique.evidence_supplemented_count,
+            )
+            telemetry.evidence_supplemented_ids = _dedupe_preserve_order([
+                *telemetry.evidence_supplemented_ids,
+                *critique.evidence_supplemented_ids,
+            ])
             telemetry.comparison_target_coverage = dict(critique.comparison_target_coverage)
             telemetry.external_evidence_selected_count = sum(
                 1 for context in contexts if _source_kind(context) in {"wikipedia", "web"}

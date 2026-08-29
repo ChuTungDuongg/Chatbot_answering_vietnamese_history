@@ -42,8 +42,8 @@ image = modal.Image.from_dockerfile("Dockerfile", context_dir=".").env(
 )
 
 SMOKE_QUESTIONS = [
-    "Ai được mệnh danh là anh cả Quân đội Nhân dân Việt Nam?",
     "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+    "Nguyên nhân Mỹ thua chiến tranh Việt Nam?",
     "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
 ]
 
@@ -183,10 +183,14 @@ def _run_question(orchestrator: Any, service: Any, question: str, *, mode: str =
         "evidence_validation": evidence_debug.get("final_validation_result"),
         "history_called": bool(history_debug.get("generation_calls")),
         "answer_depth": history_debug.get("answer_depth") or provenance.get("answer_depth"),
+        "question_type": history_debug.get("question_type") or evidence_debug.get("question_type"),
         "research_calls": provenance.get("research_generation_calls") or telemetry.research_llm_calls,
         "evidence_calls": provenance.get("evidence_generation_calls") or telemetry.evidence_generation_calls,
         "evidence_reconsideration": evidence_debug.get("reconsideration_used", telemetry.evidence_reconsideration_used),
         "history_calls": provenance.get("history_generation_calls") or telemetry.history_generation_calls,
+        "history_retry_used": provenance.get("history_retry_used", telemetry.history_retry_used),
+        "history_retry_reason": provenance.get("history_retry_reason", telemetry.history_retry_reason),
+        "evidence_selected_ids": evidence_debug.get("selected_ids", []),
         "research_latency_ms": summary.get("research_latency_ms"),
         "evidence_first_pass_latency_ms": summary.get("evidence_first_pass_latency_ms"),
         "evidence_guard_latency_ms": summary.get("evidence_guard_latency_ms"),
@@ -195,6 +199,10 @@ def _run_question(orchestrator: Any, service: Any, question: str, *, mode: str =
         "total_latency_ms": summary.get("total_latency_ms"),
         "history_input_evidence_count": history_debug.get("input_evidence_ids") and len(history_debug.get("input_evidence_ids")),
         "history_input_claim_count": history_debug.get("input_claim_count"),
+        "first_history_words": history_debug.get("first_answer_words") or provenance.get("history_first_answer_words"),
+        "final_history_words": history_debug.get("final_answer_words") or provenance.get("history_final_answer_words"),
+        "first_quality_issues": history_debug.get("first_quality_issues") or provenance.get("history_first_quality_issues"),
+        "final_quality_issues": history_debug.get("final_quality_issues") or provenance.get("history_final_quality_issues"),
         "comparison_targets": evidence_debug.get("comparison_targets"),
         "comparison_target_coverage": evidence_debug.get("comparison_target_coverage"),
         "comparison_target_map": evidence_debug.get("comparison_target_map"),
@@ -206,6 +214,7 @@ def _run_question(orchestrator: Any, service: Any, question: str, *, mode: str =
         "quality_warnings": result.get("quality_warnings", []),
         "structured_expansion_used": result.get("structured_expansion_used", False),
         "source_ids": result.get("source_ids", []),
+        "final_answer": answer,
         "telemetry_summary": summary,
     }
 

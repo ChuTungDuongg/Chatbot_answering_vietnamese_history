@@ -69,6 +69,14 @@ class RegressionRetriever:
 class FakeSharedRoleRuntime:
     def __init__(self):
         self.calls = []
+        self.history_outputs = [
+            (
+                f"Nguồn được dùng: [{BACH_DANG_ID}] [{BACH_DANG_FOREIGN_ID}]\n\n"
+                "Trả lời:\nChiến thắng Bạch Đằng năm 938 chấm dứt hơn 1000 năm Bắc thuộc "
+                "và mở ra thời kỳ độc lập tự chủ. Chi tiết trận ấy được đại tiệp cho thấy thắng lợi "
+                "quân sự đã tạo nền cho bước chuyển chính trị lâu dài của lịch sử Việt Nam."
+            ),
+        ]
 
     def generate_json(self, *, adapter, messages, **kwargs):
         self.calls.append({"adapter": adapter, "messages": messages})
@@ -110,15 +118,13 @@ class FakeSharedRoleRuntime:
     def generate_text(self, *, adapter, messages, **kwargs):
         self.calls.append({"adapter": adapter, "messages": messages})
         assert adapter == "history"
+        index = len([call for call in self.calls if call["adapter"] == "history"]) - 1
         prompt = messages[0]["content"]
         assert f"[{BACH_DANG_ID}]" in prompt
         assert f"[{BACH_DANG_FOREIGN_ID}]" in prompt
         assert LATE_RELEVANT_PASSAGE in prompt
         assert BACH_DANG_FOREIGN_PASSAGE in prompt
-        return (
-            f"Nguồn được dùng: [{BACH_DANG_ID}] [{BACH_DANG_FOREIGN_ID}]\n\n"
-            "Trả lời:\nCâu trả lời được tạo từ evidence đã chọn."
-        )
+        return self.history_outputs[min(index, len(self.history_outputs) - 1)]
 
 
 def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter():
@@ -153,11 +159,13 @@ def test_bach_dang_pipeline_preserves_significance_evidence_to_history_adapter()
     assert result["source_ids"] == [BACH_DANG_ID, BACH_DANG_FOREIGN_ID]
     assert result["answer_provenance"]["source"] == "history_adapter"
     assert result["answer_provenance"]["history_generation_calls"] == 1
+    assert result["answer_provenance"]["history_retry_used"] is False
     assert result["answer_provenance"]["guard_override"] is False
     assert [call["adapter"] for call in role_runtime.calls].count("history") == 1
     assert [call["adapter"] for call in role_runtime.calls].count("evidence") == 1
-    assert "history:deep_structured_expansion" in result["tool_trace"]
-    assert result["answer_provenance"]["structured_expansion_used"] is True
+    assert "history:deep_structured_expansion" not in result["tool_trace"]
+    assert result["answer_provenance"]["structured_expansion_used"] is False
+    assert "Câu trả lời được tạo từ evidence" not in result["answer"]
 
     debug = _build_debug(result)
     assert debug["research"]["tools"][0]["arguments"]["query"] == QUESTION
