@@ -63,11 +63,11 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"[0-9A-Za-zÀ-ỹĐđ]+", str(text)))
 
 
-def _build_orchestrator() -> tuple[Any, Any]:
+def _build_orchestrators() -> tuple[Any, Any, Any]:
     from app.agents.evidence_agent import EvidenceCriticAgent
     from app.agents.history_answerer import HistoryAnswererAgent
     from app.agents.model_runtime import SharedAgentModelRuntime
-    from app.agents.orchestrator import AgentOrchestrator
+    from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
     from app.agents.research_agent import ResearchAgent
     from app.config import settings
     from app.rag.research_runtime import ResearchRetrievalRuntime
@@ -122,17 +122,27 @@ def _build_orchestrator() -> tuple[Any, Any]:
         evidence_agent=EvidenceCriticAgent(model_runtime=model_runtime),
         answerer=HistoryAnswererAgent(model_runtime=model_runtime),
     )
+    hybrid_orchestrator = HybridRAGOrchestrator(
+        retriever=retriever,
+        retrieval_runtime=research_runtime,
+        answerer=HistoryAnswererAgent(model_runtime=model_runtime),
+    )
+    return service, orchestrator, hybrid_orchestrator
+
+
+def _build_orchestrator() -> tuple[Any, Any]:
+    service, orchestrator, _ = _build_orchestrators()
     return service, orchestrator
 
 
-def _run_question(orchestrator: Any, service: Any, question: str) -> dict[str, Any]:
+def _run_question(orchestrator: Any, service: Any, question: str, *, mode: str = "agentic_rag") -> dict[str, Any]:
     from app.telemetry import RequestTelemetry, reset_request_telemetry, set_request_telemetry
 
     request_id = f"smoke-{uuid.uuid4()}"
     telemetry = RequestTelemetry(
         request_id=request_id,
-        inference_mode="agentic_rag",
-        selected_inference_mode="agentic_rag",
+        inference_mode=mode,
+        selected_inference_mode=mode,
         deployment_id=getattr(service, "deployment_id", None),
         gpu=_gpu_name(),
     )
@@ -164,6 +174,7 @@ def _run_question(orchestrator: Any, service: Any, question: str) -> dict[str, A
     summary = telemetry.summary(result=status)
     return {
         "question": question,
+        "mode": mode,
         "status": status,
         "failure": failure,
         "answer_preview": answer[:700],
@@ -186,6 +197,12 @@ def _run_question(orchestrator: Any, service: Any, question: str) -> dict[str, A
         "history_input_claim_count": history_debug.get("input_claim_count"),
         "comparison_targets": evidence_debug.get("comparison_targets"),
         "comparison_target_coverage": evidence_debug.get("comparison_target_coverage"),
+        "comparison_target_map": evidence_debug.get("comparison_target_map"),
+        "target_a_selected_evidence": evidence_debug.get("target_a_selected_evidence"),
+        "target_b_selected_evidence": evidence_debug.get("target_b_selected_evidence"),
+        "shared_selected_evidence": evidence_debug.get("shared_selected_evidence"),
+        "unknown_selected_evidence": evidence_debug.get("unknown_selected_evidence"),
+        "comparison_evidence_groups": history_debug.get("comparison_evidence_groups"),
         "quality_warnings": result.get("quality_warnings", []),
         "structured_expansion_used": result.get("structured_expansion_used", False),
         "source_ids": result.get("source_ids", []),
@@ -223,9 +240,52 @@ def run_agentic_smoke() -> dict[str, Any]:
     }
 
 
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=4.0,
+    memory=32768,
+    timeout=1800,
+    startup_timeout=600,
+    volumes={
+        "/artifacts": artifacts,
+        "/hf-cache": hf_cache,
+        "/data": chat_data,
+    },
+)
+def run_bounded_acceptance_smoke() -> dict[str, Any]:
+    started = time.perf_counter()
+    service, agentic_orchestrator, hybrid_orchestrator = _build_orchestrators()
+    load_ms = (time.perf_counter() - started) * 1000
+    try:
+        results = [
+            _run_question(
+                agentic_orchestrator,
+                service,
+                "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+                mode="agentic_rag",
+            ),
+            _run_question(
+                hybrid_orchestrator,
+                service,
+                "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+                mode="hybrid_rag",
+            ),
+        ]
+    finally:
+        try:
+            service.shutdown()
+        except Exception:
+            pass
+    return {
+        "load_ms": load_ms,
+        "questions": results,
+    }
+
+
 @app.local_entrypoint()
-def main(output: str = "artifacts/agentic_smoke_result.json"):
-    result = run_agentic_smoke.remote()
+def main(output: str = "artifacts/agentic_smoke_result.json", bounded: bool = False):
+    result = run_bounded_acceptance_smoke.remote() if bounded else run_agentic_smoke.remote()
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

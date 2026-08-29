@@ -14,6 +14,13 @@ from app.agents.model_runtime import RoleLLMBackend
 from app.agents.model_registry import ROLE_MODELS
 from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
 from app.agents.schemas import EvidenceAgentRequest, EvidenceCritique, EvidenceModelOutput, SelectedEvidence
+from app.agents.comparison import (
+    SHARED,
+    TARGET_A,
+    TARGET_B,
+    UNKNOWN,
+    classify_comparison_target,
+)
 from app.agents.evidence_validation import (
     compressed_derived_from_own_claims,
     grounded_in_source,
@@ -71,6 +78,12 @@ FACTOR_KEYWORDS = {
     "religious": {"phat giao", "ton giao", "su tang", "chua", "tu vien"},
     "sovereignty": {"doc lap", "tu chu", "bac thuoc", "nam han", "chu quyen", "xung vuong"},
     "commemoration": {"mieu", "den", "le", "te", "thai lao", "co", "tuong niem"},
+}
+NAVIGATION_NOISE_CUES = {
+    "xem them",
+    "chu thich",
+    "tham khao",
+    "lien ket ngoai",
 }
 logger = logging.getLogger(__name__)
 
@@ -232,6 +245,12 @@ def _text_factor_labels(value: str) -> set[str]:
     }
 
 
+def _navigation_noise_penalty(value: str) -> float:
+    normalized = _normalized_text(value)[:700]
+    hits = sum(1 for cue in NAVIGATION_NOISE_CUES if cue in normalized)
+    return 0.45 if hits >= 2 else 0.0
+
+
 def _retrieval_score(value: Any) -> float:
     try:
         score = float(value)
@@ -255,7 +274,9 @@ def _semantic_score(question: str, *, title: str | None, text: str, retrieval_sc
         if phrase in normalized_question and phrase in normalized_haystack:
             phrase_bonus += 0.12
     factor_bonus = min(0.18, 0.06 * len(_text_factor_labels(haystack)))
-    return min(1.0, overlap_score + phrase_bonus + factor_bonus + _retrieval_score(retrieval_score) * 0.12)
+    score = overlap_score + phrase_bonus + factor_bonus + _retrieval_score(retrieval_score) * 0.12
+    score -= _navigation_noise_penalty(f"{title or ''} {text}")
+    return max(0.0, min(1.0, score))
 
 
 def _best_candidate_claims(question: str, candidate: Any, *, max_claims: int = 2) -> list[str]:
@@ -975,8 +996,25 @@ class EvidenceCriticAgent:
         weak_selected_ids = [
             evidence_id
             for evidence_id, score in selected_scores
-            if score < SEMANTIC_RELEVANCE_FLOOR
-            and max(best_unselected_score, best_selected) >= SEMANTIC_RELEVANCE_FLOOR + SEMANTIC_RELEVANCE_MARGIN
+            if (
+                (
+                    score < SEMANTIC_RELEVANCE_FLOOR
+                    and max(best_unselected_score, best_selected) >= SEMANTIC_RELEVANCE_FLOOR + SEMANTIC_RELEVANCE_MARGIN
+                )
+                or (
+                    _navigation_noise_penalty(
+                        next(
+                            (
+                                item.compressed_text
+                                for item in model_output.selected_evidence
+                                if item.evidence_id == evidence_id
+                            ),
+                            "",
+                        )
+                    )
+                    and best_unselected_score >= SEMANTIC_RELEVANCE_FLOOR
+                )
+            )
         ]
         if weak_selected_ids:
             relevance_triggered = True
@@ -1092,7 +1130,7 @@ class EvidenceCriticAgent:
                 ):
                     relevance_triggered = False
             if not missing_comparison_targets:
-                relevance_triggered = bool(year_conflict_ids)
+                relevance_triggered = bool(year_conflict_ids or weak_selected_ids)
         if len(comparison_targets) >= 2:
             coverage_triggered = bool(missing_comparison_targets)
         else:
@@ -1472,8 +1510,38 @@ class EvidenceCriticAgent:
             context = dict(available[item.evidence_id])
             context["text"] = item.compressed_text or str(context.get("text", ""))
             context["claims"] = list(item.claims)
+            if len(budget_report.get("comparison_targets", [])) >= 2:
+                attribution = classify_comparison_target(question, context)
+                context["comparison_target"] = attribution.label
+                context["comparison_target_scores"] = attribution.scores
+                context["comparison_target_reasons"] = attribution.reasons
             contexts.append(context)
         selected_ids = [item.evidence_id for item in selected]
+        comparison_target_map = {
+            str(context["chunk_id"]): str(context.get("comparison_target") or UNKNOWN)
+            for context in contexts
+            if context.get("comparison_target")
+        }
+        target_a_selected_evidence = [
+            str(context["chunk_id"])
+            for context in contexts
+            if context.get("comparison_target") == TARGET_A
+        ]
+        target_b_selected_evidence = [
+            str(context["chunk_id"])
+            for context in contexts
+            if context.get("comparison_target") == TARGET_B
+        ]
+        shared_selected_evidence = [
+            str(context["chunk_id"])
+            for context in contexts
+            if context.get("comparison_target") == SHARED
+        ]
+        unknown_selected_evidence = [
+            str(context["chunk_id"])
+            for context in contexts
+            if context.get("comparison_target") == UNKNOWN
+        ]
         comparison_coverage = {}
         for target in budget_report.get("comparison_targets", []):
             target_has_title_candidate = any(
@@ -1534,6 +1602,11 @@ class EvidenceCriticAgent:
             target_a_model_visible_count=int(budget_report.get("target_a_model_visible_count", 0)),
             target_b_model_visible_count=int(budget_report.get("target_b_model_visible_count", 0)),
             comparison_target_coverage=comparison_coverage,
+            comparison_target_map=comparison_target_map,
+            target_a_selected_evidence=target_a_selected_evidence,
+            target_b_selected_evidence=target_b_selected_evidence,
+            shared_selected_evidence=shared_selected_evidence,
+            unknown_selected_evidence=unknown_selected_evidence,
             generation_calls=generation_calls,
             repair_used=repair_used,
             repair_path=repair_path,

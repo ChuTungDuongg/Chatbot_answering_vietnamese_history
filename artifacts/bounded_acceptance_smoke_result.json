@@ -1,0 +1,524 @@
+{
+  "load_ms": 47170.685068,
+  "questions": [
+    {
+      "question": "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+      "mode": "agentic_rag",
+      "status": "success",
+      "failure": null,
+      "answer_preview": "Khái quát\nCách mạng Tháng Tám và chiến thắng Điện Biên Phủ cần được đặt cạnh nhau theo đúng nhóm bằng chứng đã kiểm chứng.\n\nĐiểm giống nhau\n- Các bằng chứng đã chọn chưa nêu một điểm giống nhau đủ rõ cho cả hai đối tượng; phần so sánh chắc hơn nằm ở các khác biệt được chứng cứ riêng hỗ trợ.\n\nĐiểm khác nhau\n- Cách mạng Tháng Tám:\n  - Sau Cách mạng Tháng Tám, năm 1946, Việt Nam diễn ra cuộc bầu cử đầu tiên trong lịch sử, bầu ra quốc hội đầu tiên.\n  - Thành công còn đến từ việc biết chớp đúng thời cơ từ ban lãnh đạo Việt Minh, mà đứng đầu là Hồ Chí Minh Với thắng lợi của Cách mạng tháng 8 năm 1945, nhân dân Việt Nam đã đập tan xiềng xích nô lệ của thực dân Pháp trong gần 1 thế kỷ tại Việt Nam, ",
+      "answer_length_chars": 1575,
+      "answer_length_words": 342,
+      "evidence_validation": "pass",
+      "history_called": true,
+      "answer_depth": "deep",
+      "research_calls": 1,
+      "evidence_calls": 1,
+      "evidence_reconsideration": false,
+      "history_calls": 1,
+      "research_latency_ms": 14541.035905,
+      "evidence_first_pass_latency_ms": 69352.305373,
+      "evidence_guard_latency_ms": 70.25580499998796,
+      "evidence_reconsideration_latency_ms": 0.0,
+      "history_latency_ms": 7515.356257999997,
+      "total_latency_ms": 91790.13702499999,
+      "history_input_evidence_count": 2,
+      "history_input_claim_count": 4,
+      "comparison_targets": [
+        "Cách mạng Tháng Tám",
+        "chiến thắng Điện Biên Phủ"
+      ],
+      "comparison_target_coverage": {
+        "Cách mạng Tháng Tám": true,
+        "chiến thắng Điện Biên Phủ": true
+      },
+      "comparison_target_map": {
+        "hf_wikipedia_cách_mạng_tháng_tám_0011_0a0990e1dd4c": "target_a",
+        "hf_wikipedia_chiến_dịch_điện_biên_phủ_0022_d990efcd5bef": "target_b"
+      },
+      "target_a_selected_evidence": [
+        "hf_wikipedia_cách_mạng_tháng_tám_0011_0a0990e1dd4c"
+      ],
+      "target_b_selected_evidence": [
+        "hf_wikipedia_chiến_dịch_điện_biên_phủ_0022_d990efcd5bef"
+      ],
+      "shared_selected_evidence": [],
+      "unknown_selected_evidence": [],
+      "comparison_evidence_groups": {
+        "target_a": {
+          "name": "Cách mạng Tháng Tám",
+          "evidence": [
+            {
+              "chunk_id": "hf_wikipedia_cách_mạng_tháng_tám_0011_0a0990e1dd4c",
+              "source": "DataStudio/Viet-wikipedia",
+              "source_type": "hf_wikipedia",
+              "title": "Cách mạng Tháng Tám",
+              "section": "",
+              "url": "https://vi.wikipedia.org/wiki/C%C3%A1ch%20m%E1%BA%A1ng%20Th%C3%A1ng%20T%C3%A1m",
+              "chunk_index": 11,
+              "text": "Sau Cách mạng Tháng Tám, năm 1946, Việt Nam diễn ra cuộc bầu cử đầu tiên trong lịch sử, bầu ra quốc hội đầu tiên. Thành công còn đến từ việc biết chớp đúng thời cơ từ ban lãnh đạo Việt Minh, mà đứng đầu là Hồ Chí Minh Với thắng lợi của Cách mạng tháng 8 năm 1945, nhân dân Việt Nam đã đập tan xiềng xích nô lệ của thực dân Pháp trong gần 1 thế kỷ tại Việt Nam, chấm dứt sự tồn tại của chế độ quân chủ chuyên chế hơn 1000 năm, lập nên nước Việt Nam Dân chủ Cộng hòa.",
+              "char_len": 1941,
+              "word_len": 432,
+              "raw_record_index": 10311,
+              "hf_dataset": "DataStudio/Viet-wikipedia",
+              "history_score": 54,
+              "chunk_history_score": 45,
+              "doc_filter_reason": "trusted_vn_history_title",
+              "chunk_filter_reason": "trusted_title_and_historical_chunk",
+              "matched_vn_history_terms": [
+                "cao trào kháng nhật cứu nước",
+                "việt nam dân chủ cộng hòa",
+                "đảng cộng sản việt nam",
+                "cách mạng tháng tám",
+                "tuyên ngôn độc lập",
+                "thực dân pháp",
+                "hồ chí minh",
+                "việt minh",
+                "bảo đại"
+              ],
+              "filter_version": "phase2_v2_vn_history_doc_and_chunk_filter_2026_07",
+              "text_hash": "f2967d4e7ff9e7b3",
+              "metadata": {
+                "chunk_id": "hf_wikipedia_cách_mạng_tháng_tám_0011_0a0990e1dd4c",
+                "metadata_version": "v4.0-final-people-location-strict",
+                "validator_signature": "phase8_v4_people_location_20260731_a",
+                "extraction_method": "hybrid",
+                "extraction_status": "ok",
+                "source_sha1": "3d37776d55abfff2d90a01e2473ac980cc6149aa",
+                "years": [
+                  1945,
+                  1946
+                ],
+                "people": [],
+                "events": [
+                  "Cách mạng Tháng Tám"
+                ],
+                "locations": [],
+                "documents": [],
+                "periods": [],
+                "dynasties": [
+                  "Việt Nam Dân chủ Cộng hòa",
+                  "Đế quốc Việt Nam",
+                  "Chính quyền thực dân Pháp"
+                ],
+                "topics": [
+                  "khởi nghĩa",
+                  "độc lập",
+                  "cách mạng",
+                  "văn kiện"
+                ],
+                "content_facets": [
+                  "ý nghĩa"
+                ],
+                "rejected_items": {
+                  "people": [
+                    "Hồ Chí Minh",
+                    "Bảo Đại"
+                  ],
+                  "events": [
+                    "Bầu cử đầu tiên",
+                    "Tuyên ngôn độc lập"
+                  ]
+                },
+                "quality_flags": [
+                  "many_rejected_items"
+                ],
+                "extracted_at_utc": "2026-08-01T13:38:34.301057+00:00"
+              },
+              "_corpus_idx": 10414,
+              "rrf_score": 0.041285940923169895,
+              "retrieval_hits": [
+                "dense:q0@2",
+                "dense:q1@10",
+                "dense:q2@1"
+              ],
+              "best_dense_score": 0.8632417321205139,
+              "best_bm25_score": null,
+              "reranker_score": 0.19339881837368011,
+              "reranker_norm": 0.3008660078048706,
+              "rrf_norm": 0.7706608176231384,
+              "metadata_bonus": 0.056999999999999995,
+              "metadata_hits": [
+                "events=Cách mạng Tháng Tám",
+                "topics=cách mạng"
+              ],
+              "final_retrieval_score": 0.48940858244895935,
+              "source_kind": "history",
+              "claims": [
+                "Sau Cách mạng Tháng Tám, năm 1946, Việt Nam diễn ra cuộc bầu cử đầu tiên trong lịch sử, bầu ra quốc hội đầu tiên.",
+                "Thành công còn đến từ việc biết chớp đúng thời cơ từ ban lãnh đạo Việt Minh, mà đứng đầu là Hồ Chí Minh Với thắng lợi của Cách mạng tháng 8 năm 1945, nhân dân Việt Nam đã đập tan xiềng xích nô lệ của thực dân Pháp trong gần 1 thế kỷ tại Việt Nam, chấm dứt sự tồn tại của chế độ quân chủ chuyên chế hơn 1000 năm, lập nên nước Việt Nam Dân chủ Cộng hòa."
+              ],
+              "comparison_target": "target_a",
+              "comparison_target_scores": {
+                "target_a": 8.5,
+                "target_b": 0.0
+              },
+              "comparison_target_reasons": {
+                "target_a": [
+                  "title_phrase",
+                  "text_phrase",
+                  "metadata_phrase"
+                ],
+                "target_b": []
+              }
+            }
+          ]
+        },
+        "target_b": {
+          "name": "chiến thắng Điện Biên Phủ",
+          "evidence": [
+            {
+              "chunk_id": "hf_wikipedia_chiến_dịch_điện_biên_phủ_0022_d990efcd5bef",
+              "source": "DataStudio/Viet-wikipedia",
+              "source_type": "hf_wikipedia",
+              "title": "Chiến dịch Điện Biên Phủ",
+              "section": "",
+              "url": "https://vi.wikipedia.org/wiki/Chi%E1%BA%BFn%20d%E1%BB%8Bch%20%C4%90i%E1%BB%87n%20Bi%C3%AAn%20Ph%E1%BB%A7",
+              "chunk_index": 22,
+              "text": "Để bảo đảm nguyên tắc \"trận đầu phải thắng\", tham mưu đã bố trí một lực lượng mạnh hơn quân Pháp gấp 3 lần, nếu kể cả lực lượng dự phòng thì gấp 5 lần, có kế hoạch phòng pháo, phòng không, chống phản kích, dự kiến các tình huống cơ bản và cách xử lý trong quá trình diễn biến chiến đấu đã được soạn và thực hành kĩ lưỡng. Đánh thắng ở Điện Biên Phủ, chúng ta sẽ phá tan kế hoạch Nava, giáng một đòn chí tử vào âm mưu mở rộng chiến tranh của bọn đế quốc Pháp - Mỹ.",
+              "char_len": 2928,
+              "word_len": 650,
+              "raw_record_index": 1500,
+              "hf_dataset": "DataStudio/Viet-wikipedia",
+              "history_score": 59,
+              "chunk_history_score": 34,
+              "doc_filter_reason": "trusted_vn_history_title",
+              "chunk_filter_reason": "trusted_title_and_historical_chunk",
+              "matched_vn_history_terms": [
+                "chiến dịch điện biên phủ",
+                "điện biên phủ",
+                "hồ chí minh"
+              ],
+              "filter_version": "phase2_v2_vn_history_doc_and_chunk_filter_2026_07",
+              "text_hash": "a594741cd88871d9",
+              "metadata": {
+                "chunk_id": "hf_wikipedia_chiến_dịch_điện_biên_phủ_0022_d990efcd5bef",
+                "metadata_version": "v4.0-final-people-location-strict",
+                "validator_signature": "phase8_v4_people_location_20260731_a",
+                "extraction_method": "hybrid",
+                "extraction_status": "ok",
+                "source_sha1": "3c4c86fd909f0dc9bd982adb11bead9319a84ca2",
+                "years": [
+                  308,
+                  312,
+                  1954
+                ],
+                "people": [],
+                "events": [
+                  "Chiến dịch Điện Biên Phủ"
+                ],
+                "locations": [
+                  "Điện Biên Phủ"
+                ],
+                "documents": [],
+                "periods": [],
+                "dynasties": [],
+                "topics": [
+                  "quân sự",
+                  "độc lập",
+                  "văn kiện"
+                ],
+                "content_facets": [
+                  "diễn biến"
+                ],
+                "rejected_items": {},
+                "quality_flags": [],
+                "extracted_at_utc": "2026-08-01T12:09:14.123601+00:00"
+              },
+              "_corpus_idx": 2387,
+              "rrf_score": 0.035821302014781814,
+              "retrieval_hits": [
+                "dense:q0@23",
+                "dense:q1@8",
+                "dense:q2@10"
+              ],
+              "best_dense_score": 0.8480696678161621,
+              "best_bm25_score": null,
+              "reranker_score": 0.35736870765686035,
+              "reranker_norm": 0.5579818487167358,
+              "rrf_norm": 0.06497196853160858,
+              "metadata_bonus": 0.055,
+              "metadata_hits": [
+                "locations=Điện Biên Phủ",
+                "intent_facet=process"
+              ],
+              "final_retrieval_score": 0.47493910789489746,
+              "source_kind": "history",
+              "claims": [
+                "Để bảo đảm nguyên tắc \"trận đầu phải thắng\", tham mưu đã bố trí một lực lượng mạnh hơn quân Pháp gấp 3 lần, nếu kể cả lực lượng dự phòng thì gấp 5 lần, có kế hoạch phòng pháo, phòng không, chống phản kích, dự kiến các tình huống cơ bản và cách xử lý trong quá trình diễn biến chiến đấu đã được soạn và thực hành kĩ lưỡng.",
+                "Đánh thắng ở Điện Biên Phủ, chúng ta sẽ phá tan kế hoạch Nava, giáng một đòn chí tử vào âm mưu mở rộng chiến tranh của bọn đế quốc Pháp - Mỹ."
+              ],
+              "comparison_target": "target_b",
+              "comparison_target_scores": {
+                "target_a": 0.0,
+                "target_b": 8.5
+              },
+              "comparison_target_reasons": {
+                "target_a": [],
+                "target_b": [
+                  "title_phrase",
+                  "text_phrase",
+                  "metadata_phrase"
+                ]
+              }
+            }
+          ]
+        },
+        "shared_evidence": [],
+        "unknown_evidence": []
+      },
+      "quality_warnings": [],
+      "structured_expansion_used": true,
+      "source_ids": [
+        "hf_wikipedia_cách_mạng_tháng_tám_0011_0a0990e1dd4c",
+        "hf_wikipedia_chiến_dịch_điện_biên_phủ_0022_d990efcd5bef"
+      ],
+      "telemetry_summary": {
+        "request_id": "smoke-9c884412-975c-4066-b145-3056f8d0490d",
+        "inference_mode": "agentic_rag",
+        "selected_inference_mode": "agentic_rag",
+        "deployment_id": "qwen3-366bb68abe95dd70",
+        "gpu": "NVIDIA L4",
+        "result": "success",
+        "failed_stage": null,
+        "failure_code": null,
+        "cold_start_included": false,
+        "total_ms": 91790.08112300001,
+        "research_attempts": 1,
+        "research_steps": 2,
+        "research_ms": 14541.035905,
+        "research_llm_calls": 1,
+        "research_json_repairs": 0,
+        "research_prefetch_used": true,
+        "research_generation_calls": 1,
+        "external_fallback_triggered": false,
+        "tool_calls": 1,
+        "tool_calls_by_type": {
+          "search_history": 1
+        },
+        "domain_gate_result": "in_domain",
+        "domain_gate_reason": "history_signal",
+        "history_anchor": 0.8972601890563965,
+        "ood_anchor": 0.8012228012084961,
+        "domain_margin": 0.09603738784790039,
+        "retrieval_skipped_due_to_ood": false,
+        "llm_calls_skipped_due_to_ood": false,
+        "retrieval_ms": 1947.748520999994,
+        "wikipedia_calls": 0,
+        "wikipedia_search_count": 0,
+        "wikipedia_fetch_count": 0,
+        "wikipedia_ms": 0.0,
+        "generic_web_calls": 0,
+        "generic_web_ms": 0.0,
+        "evidence_attempts": 1,
+        "evidence_ms": 69518.227977,
+        "evidence_candidate_count": 6,
+        "evidence_candidate_count_raw": 8,
+        "evidence_candidate_count_model_visible": 6,
+        "evidence_dropped_for_budget_count": 2,
+        "evidence_dropped_ids": [
+          "hf_wikipedia_tháng_tám_0000_12cefd872fa7",
+          "hf_wikipedia_vòng_vây_điện_biên_phủ_0011_2b969dbe8357"
+        ],
+        "evidence_source_kind_counts_raw": {
+          "history": 8
+        },
+        "evidence_source_kind_counts_visible": {
+          "history": 6
+        },
+        "external_evidence_collected_count": 0,
+        "external_evidence_model_visible_count": 0,
+        "external_evidence_selected_count": 0,
+        "external_evidence_rejected_count": 0,
+        "external_evidence_rejection_reasons": {},
+        "evidence_selected_count": 2,
+        "evidence_generation_calls": 1,
+        "evidence_relevance_guard_triggered": true,
+        "evidence_reconsideration_used": false,
+        "evidence_coverage_guard_triggered": true,
+        "evidence_recovery_used": true,
+        "evidence_repair_used": false,
+        "evidence_rebucket_attempted": false,
+        "evidence_rebucket_succeeded": false,
+        "evidence_rebucket_moved_claim_count": 0,
+        "evidence_rebucket_destination_ids": [],
+        "evidence_final_validation_result": "pass",
+        "comparison_targets": [
+          "Cách mạng Tháng Tám",
+          "chiến thắng Điện Biên Phủ"
+        ],
+        "target_a_candidate_count": 7,
+        "target_b_candidate_count": 8,
+        "target_a_model_visible_count": 6,
+        "target_b_model_visible_count": 6,
+        "comparison_target_coverage": {
+          "Cách mạng Tháng Tám": true,
+          "chiến thắng Điện Biên Phủ": true
+        },
+        "evidence_first_pass_latency_ms": 69352.305373,
+        "evidence_guard_latency_ms": 70.25580499998796,
+        "evidence_reconsideration_latency_ms": 0.0,
+        "duplicate_inspect_skipped": true,
+        "wikipedia_query": null,
+        "wikipedia_candidate_titles": [],
+        "wikipedia_selected_title": null,
+        "wikipedia_year_conflict_rejections": 0,
+        "history_ms": 7515.356257999997,
+        "history_generation_calls": 1,
+        "history_input_evidence_count": 2,
+        "history_input_claim_count": 4,
+        "history_input_source_kind_counts": {
+          "history": 2
+        },
+        "research_latency_ms": 14541.035905,
+        "history_latency_ms": 7515.356257999997,
+        "total_latency_ms": 91790.13702499999,
+        "total_llm_calls": 3,
+        "per_role_latency_ms": {
+          "research": 12536.37511,
+          "evidence": 69255.09645,
+          "history": 7485.802445000018
+        },
+        "total_input_tokens": 9132,
+        "total_output_tokens": 718,
+        "average_generation_tokens_per_sec": 7.743552158743698,
+        "peak_allocated_vram_gb": 7.831674575805664
+      }
+    },
+    {
+      "question": "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+      "mode": "hybrid_rag",
+      "status": "success",
+      "failure": null,
+      "answer_preview": "Chiến thắng Bạch Đằng năm 938 giúp chấm dứt 1000 năm Bắc thuộc trong lịch sử Việt Nam, mở ra thời kỳ độc lập tự chủ. Ngô Quyền đánh tan quân Nam Hán, kết thúc âm mưu xâm lược Tĩnh Hải quân của nhà Nam Hán và đặt dấu chấm hết cho thời kỳ Bắc thuộc.",
+      "answer_length_chars": 247,
+      "answer_length_words": 56,
+      "evidence_validation": null,
+      "history_called": true,
+      "answer_depth": "standard",
+      "research_calls": 0,
+      "evidence_calls": 0,
+      "evidence_reconsideration": false,
+      "history_calls": 1,
+      "research_latency_ms": 0.0,
+      "evidence_first_pass_latency_ms": 0.0,
+      "evidence_guard_latency_ms": 0.0,
+      "evidence_reconsideration_latency_ms": 0.0,
+      "history_latency_ms": 22727.743766000003,
+      "total_latency_ms": 24305.55559300001,
+      "history_input_evidence_count": 6,
+      "history_input_claim_count": 0,
+      "comparison_targets": null,
+      "comparison_target_coverage": null,
+      "comparison_target_map": null,
+      "target_a_selected_evidence": null,
+      "target_b_selected_evidence": null,
+      "shared_selected_evidence": null,
+      "unknown_selected_evidence": null,
+      "comparison_evidence_groups": {},
+      "quality_warnings": [],
+      "structured_expansion_used": false,
+      "source_ids": [
+        "hf_wikipedia_trận_bạch_đằng_938_0002_d5f8e1eedf68",
+        "hf_wikipedia_trận_bạch_đằng_938_0003_cf59d98b5f8d",
+        "hf_wikipedia_ngô_quyền_0001_c00ce6aaa0d9"
+      ],
+      "telemetry_summary": {
+        "request_id": "smoke-0bfd8d92-aa65-4246-a55d-f76e21cd5b8c",
+        "inference_mode": "hybrid_rag",
+        "selected_inference_mode": "hybrid_rag",
+        "deployment_id": "qwen3-366bb68abe95dd70",
+        "gpu": "NVIDIA L4",
+        "result": "success",
+        "failed_stage": null,
+        "failure_code": null,
+        "cold_start_included": false,
+        "total_ms": 24305.516632000006,
+        "research_attempts": 0,
+        "research_steps": 0,
+        "research_ms": 0.0,
+        "research_llm_calls": 0,
+        "research_json_repairs": 0,
+        "research_prefetch_used": false,
+        "research_generation_calls": 0,
+        "external_fallback_triggered": false,
+        "tool_calls": 0,
+        "tool_calls_by_type": {},
+        "domain_gate_result": "in_domain",
+        "domain_gate_reason": "history_signal",
+        "history_anchor": 0.8074384927749634,
+        "ood_anchor": 0.7538542747497559,
+        "domain_margin": 0.05358421802520752,
+        "retrieval_skipped_due_to_ood": false,
+        "llm_calls_skipped_due_to_ood": false,
+        "retrieval_ms": 1566.5253069999778,
+        "wikipedia_calls": 0,
+        "wikipedia_search_count": 0,
+        "wikipedia_fetch_count": 0,
+        "wikipedia_ms": 0.0,
+        "generic_web_calls": 0,
+        "generic_web_ms": 0.0,
+        "evidence_attempts": 0,
+        "evidence_ms": 0.0,
+        "evidence_candidate_count": 0,
+        "evidence_candidate_count_raw": 0,
+        "evidence_candidate_count_model_visible": 0,
+        "evidence_dropped_for_budget_count": 0,
+        "evidence_dropped_ids": [],
+        "evidence_source_kind_counts_raw": {},
+        "evidence_source_kind_counts_visible": {},
+        "external_evidence_collected_count": 0,
+        "external_evidence_model_visible_count": 0,
+        "external_evidence_selected_count": 0,
+        "external_evidence_rejected_count": 0,
+        "external_evidence_rejection_reasons": {},
+        "evidence_selected_count": 0,
+        "evidence_generation_calls": 0,
+        "evidence_relevance_guard_triggered": false,
+        "evidence_reconsideration_used": false,
+        "evidence_coverage_guard_triggered": false,
+        "evidence_recovery_used": false,
+        "evidence_repair_used": false,
+        "evidence_rebucket_attempted": false,
+        "evidence_rebucket_succeeded": false,
+        "evidence_rebucket_moved_claim_count": 0,
+        "evidence_rebucket_destination_ids": [],
+        "evidence_final_validation_result": null,
+        "comparison_targets": [],
+        "target_a_candidate_count": 0,
+        "target_b_candidate_count": 0,
+        "target_a_model_visible_count": 0,
+        "target_b_model_visible_count": 0,
+        "comparison_target_coverage": {},
+        "evidence_first_pass_latency_ms": 0.0,
+        "evidence_guard_latency_ms": 0.0,
+        "evidence_reconsideration_latency_ms": 0.0,
+        "duplicate_inspect_skipped": false,
+        "wikipedia_query": null,
+        "wikipedia_candidate_titles": [],
+        "wikipedia_selected_title": null,
+        "wikipedia_year_conflict_rejections": 0,
+        "history_ms": 22727.743766000003,
+        "history_generation_calls": 1,
+        "history_input_evidence_count": 6,
+        "history_input_claim_count": 0,
+        "history_input_source_kind_counts": {
+          "hf_wikipedia": 6
+        },
+        "research_latency_ms": 0.0,
+        "history_latency_ms": 22727.743766000003,
+        "total_latency_ms": 24305.55559300001,
+        "total_llm_calls": 1,
+        "per_role_latency_ms": {
+          "research": 0,
+          "evidence": 0,
+          "history": 22673.29158300001
+        },
+        "total_input_tokens": 5714,
+        "total_output_tokens": 175,
+        "average_generation_tokens_per_sec": 7.718332354143568,
+        "peak_allocated_vram_gb": 7.856698036193848
+      }
+    }
+  ]
+}

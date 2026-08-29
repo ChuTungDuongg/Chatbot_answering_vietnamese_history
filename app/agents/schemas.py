@@ -123,6 +123,11 @@ class EvidenceCritique(BaseModel):
     target_a_model_visible_count: int = 0
     target_b_model_visible_count: int = 0
     comparison_target_coverage: dict[str, bool] = Field(default_factory=dict)
+    comparison_target_map: dict[str, str] = Field(default_factory=dict)
+    target_a_selected_evidence: list[str] = Field(default_factory=list)
+    target_b_selected_evidence: list[str] = Field(default_factory=list)
+    shared_selected_evidence: list[str] = Field(default_factory=list)
+    unknown_selected_evidence: list[str] = Field(default_factory=list)
     generation_calls: int = 0
     repair_used: bool = False
     repair_path: str | None = None

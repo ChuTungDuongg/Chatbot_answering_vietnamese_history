@@ -285,9 +285,231 @@ def test_deep_compare_short_unstructured_answer_expands_from_both_targets():
 
     assert result["structured_expansion_used"] is True
     assert "Khái quát" in result["answer"]
-    assert "Điểm khác nhau - Cách mạng Tháng Tám" in result["answer"]
-    assert "Điểm khác nhau - chiến thắng Điện Biên Phủ" in result["answer"]
+    assert "- Cách mạng Tháng Tám:" in result["answer"]
+    assert "- chiến thắng Điện Biên Phủ:" in result["answer"]
     assert set(result["source_ids"]) == {"ev_august", "ev_dien_bien"}
+
+
+def test_compare_target_b_claim_is_not_rendered_under_target_a_section():
+    b_claim = "Để bảo đảm nguyên tắc 'trận đầu phải thắng', tham mưu đã bố trí một lực lượng mạnh hơn quân Pháp."
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_august] [ev_dien_bien]\n\n"
+        "Trả lời:\nHai sự kiện có thể so sánh, nhưng câu trả lời này còn quá ngắn."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {
+                "chunk_id": "ev_august",
+                "title": "Cách mạng Tháng Tám",
+                "text": "Cách mạng Tháng Tám năm 1945 là cuộc khởi nghĩa giành chính quyền.",
+                "claims": ["Cách mạng Tháng Tám năm 1945 là cuộc khởi nghĩa giành chính quyền."],
+                "comparison_target": "target_a",
+            },
+            {
+                "chunk_id": "ev_dien_bien",
+                "title": "Chiến dịch Điện Biên Phủ",
+                "text": b_claim,
+                "claims": [b_claim],
+                "comparison_target": "target_b",
+            },
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    target_a_section = result["answer"].split("- chiến thắng Điện Biên Phủ:", 1)[0]
+    assert result["structured_expansion_used"] is True
+    assert b_claim not in target_a_section
+    assert b_claim in result["answer"].split("- chiến thắng Điện Biên Phủ:", 1)[1]
+    assert result["history_debug"]["comparison_evidence_groups"]["target_b"]["evidence"][0]["chunk_id"] == "ev_dien_bien"
+
+
+def test_compare_target_a_claim_is_not_rendered_under_target_b_section():
+    a_claim = "Cách mạng Tháng Tám năm 1945 giành chính quyền và lập nên nước Việt Nam Dân chủ Cộng hòa."
+    b_claim = "Chiến thắng Điện Biên Phủ năm 1954 buộc Pháp ký Hiệp định Genève."
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_august] [ev_dien_bien]\n\n"
+        "Trả lời:\nHai sự kiện khác nhau về tính chất."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {"chunk_id": "ev_august", "title": "Cách mạng Tháng Tám", "text": a_claim, "claims": [a_claim], "comparison_target": "target_a"},
+            {"chunk_id": "ev_dien_bien", "title": "Chiến thắng Điện Biên Phủ", "text": b_claim, "claims": [b_claim], "comparison_target": "target_b"},
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    target_b_section = result["answer"].split("- chiến thắng Điện Biên Phủ:", 1)[1]
+    assert a_claim not in target_b_section
+    assert b_claim in target_b_section
+
+
+def test_compare_shared_evidence_can_support_similarity_section():
+    shared_claim = "Hai sự kiện đều được nêu là mốc có ý nghĩa chiến lược trong lịch sử Việt Nam."
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_shared]\n\nTrả lời:\nSo sánh còn ngắn."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {
+                "chunk_id": "ev_shared",
+                "title": "Tổng kết lịch sử Việt Nam",
+                "text": shared_claim,
+                "claims": [shared_claim],
+                "comparison_target": "shared",
+            },
+            {
+                "chunk_id": "ev_august",
+                "title": "Cách mạng Tháng Tám",
+                "text": "Cách mạng Tháng Tám năm 1945 giành chính quyền.",
+                "claims": ["Cách mạng Tháng Tám năm 1945 giành chính quyền."],
+                "comparison_target": "target_a",
+            },
+            {
+                "chunk_id": "ev_dien_bien",
+                "title": "Điện Biên Phủ",
+                "text": "Điện Biên Phủ năm 1954 là thắng lợi quân sự.",
+                "claims": ["Điện Biên Phủ năm 1954 là thắng lợi quân sự."],
+                "comparison_target": "target_b",
+            },
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    similarity_section = result["answer"].split("Điểm khác nhau", 1)[0]
+    assert shared_claim in similarity_section
+    assert "ev_shared" in result["source_ids"]
+
+
+def test_compare_unknown_evidence_is_not_force_assigned_to_either_target():
+    unknown_claim = "Một tài liệu phụ nói về bối cảnh khu vực nhưng không nêu rõ sự kiện nào."
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_august] [ev_dien_bien] [ev_unknown]\n\n"
+        "Trả lời:\nSo sánh quá ngắn."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {"chunk_id": "ev_august", "title": "Cách mạng Tháng Tám", "text": "Cách mạng Tháng Tám năm 1945 giành chính quyền.", "comparison_target": "target_a"},
+            {"chunk_id": "ev_dien_bien", "title": "Điện Biên Phủ", "text": "Điện Biên Phủ năm 1954 là thắng lợi quân sự.", "comparison_target": "target_b"},
+            {"chunk_id": "ev_unknown", "title": "Bối cảnh", "text": unknown_claim, "claims": [unknown_claim], "comparison_target": "unknown"},
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    assert unknown_claim not in result["answer"]
+    assert "ev_unknown" not in result["source_ids"]
+    assert result["history_debug"]["comparison_evidence_groups"]["unknown_evidence"][0]["chunk_id"] == "ev_unknown"
+
+
+def test_compare_similarity_section_requires_shared_or_two_sided_support():
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_august] [ev_dien_bien]\n\nTrả lời:\nSo sánh ngắn."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {"chunk_id": "ev_august", "title": "Cách mạng Tháng Tám", "text": "Cách mạng Tháng Tám năm 1945 giành chính quyền.", "comparison_target": "target_a"},
+            {"chunk_id": "ev_dien_bien", "title": "Điện Biên Phủ", "text": "Điện Biên Phủ năm 1954 là thắng lợi quân sự.", "comparison_target": "target_b"},
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    similarity_section = result["answer"].split("Điểm khác nhau", 1)[0]
+    assert "chưa nêu một điểm giống nhau đủ rõ cho cả hai đối tượng" in similarity_section
+
+
+def test_compare_one_sided_claim_is_not_duplicated_across_target_sections():
+    claim = "Chiến thắng Điện Biên Phủ năm 1954 buộc Pháp ký Hiệp định Genève."
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_august] [ev_dien_bien]\n\nTrả lời:\nSo sánh ngắn."
+    )
+
+    result = HistoryAnswererAgent(model_runtime=runtime).answer(
+        question="So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
+        contexts=[
+            {"chunk_id": "ev_august", "title": "Cách mạng Tháng Tám", "text": "Cách mạng Tháng Tám năm 1945 giành chính quyền.", "comparison_target": "target_a"},
+            {"chunk_id": "ev_dien_bien", "title": "Điện Biên Phủ", "text": claim, "claims": [claim], "comparison_target": "target_b"},
+        ],
+        analysis={"facets": ["compare"]},
+        tool_trace=[],
+        answer_depth="deep",
+    )
+
+    assert result["answer"].count(claim) == 1
+    assert set(result["source_ids"]) == {"ev_august", "ev_dien_bien"}
+
+
+def test_hybrid_generic_source_prefix_is_removed_when_enabled():
+    runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_relevant]\n\n"
+        "Trả lời:\nTheo tài liệu, chiến thắng Bạch Đằng năm 938 có ý nghĩa lớn."
+    )
+
+    result = _answer(
+        HistoryAnswererAgent(model_runtime=runtime),
+        contexts=_contexts(),
+    )
+    direct = HistoryAnswererAgent(model_runtime=FakeHistoryRuntime(runtime.output)).answer(
+        question="Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+        contexts=_contexts(),
+        analysis={"facets": ["significance"]},
+        tool_trace=[],
+        answer_depth="standard",
+        avoid_generic_source_prefix=True,
+    )
+
+    assert result["answer"].startswith("Theo tài liệu")
+    assert direct["answer"] == "chiến thắng Bạch Đằng năm 938 có ý nghĩa lớn."
+    assert direct["source_ids"] == ["ev_relevant"]
+
+
+def test_hybrid_direct_opening_and_named_source_attribution_are_preserved():
+    direct_runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_relevant]\n\n"
+        "Trả lời:\nChiến thắng Bạch Đằng năm 938 có ý nghĩa lớn."
+    )
+    named_runtime = FakeHistoryRuntime(
+        "Nguồn được dùng: [ev_relevant]\n\n"
+        "Trả lời:\nTheo Đại Việt sử ký Toàn thư, Ngô Quyền cho đóng cọc trên sông."
+    )
+
+    direct = HistoryAnswererAgent(model_runtime=direct_runtime).answer(
+        question="Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
+        contexts=_contexts(),
+        analysis={"facets": ["significance"]},
+        tool_trace=[],
+        avoid_generic_source_prefix=True,
+    )
+    named = HistoryAnswererAgent(model_runtime=named_runtime).answer(
+        question="Ngô Quyền chuẩn bị trận Bạch Đằng như thế nào?",
+        contexts=_contexts(),
+        analysis={"facets": ["process"]},
+        tool_trace=[],
+        avoid_generic_source_prefix=True,
+    )
+
+    assert direct["answer"] == "Chiến thắng Bạch Đằng năm 938 có ý nghĩa lớn."
+    assert named["answer"].startswith("Theo Đại Việt sử ký Toàn thư")
+    assert direct["source_ids"] == ["ev_relevant"]
+    assert named["source_ids"] == ["ev_relevant"]
 
 
 def test_no_selected_evidence_is_an_explicit_guard_not_a_model_output():

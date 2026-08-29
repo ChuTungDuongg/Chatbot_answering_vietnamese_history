@@ -146,7 +146,11 @@ def test_compare_coverage_deterministically_adds_missing_target_without_retry():
         "Cách mạng Tháng Tám": True,
         "chiến thắng Điện Biên Phủ": True,
     }
+    assert critique.comparison_target_map == {A_ID: "target_a", B_ID: "target_b"}
+    assert critique.target_a_selected_evidence == [A_ID]
+    assert critique.target_b_selected_evidence == [B_ID]
     assert [context["chunk_id"] for context in contexts] == [A_ID, B_ID]
+    assert [context["comparison_target"] for context in contexts] == ["target_a", "target_b"]
 
 
 def test_compare_parse_failure_uses_source_local_deterministic_evidence():
@@ -255,6 +259,39 @@ def test_compare_guard_replaces_incidental_both_sides_with_title_matched_targets
         "Cách mạng Tháng Tám": True,
         "chiến thắng Điện Biên Phủ": True,
     }
+
+
+def test_compare_guard_replaces_navigation_heavy_target_chunk():
+    noisy_claim = (
+        "Xem thêm Tổng khởi nghĩa Hà Nội Chú thích Tham khảo Liên kết ngoài "
+        "Những sự thật về Cách mạng Tháng Tám."
+    )
+    clean_a = "Cách mạng Tháng Tám năm 1945 là cuộc khởi nghĩa giành chính quyền."
+    runtime = FakeEvidenceModel([{
+        "status": "sufficient",
+        "selected_evidence": [
+            {"evidence_id": "ev_august_noisy", "relevance": 0.8, "claims": [noisy_claim], "compressed_text": noisy_claim},
+            {"evidence_id": B_ID, "relevance": 1.0, "claims": [B_CLAIM], "compressed_text": B_CLAIM},
+        ],
+        "conflicts": [],
+        "missing_information": [],
+        "summary": "Có hai phía.",
+    }])
+
+    critique, contexts = EvidenceCriticAgent(model_runtime=runtime).compress(
+        QUESTION,
+        [
+            {"chunk_id": "ev_august_noisy", "title": "Cách mạng Tháng Tám", "text": noisy_claim, "source_kind": "history", "final_retrieval_score": 0.8},
+            {"chunk_id": A_ID, "title": "Cách mạng Tháng Tám", "text": clean_a, "source_kind": "history", "final_retrieval_score": 0.7},
+            {"chunk_id": B_ID, "title": "Chiến thắng Điện Biên Phủ", "text": B_CLAIM, "source_kind": "history", "final_retrieval_score": 0.7},
+        ],
+        final_k=4,
+    )
+
+    assert critique.repair_path == "deterministic_semantic_guard"
+    assert A_ID in critique.selected_ids
+    assert "ev_august_noisy" not in critique.selected_ids
+    assert [context["comparison_target"] for context in contexts] == ["target_a", "target_b"]
 
 
 def test_compare_claim_recovery_uses_exact_source_local_spans():

@@ -204,6 +204,7 @@ class HybridRAGOrchestrator:
             history=None,
             request_id=request_id,
             answer_depth="standard",
+            avoid_generic_source_prefix=True,
         )
         result["inference_mode"] = "hybrid_rag"
         result["agentic"] = False
@@ -417,6 +418,11 @@ class AgentOrchestrator:
             "target_a_model_visible_count": critique.target_a_model_visible_count,
             "target_b_model_visible_count": critique.target_b_model_visible_count,
             "comparison_target_coverage": critique.comparison_target_coverage,
+            "comparison_target_map": critique.comparison_target_map,
+            "target_a_selected_evidence": critique.target_a_selected_evidence,
+            "target_b_selected_evidence": critique.target_b_selected_evidence,
+            "shared_selected_evidence": critique.shared_selected_evidence,
+            "unknown_selected_evidence": critique.unknown_selected_evidence,
             "rebucket_attempted": (
                 telemetry.evidence_rebucket_attempted if telemetry is not None else False
             ),
@@ -489,6 +495,11 @@ class AgentOrchestrator:
             "evidence_final_validation_issues": critique.final_validation_issues,
             "comparison_targets": critique.comparison_targets,
             "comparison_target_coverage": critique.comparison_target_coverage,
+            "comparison_target_map": critique.comparison_target_map,
+            "target_a_selected_evidence": critique.target_a_selected_evidence,
+            "target_b_selected_evidence": critique.target_b_selected_evidence,
+            "shared_selected_evidence": critique.shared_selected_evidence,
+            "unknown_selected_evidence": critique.unknown_selected_evidence,
             "external_evidence_collected_count": telemetry.external_evidence_collected_count if telemetry is not None else 0,
             "external_evidence_model_visible_count": telemetry.external_evidence_model_visible_count if telemetry is not None else 0,
             "external_evidence_selected_count": telemetry.external_evidence_selected_count if telemetry is not None else 0,

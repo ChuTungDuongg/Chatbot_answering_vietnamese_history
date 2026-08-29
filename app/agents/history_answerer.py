@@ -12,12 +12,28 @@ from app.agents.history_contract import (
     parse_history_answer_output,
 )
 from app.agents.model_runtime import RoleLLMBackend
+from app.agents.comparison import (
+    SHARED,
+    TARGET_A,
+    TARGET_B,
+    UNKNOWN,
+    classify_comparison_target,
+    group_comparison_evidence,
+)
 from app.rag.retrieval import extract_comparison_targets, text_matches_target
 from app.telemetry import current_request_telemetry, log_event
 
 WORD_RE = re.compile(r"[0-9A-Za-zÀ-ỹĐđ]+")
 YEAR_RE = re.compile(r"(?<!\d)(\d{3,4})(?!\d)")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
+GENERIC_SOURCE_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"theo\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
+    r"|dựa\s+trên\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
+    r"|từ\s+(?:các\s+)?(?:tài liệu|nguồn)(?:\s+(?:được cung cấp|tham khảo))?"
+    r")\s*,\s*",
+    re.I,
+)
 HISTORY_STOPWORDS = {
     "ai", "bao", "bi", "cai", "cho", "co", "cua", "da", "duoc", "gi",
     "khi", "la", "mot", "nam", "nao", "nhu", "nhung", "o", "ra", "sau",
@@ -94,6 +110,10 @@ def _candidate_sentences(text: str) -> list[str]:
     return sentences
 
 
+def _remove_generic_source_prefix(answer: str) -> str:
+    return GENERIC_SOURCE_PREFIX_RE.sub("", str(answer), count=1)
+
+
 def _context_source_kind(context: dict[str, Any]) -> str:
     value = str(context.get("source_kind") or context.get("source_type") or "history").strip().lower()
     if value in {"local", "history"}:
@@ -163,7 +183,7 @@ def _deep_answer_quality_issues(
     issues: list[str] = []
     question_type = _history_question_type(question)
     validated_claim_count = _history_input_claim_count(contexts)
-    breadth = validated_claim_count or len(contexts)
+    breadth = max(validated_claim_count, len(contexts))
     sentence_count = _sentence_count(answer)
     answer_is_short = len(answer) < 520
     if question_type == "compare":
@@ -227,6 +247,105 @@ def _deep_evidence_claims(
     return claims
 
 
+def _comparison_evidence_groups(question: str, contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    annotated: list[dict[str, Any]] = []
+    for context in contexts:
+        item = dict(context)
+        label = str(item.get("comparison_target") or "").strip()
+        if label not in {TARGET_A, TARGET_B, SHARED, UNKNOWN}:
+            label = classify_comparison_target(question, item).label
+            item["comparison_target"] = label
+        annotated.append(item)
+    return group_comparison_evidence(question, annotated)
+
+
+def _claims_for_context(context: dict[str, Any]) -> list[str]:
+    claims = _context_claims(context)
+    if claims:
+        return list(dict.fromkeys(claims))
+    return _candidate_sentences(str(context.get("text") or ""))[:2]
+
+
+def _claim_lines(items: list[dict[str, Any]], *, max_claims_per_evidence: int = 2) -> list[tuple[str, str]]:
+    lines: list[tuple[str, str]] = []
+    seen_claims: set[str] = set()
+    for context in items:
+        evidence_id = str(context.get("chunk_id") or "").strip()
+        if not evidence_id:
+            continue
+        for claim in _claims_for_context(context)[:max_claims_per_evidence]:
+            claim = claim.strip()
+            key = _normalize_text(claim)
+            if not claim or key in seen_claims:
+                continue
+            seen_claims.add(key)
+            lines.append((evidence_id, claim))
+    return lines
+
+
+def _expand_deep_compare_answer_from_evidence(
+    question: str,
+    contexts: list[dict[str, Any]],
+) -> tuple[str, list[str]] | None:
+    groups = _comparison_evidence_groups(question, contexts)
+    if not groups:
+        return None
+
+    target_a_name = groups[TARGET_A]["name"]
+    target_b_name = groups[TARGET_B]["name"]
+    target_a_claims = _claim_lines(groups[TARGET_A]["evidence"])
+    target_b_claims = _claim_lines(groups[TARGET_B]["evidence"])
+    shared_claims = _claim_lines(groups["shared_evidence"])
+    if not target_a_claims and not target_b_claims and not shared_claims:
+        return None
+
+    used_source_ids: list[str] = []
+
+    def remember(claims: list[tuple[str, str]]) -> None:
+        used_source_ids.extend(evidence_id for evidence_id, _ in claims)
+
+    lines = [
+        "Khái quát",
+        f"{target_a_name} và {target_b_name} cần được đặt cạnh nhau theo đúng nhóm bằng chứng đã kiểm chứng.",
+        "",
+        "Điểm giống nhau",
+    ]
+    if shared_claims:
+        lines.extend(f"- {claim}" for _, claim in shared_claims)
+        remember(shared_claims)
+    else:
+        lines.append(
+            "- Các bằng chứng đã chọn chưa nêu một điểm giống nhau đủ rõ cho cả hai đối tượng; phần so sánh chắc hơn nằm ở các khác biệt được chứng cứ riêng hỗ trợ."
+        )
+
+    lines.extend(["", "Điểm khác nhau"])
+    if target_a_claims:
+        lines.append(f"- {target_a_name}:")
+        lines.extend(f"  - {claim}" for _, claim in target_a_claims)
+        remember(target_a_claims)
+    if target_b_claims:
+        lines.append(f"- {target_b_name}:")
+        lines.extend(f"  - {claim}" for _, claim in target_b_claims)
+        remember(target_b_claims)
+
+    if not target_a_claims or not target_b_claims:
+        missing = target_a_name if not target_a_claims else target_b_name
+        lines.append(f"- Bằng chứng riêng cho {missing} còn thiếu hoặc chưa đủ chắc để đối chiếu thêm chiều cạnh.")
+
+    lines.extend(["", "Nhận xét"])
+    if target_a_claims and target_b_claims:
+        lines.append(
+            f"Các nguồn cho phép so sánh trực tiếp ở phần khác nhau: {target_a_name} được mô tả bằng các dữ kiện riêng của nó, còn {target_b_name} được mô tả bằng một nhóm dữ kiện khác; vì vậy không được hoán đổi hoặc lặp một claim một phía sang phía còn lại."
+        )
+    else:
+        lines.append(
+            "Nhận xét nên giữ mức thận trọng vì nhóm bằng chứng hiện có chưa cân bằng hoàn toàn giữa hai đối tượng."
+        )
+
+    source_ids = list(dict.fromkeys(used_source_ids))
+    return "\n".join(lines), source_ids
+
+
 def _expand_deep_answer_from_evidence(
     question: str,
     contexts: list[dict[str, Any]],
@@ -235,30 +354,12 @@ def _expand_deep_answer_from_evidence(
     question_type = _history_question_type(question)
     if question_type not in {"analysis", "compare"} or len(current_answer) >= 620:
         return None
+    if question_type == "compare":
+        return _expand_deep_compare_answer_from_evidence(question, contexts)
     claims = _deep_evidence_claims(question, contexts)
     if len(claims) < 2:
         return None
     selected_ids = list(dict.fromkeys(evidence_id for evidence_id, _ in claims))
-    if question_type == "compare":
-        targets = extract_comparison_targets(question)
-        lines = ["Khái quát"]
-        lines.append("Các nguồn cung cấp dữ kiện riêng cho từng đối tượng cần so sánh.")
-        if len(targets) >= 2:
-            for target in targets[:2]:
-                target_claims = [
-                    claim
-                    for evidence_id, claim in claims
-                    if text_matches_target(
-                        f"{claim} {next((context.get('title') for context in contexts if context.get('chunk_id') == evidence_id), '')}",
-                        target,
-                    )
-                ]
-                if target_claims:
-                    lines.append(f"\nĐiểm khác nhau - {target}")
-                    lines.extend(f"- {claim}" for claim in target_claims)
-        lines.append("\nNhận xét")
-        lines.append("Có thể so sánh hai sự kiện từ các dữ kiện riêng này: mỗi nguồn làm rõ một mặt của bối cảnh, kết quả hoặc ý nghĩa lịch sử.")
-        return "\n".join(lines), selected_ids
 
     lines = ["Kết luận trực tiếp"]
     lines.append(claims[0][1])
@@ -374,6 +475,7 @@ class HistoryAnswererAgent:
         history: list[dict[str, str]] | None = None,
         request_id: str | None = None,
         answer_depth: str = "standard",
+        avoid_generic_source_prefix: bool = False,
     ) -> dict[str, Any]:
         del history  # History SFT has no conversation-history input.
         started = time.perf_counter()
@@ -463,6 +565,7 @@ class HistoryAnswererAgent:
             question,
             contexts,
             answer_depth=answer_depth,
+            avoid_generic_source_prefix=avoid_generic_source_prefix,
         )
         raw_output = self.model_runtime.generate_text(
             adapter="history",
@@ -483,7 +586,11 @@ class HistoryAnswererAgent:
             if answer_depth == "deep" and "deep_answer_collapse" in initial_quality_issues
             else None
         )
-        answer_text = parsed.answer
+        answer_text = (
+            _remove_generic_source_prefix(parsed.answer)
+            if avoid_generic_source_prefix
+            else parsed.answer
+        )
         source_ids = parsed.source_ids
         structured_expansion_used = False
         if structured_expansion is not None:
@@ -569,9 +676,17 @@ class HistoryAnswererAgent:
                         "evidence_id": str(item["chunk_id"]),
                         "text_preview": str(item.get("text") or "")[:220],
                         "claim_count": len(_context_claims(item)),
+                        **(
+                            {"comparison_target": item.get("comparison_target")}
+                            if item.get("comparison_target")
+                            else {}
+                        ),
                     }
                     for item in contexts
                 ],
+                "comparison_evidence_groups": _comparison_evidence_groups(question, contexts)
+                if question_type == "compare"
+                else {},
                 "cited_ids": source_ids,
                 "model_cited_ids": parsed.source_ids,
                 "conversation_history_used": False,

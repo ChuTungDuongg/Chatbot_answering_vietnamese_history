@@ -4,6 +4,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.comparison import (
+    TARGET_A,
+    TARGET_B,
+    group_comparison_evidence,
+)
 from app.rag.retrieval import extract_comparison_targets
 
 
@@ -108,8 +113,11 @@ def _deep_depth_instruction(question: str) -> str:
     if question_type == "compare":
         return (
             "\n\nYêu cầu độ sâu (answer_depth=deep):\n"
-            "Trả lời theo hướng so sánh sâu nếu bằng chứng cho phép. Có thể dùng các mục "
-            "\"khái quát\", \"điểm giống nhau\", \"điểm khác nhau\" và \"nhận xét\"; "
+            "Trả lời theo hướng so sánh sâu nếu bằng chứng cho phép, theo các mục "
+            "\"khái quát\", \"điểm giống nhau\", \"điểm khác nhau\" và \"nhận xét\". "
+            "Nếu thông điệp có Bản đồ bằng chứng so sánh, phải giữ đúng nhóm target_a/target_b/shared/unknown. "
+            "Không đưa dữ kiện chỉ thuộc target_b vào phần riêng của target_a, hoặc ngược lại. "
+            "Chỉ nêu điểm giống nhau khi có bằng chứng shared hoặc có bằng chứng riêng hỗ trợ cho cả hai target; "
             "trong phần khác nhau, chỉ nêu các chiều cạnh được tài liệu hỗ trợ như bối cảnh, "
             "mục tiêu/tính chất, lực lượng/đối phương, phương thức/quy mô, kết quả hoặc ý nghĩa. "
             "Phải tổng hợp bằng chứng của cả hai đối tượng; Evidence chỉ cung cấp dữ kiện riêng từng nguồn, "
@@ -150,11 +158,45 @@ def _canonical_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, str]]:
     return canonical
 
 
+def _comparison_group_instruction(question: str, evidence: list[dict[str, Any]]) -> str:
+    groups = group_comparison_evidence(question, evidence)
+    if not groups:
+        return ""
+
+    def ids(items: list[dict[str, Any]]) -> str:
+        values = [
+            str(item.get("chunk_id") or item.get("evidence_id") or "").strip()
+            for item in items
+            if str(item.get("chunk_id") or item.get("evidence_id") or "").strip()
+        ]
+        return ", ".join(f"[{value}]" for value in values) if values else "không có"
+
+    return (
+        "\n\nBản đồ bằng chứng so sánh:\n"
+        f"- target_a ({groups[TARGET_A]['name']}): {ids(groups[TARGET_A]['evidence'])}\n"
+        f"- target_b ({groups[TARGET_B]['name']}): {ids(groups[TARGET_B]['evidence'])}\n"
+        f"- shared: {ids(groups['shared_evidence'])}\n"
+        f"- unknown: {ids(groups['unknown_evidence'])}\n"
+        "Quy tắc: bằng chứng target_a chỉ dùng cho phần riêng của target_a; target_b chỉ dùng cho phần riêng của target_b; "
+        "shared có thể dùng cho điểm giống nhau; unknown không được ép gán cho target nào."
+    )
+
+
+def _natural_opening_instruction() -> str:
+    return (
+        "\n\nYêu cầu văn phong:\n"
+        "Trả lời trực tiếp bằng tiếng Việt tự nhiên. Không mở đầu bằng các cụm chung chung như "
+        "\"Theo tài liệu\", \"Theo các tài liệu\", \"Dựa trên tài liệu được cung cấp\" hoặc "
+        "\"Dựa trên các nguồn được cung cấp\". Vẫn giữ nguyên cách dẫn nguồn lịch sử có tên riêng khi tài liệu nêu rõ."
+    )
+
+
 def build_history_answerer_user_text(
     question: str,
     evidence: list[dict[str, Any]],
     *,
     answer_depth: str = "standard",
+    avoid_generic_source_prefix: bool = False,
 ) -> str:
     """Render the exact user-message structure used by canonical History SFT."""
     question = str(question).strip()
@@ -172,7 +214,16 @@ def build_history_answerer_user_text(
     depth_instruction = ""
     if answer_depth == "deep":
         depth_instruction = _deep_depth_instruction(question)
-    return f"{QUESTION_PREFIX}\n{question}{depth_instruction}\n\n{REFERENCES_PREFIX}\n{references}"
+    comparison_instruction = (
+        _comparison_group_instruction(question, evidence)
+        if answer_depth == "deep" and len(extract_comparison_targets(question)) >= 2
+        else ""
+    )
+    style_instruction = _natural_opening_instruction() if avoid_generic_source_prefix else ""
+    return (
+        f"{QUESTION_PREFIX}\n{question}{depth_instruction}{comparison_instruction}{style_instruction}"
+        f"\n\n{REFERENCES_PREFIX}\n{references}"
+    )
 
 
 def build_history_answerer_messages(
@@ -180,6 +231,7 @@ def build_history_answerer_messages(
     evidence: list[dict[str, Any]],
     *,
     answer_depth: str = "standard",
+    avoid_generic_source_prefix: bool = False,
 ) -> list[dict[str, str]]:
     # Canonical History SFT contains no system or conversation-history message.
     return [
@@ -189,6 +241,7 @@ def build_history_answerer_messages(
                 question,
                 evidence,
                 answer_depth=answer_depth,
+                avoid_generic_source_prefix=avoid_generic_source_prefix,
             ),
         }
     ]
