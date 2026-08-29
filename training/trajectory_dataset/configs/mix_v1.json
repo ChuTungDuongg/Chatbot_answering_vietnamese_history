@@ -1,0 +1,6 @@
+{
+  "agent_flan": 0.12,
+  "custom_history": 0.55,
+  "multi_hop_function_calling": 0.17,
+  "vietnam_history_200k": 0.16
+}

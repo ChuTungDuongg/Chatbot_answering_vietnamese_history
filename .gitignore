@@ -97,6 +97,17 @@ artifacts/vn_history_modal/
 # Large/generated training JSONL files under artifacts should not be tracked.
 artifacts/training/**/*.jsonl
 
+# Future central-agent trajectory outputs/caches.
+# Keep source code, adapters, configs, README, and tiny test fixtures trackable.
+training/trajectory_dataset/outputs/
+training/trajectory_dataset/cache/
+training/trajectory_dataset/generated/
+trajectory_dataset_output/
+
+# The trajectory adapter package is source code, not trained adapter weights.
+!training/trajectory_dataset/adapters/
+!training/trajectory_dataset/adapters/*.py
+
 # Keep lightweight reports / manifests / validation JSON files trackable.
 # Examples:
 # artifacts/reports/*.json

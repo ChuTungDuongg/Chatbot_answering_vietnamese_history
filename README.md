@@ -75,6 +75,7 @@ Chatbot_answering_vietnamese_history/
 │   ├── history_answerer/        # Instruction SFT + Phase 6 RAG-SFT + eval/merge
 │   ├── research_agent/          # Trajectory prep + Qwen3 QLoRA + eval
 │   ├── evidence_agent/          # Evidence dataset + Qwen3 QLoRA + eval
+│   ├── trajectory_dataset/      # Future central Qwen3-8B behavioral trajectories
 │   └── scripts/                 # Corpus, index, benchmark, merge, export
 ├── scripts/                     # Modal Volume upload CLI
 ├── artifacts/                   # Contract artifact; weights/index thật bị gitignore
@@ -119,6 +120,35 @@ python -m pip install -r requirements-training.txt
 ```
 
 Không cần Jupyter hoặc `ipykernel`. Toàn bộ entry point là Python CLI.
+
+## 🧩 Qwen3-8B Central Agent Training Pipeline
+
+Pipeline mới ở [`training/trajectory_dataset/`](training/trajectory_dataset/) chuẩn bị **training trajectory về hành vi** cho một central Qwen3-8B trong tương lai: chọn tool, truy vấn RAG, đọc observation, tìm lại khi thiếu bằng chứng và trả lời tiếng Việt có citation. Corpus hiện hữu vẫn là knowledge; pipeline không đưa thẳng toàn bộ chunk vào QLoRA, không sửa corpus/index và chưa thay thế kiến trúc 3-agent đang chạy.
+
+Hướng dẫn đầy đủ: [`training/trajectory_dataset/README.md`](training/trajectory_dataset/README.md). CLI chính:
+
+```powershell
+python -m training.trajectory_dataset.cli --help
+python -m training.trajectory_dataset.cli build-custom `
+  --corpus-path artifacts/vn_history_deployment/corpus `
+  --output-dir D:/vn-history/trajectory_dataset_v1 `
+  --retrieval-backend project `
+  --dry-run
+```
+
+Ví dụ Colab/Drive (đường dẫn chỉ là mẫu):
+
+```bash
+python -m training.trajectory_dataset.cli build-all \
+  --mount-drive \
+  --corpus-path /content/drive/MyDrive/vn-history/artifacts/vn_history_deployment/corpus \
+  --output-dir /content/drive/MyDrive/vn-history/trajectory_dataset_v1 \
+  --max-samples-per-source 2000 \
+  --resume \
+  --dry-run
+```
+
+Script train QLoRA Python-only là `training/train_qwen3_8b_agent.py`; hãy chạy `--dry-run` trước. Không có notebook, không tự mount Drive, không tự tải toàn bộ public dataset và không tự chạy training.
 
 ## 🚀 Chạy local
 
