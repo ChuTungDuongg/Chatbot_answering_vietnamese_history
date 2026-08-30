@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any, Callable
 
+from ..citations import format_evidence_citation
 from ..schema import SEARCH_HISTORY_TOOL, make_trajectory, tool_call
 from .common import AdapterError, get_messages, provenance, semantic_messages, trajectory_id
 
@@ -81,7 +82,7 @@ def normalize_vietnam_history(
         if not evidence_ids:
             raise AdapterError("rag_grounded retrieval results contain no chunk_id values")
         call_id = "call_search_history_0001"
-        citations = " ".join(f"[{evidence_id}]" for evidence_id in evidence_ids[:3])
+        citations = " ".join(format_evidence_citation(evidence_id) for evidence_id in evidence_ids[:3])
         messages = [
             {"role": "system", "content": "Trả lời câu hỏi lịch sử Việt Nam từ bằng chứng công cụ và trích dẫn ID nguồn."},
             {"role": "user", "content": question},

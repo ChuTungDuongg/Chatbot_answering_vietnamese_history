@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections import Counter
 from typing import Any, Iterable
 
+from .citations import extract_evidence_citations
 from .dedup import first_user_question, normalized_question
 from .preprocess import analyze_truncation
 
@@ -110,9 +110,10 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 if isinstance(result, dict) and (result.get("chunk_id") or result.get("evidence_id"))
             )
         final_answer = str((row.get("messages") or [{}])[-1].get("content") or "")
-        citations = set(re.findall(r"\[([^\[\]]+)\]", final_answer))
+        parsed_citations = extract_evidence_citations(final_answer, observed_ids)
+        citations = set(parsed_citations.citations)
         declared = {str(value) for value in provenance.get("evidence_ids", [])}
-        if not citations.issubset(observed_ids) or not declared.issubset(observed_ids):
+        if parsed_citations.unknown_ids or not citations.issubset(observed_ids) or not declared.issubset(observed_ids):
             issue("grounded_answer_invalid_observed_citations", row)
         explicitly_insufficient = "chưa đủ bằng chứng" in final_answer.casefold()
         if (declared or (provenance.get("grounded") and observed_ids)) and not citations and not explicitly_insufficient:

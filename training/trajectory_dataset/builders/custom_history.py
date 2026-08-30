@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from ..citations import extract_evidence_citations, format_evidence_citation
 from ..dedup import normalized_question
 from ..io_utils import iter_jsonl
 from ..schema import (
@@ -469,7 +470,7 @@ def _result_sentences(results: list[dict[str, Any]], task_type: str, *, limit: i
 
 
 def _format_evidence(items: list[tuple[str, str]]) -> list[str]:
-    return [f"- {sentence} [{chunk_id}]" for chunk_id, sentence in items]
+    return [f"- {sentence} {format_evidence_citation(chunk_id)}" for chunk_id, sentence in items]
 
 
 def _observed_ids(observations: list[Observation]) -> set[str]:
@@ -530,10 +531,6 @@ def _answer(task_type: str, observations: list[Observation], *, claim: str | Non
     return prefix + "\n" + "\n".join(_format_evidence(selected))
 
 
-def _citation_ids(answer: str) -> list[str]:
-    return list(dict.fromkeys(re.findall(r"\[([^\[\]]+)\]", answer)))
-
-
 def _stable_source_group(row: dict[str, Any]) -> str:
     return str(row.get("url") or row.get("source_sha1") or row.get("title") or row.get("chunk_id"))
 
@@ -555,8 +552,9 @@ def _trajectory(
     answer = _answer(task_type, observations, claim=claim)
     messages.append({"role": "assistant", "content": answer})
     observed_ids = _observed_ids(observations)
-    cited_ids = _citation_ids(answer)
-    if not set(cited_ids).issubset(observed_ids):
+    parsed_citations = extract_evidence_citations(answer, observed_ids)
+    cited_ids = list(parsed_citations.citations)
+    if parsed_citations.unknown_ids or not set(cited_ids).issubset(observed_ids):
         raise ValueError("deterministic answer cited evidence absent from compact observations")
 
     primary_group = _stable_source_group(primary)
@@ -647,10 +645,12 @@ def _apply_teacher_to_rows(rows: list[dict[str, Any]], teacher: Teacher, *, seed
         raise ValueError("teacher must return exactly one answer per request")
     for row, response, request in zip(rows, responses, requests):
         answer = _plain(response.answer)
-        citations = set(_citation_ids(answer))
+        parsed_citations = extract_evidence_citations(answer, request.allowed_evidence_ids)
+        citations = set(parsed_citations.citations)
         explicitly_insufficient = "chưa đủ bằng chứng" in answer.casefold()
         if (
-            answer and citations.issubset(set(request.allowed_evidence_ids))
+            answer and not parsed_citations.unknown_ids
+            and citations.issubset(set(request.allowed_evidence_ids))
             and (citations or not request.allowed_evidence_ids or explicitly_insufficient)
         ):
             row["messages"][-1]["content"] = answer

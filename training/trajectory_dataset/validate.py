@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .citations import extract_evidence_citations
 from .schema import SCHEMA_VERSION, tool_names
 
 
@@ -171,8 +171,10 @@ def validate_trajectory(row: dict[str, Any]) -> list[str]:
         declared_ids = {str(value) for value in (provenance or {}).get("evidence_ids", [])}
         if declared_ids and not declared_ids.issubset(observed_evidence):
             errors.append("provenance evidence_ids are absent from tool observations")
-        cited_ids = set(re.findall(r"\[([^\[\]]+)\]", final_assistant_content))
-        evidence_like_citations = {value for value in cited_ids if value in declared_ids or value in observed_evidence}
+        parsed_citations = extract_evidence_citations(final_assistant_content, observed_evidence)
+        if parsed_citations.unknown_ids:
+            errors.append(f"grounded final answer cites unknown evidence IDs: {sorted(parsed_citations.unknown_ids)}")
+        evidence_like_citations = set(parsed_citations.citations)
         if declared_ids and not evidence_like_citations:
             errors.append("grounded final answer has no internally consistent evidence citation")
     return errors

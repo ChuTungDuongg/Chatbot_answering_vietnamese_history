@@ -15,6 +15,8 @@ def _ids(tokenizer: Any, text: str) -> list[int]:
 
 
 def _render(tokenizer: Any, messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, generation: bool) -> str:
+    if not messages:
+        return ""
     kwargs = {"tokenize": False, "add_generation_prompt": generation}
     if tools:
         kwargs["tools"] = tools

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
-import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from ..citations import extract_evidence_citations
 from ..validate import validate_rows
 from .base import Teacher, TeacherRequest
 
@@ -49,10 +49,6 @@ def _question(row: dict[str, Any]) -> str:
         for message in row.get("messages") or []
         if message.get("role") == "user"
     )
-
-
-def _citation_ids(answer: str) -> set[str]:
-    return set(re.findall(r"\[([^\[\]]+)\]", answer))
 
 
 def enhance_rows(
@@ -106,14 +102,15 @@ def enhance_rows(
     for (index, request), response in zip(selected, responses):
         row = materialized[index]
         answer = str(response.answer or "").strip()
-        citations = _citation_ids(answer)
         allowed = set(request.allowed_evidence_ids)
+        parsed_citations = extract_evidence_citations(answer, allowed)
+        citations = set(parsed_citations.citations)
         insufficient = "chưa đủ bằng chứng" in answer.casefold()
         reason = ""
         if not answer:
             reason = "teacher returned an empty answer"
-        elif not citations.issubset(allowed):
-            reason = f"teacher cited unknown evidence IDs: {sorted(citations - allowed)}"
+        elif parsed_citations.unknown_ids:
+            reason = f"teacher cited unknown evidence IDs: {sorted(parsed_citations.unknown_ids)}"
         elif allowed and not citations and not insufficient:
             reason = "teacher answer has no observed evidence citation"
         if not reason:
