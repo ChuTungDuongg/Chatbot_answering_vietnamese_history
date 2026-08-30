@@ -838,6 +838,12 @@ def _facet_score(
         if retrieval_role == "result_significance":
             # Preserve the dấu distinction: ``củng cố`` is impact evidence, ``cũng có`` is not.
             score += int(" củng cố " in f" {_entity_norm(sentence)} ")
+            score += int(bool(re.search(
+                r"\b(?:(?:la|tro thanh)(?: [a-z0-9]+){0,4} trung tam (?:nghien cuu|dao tao)|"
+                r"dao tao(?: [a-z0-9]+){0,8} (?:luc luong|si quan|can bo|nhan luc)|"
+                r"co van(?: [a-z0-9]+){0,10} thuc hien(?: [a-z0-9]+){0,5} du an)\b",
+                sentence_norm,
+            )))
     if retrieval_role in {"biography_timeline", "context_timeline", "target_a", "target_b"} and re.search(
         r"\b\d{3,4}\b", sentence,
     ):
@@ -859,6 +865,44 @@ def _facet_score(
         person_terms = (*PERSON_TEXT_CUES, *PERSON_ACTIVITY_CUES, *ROLE_FACET_TERMS["role_contribution"])
         score += sum(f" {_match_norm(term)} " in padded for term in person_terms)
     return score
+
+
+def _significance_sentence_score(
+    sentence: str, *, result_title: str, query: str, task_type: str,
+    target_subject_type: str, target_title: str, target_aliases: Iterable[str],
+) -> int:
+    """Bind impact semantics to the target when it occurs in an unrelated source."""
+    score = _facet_score(
+        sentence, query=query, task_type=task_type, retrieval_role="result_significance",
+        target_subject_type=target_subject_type, target_title=target_title,
+        target_aliases=target_aliases,
+    )
+    target_variants = _subject_entity_variants(
+        target_title, target_subject_type, target_aliases,
+    )
+    title_matches_target = bool(
+        set(_entity_variants(result_title)) & set(target_variants)
+    )
+    sentence_norm = _entity_norm(sentence)
+    if title_matches_target or not _contains_entity_variant(sentence, target_variants):
+        return score
+
+    # A related-source sentence must express the facet near the target mention.
+    # This prevents one item in a long catalog from borrowing ``kết quả`` or
+    # another impact cue thousands of characters later in the same text span.
+    local_scores: list[int] = []
+    for variant in target_variants:
+        start = 0
+        while variant and (index := sentence_norm.find(variant, start)) >= 0:
+            local_text = sentence_norm[max(0, index - 180):index + len(variant) + 180]
+            local_scores.append(_facet_score(
+                local_text, query=query, task_type=task_type,
+                retrieval_role="result_significance",
+                target_subject_type=target_subject_type, target_title=target_title,
+                target_aliases=target_aliases,
+            ))
+            start = index + len(variant)
+    return max(local_scores, default=0)
 
 
 def _facet_is_required(retrieval_role: str) -> bool:
@@ -887,15 +931,22 @@ def is_result_facet_relevant(
         sentence_norm = _match_norm(sentence)
         if any(f" {cue} " in f" {sentence_norm} " for cue in REFERENCE_NOISE_CUES):
             continue
-        score = _facet_score(
-            sentence,
-            query=query,
-            task_type=task_type,
-            retrieval_role=retrieval_role,
-            target_subject_type=target_subject_type,
-            target_title=target_title,
-            target_aliases=target_aliases,
-        )
+        if retrieval_role == "result_significance":
+            score = _significance_sentence_score(
+                sentence, result_title=_title(result), query=query, task_type=task_type,
+                target_subject_type=target_subject_type, target_title=target_title,
+                target_aliases=target_aliases,
+            )
+        else:
+            score = _facet_score(
+                sentence,
+                query=query,
+                task_type=task_type,
+                retrieval_role=retrieval_role,
+                target_subject_type=target_subject_type,
+                target_title=target_title,
+                target_aliases=target_aliases,
+            )
         if score >= _minimum_facet_score(retrieval_role):
             return True
     return False
@@ -934,11 +985,18 @@ def _sentence_rank(
         return None
     if retrieval_role == "unsupported_claim" and SYNTHETIC_MARKER.casefold() not in sentence.casefold():
         return None
-    facet_score = _facet_score(
-        sentence, query=query, task_type=task_type, retrieval_role=retrieval_role,
-        target_subject_type=target_subject_type, target_title=target_title,
-        target_aliases=target_aliases,
-    )
+    if retrieval_role == "result_significance":
+        facet_score = _significance_sentence_score(
+            sentence, result_title=result_title, query=query, task_type=task_type,
+            target_subject_type=target_subject_type, target_title=target_title,
+            target_aliases=target_aliases,
+        )
+    else:
+        facet_score = _facet_score(
+            sentence, query=query, task_type=task_type, retrieval_role=retrieval_role,
+            target_subject_type=target_subject_type, target_title=target_title,
+            target_aliases=target_aliases,
+        )
     minimum_facet_score = _minimum_facet_score(retrieval_role)
     if _facet_is_required(retrieval_role) and facet_score < minimum_facet_score:
         return None
@@ -1028,6 +1086,12 @@ def _compact_result(
         target_aliases=target_aliases, excluded_titles=excluded_titles,
     )
     if not chunk_id or not text:
+        return None
+    if plan.role == "result_significance" and not is_result_facet_relevant(
+        {**result, "text": text}, query=plan.query, task_type=task_type,
+        retrieval_role=plan.role, target_subject_type=target_subject_type,
+        target_title=target_title, target_aliases=target_aliases,
+    ):
         return None
     if target_title and not is_result_relevant_to_target(
         {**result, "text": text}, target_title=target_title,

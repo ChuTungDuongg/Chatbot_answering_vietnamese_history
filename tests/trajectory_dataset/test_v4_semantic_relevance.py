@@ -831,6 +831,115 @@ def test_significance_facet_rejects_plain_sports_scoring_rule():
     ) == []
 
 
+UNIVERSITY_TITLE = "Trường Đại học Kiến trúc Thành phố Hồ Chí Minh"
+
+
+def university_significance_fixtures() -> tuple[dict, dict, dict, dict]:
+    seed = {
+        "chunk_id": "university-seed",
+        "title": UNIVERSITY_TITLE,
+        "text": (
+            f"{UNIVERSITY_TITLE} được thành lập năm 1976 trong bối cảnh tái thiết. "
+            "Quá trình hình thành của trường gắn với nhu cầu đào tạo kiến trúc sư."
+        ),
+        "metadata": {"subject_type": "organization", "years": [1976]},
+    }
+    context = {
+        **seed,
+        "chunk_id": "university-context",
+        "text": f"{UNIVERSITY_TITLE} được thành lập năm 1976 trong bối cảnh tái thiết đất nước.",
+    }
+    bad_catalog = {
+        "chunk_id": "admission-catalog",
+        "title": "Đánh giá năng lực",
+        "text": (
+            "Thành phố Hồ Chí Minh Trường Đại học Giao thông Vận tải Trường Đại học Hoa Sen "
+            "Trường Đại học Hùng Vương Thành phố Hồ Chí Minh Trường Đại học Kiên Giang "
+            "Trường Đại học Kiến trúc Đà Nẵng "
+            f"{UNIVERSITY_TITLE} "
+            "Trường Đại học Kinh tế Quốc dân Trường Đại học Kinh tế Thành phố Hồ Chí Minh "
+            "Trường Đại học Kinh tế Công nghiệp Long An Trường Đại học Kỹ thuật Công nghệ Cần Thơ "
+            "Trường Đại học Khánh Hòa Trường Đại học Lạc Hồng Trường Đại học Lâm nghiệp "
+            "Trường Đại học Nam Cần Thơ Trường Đại học Nông Lâm Thành phố Hồ Chí Minh "
+            "Danh sách các đơn vị sử dụng kết quả kỳ thi để xét tuyển."
+        ),
+        "metadata": {"content_facets": ["kết quả"]},
+    }
+    meaningful = {
+        "chunk_id": "university-contribution",
+        "title": UNIVERSITY_TITLE,
+        "text": (
+            "Bên cạnh đào tạo, trường còn là trung tâm nghiên cứu, cố vấn, "
+            "thực hiện các dự án cho doanh nghiệp và Chính phủ Việt Nam."
+        ),
+        "metadata": {"subject_type": "organization"},
+    }
+    return seed, context, bad_catalog, meaningful
+
+
+@pytest.mark.parametrize("task_type", ["significance", "summary", "multihop"])
+def test_builder_significance_paths_reject_catalog_and_keep_meaningful_evidence(
+    tmp_path: Path, task_type: str,
+):
+    seed, context, bad_catalog, meaningful = university_significance_fixtures()
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            if "bối cảnh" in query or "nguyên nhân" in query:
+                return [context]
+            return [bad_catalog, meaningful]
+
+    config = CustomBuildConfig(
+        task_counts={task_type: 1}, top_k=6, seed=41, max_corpus_records=1,
+        max_candidate_attempts_per_task=10,
+    )
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, [seed]), Retriever(), config=config,
+    ))[0]
+    queries = row["provenance"]["retrieval_queries"]
+    payloads = [
+        json.loads(message["content"])
+        for message in row["messages"] if message["role"] == "tool"
+    ]
+    significance_payload = next(
+        payload for query, payload in zip(queries, payloads)
+        if query["role"] == "result_significance"
+    )
+    assert [result["chunk_id"] for result in significance_payload] == ["university-contribution"]
+    assert "Trường Đại học Hoa Sen" not in row["messages"][-1]["content"]
+    assert "trung tâm nghiên cứu" in row["messages"][-1]["content"]
+    assert audit_rows([row], strict_custom=True)["valid"]
+
+
+@pytest.mark.parametrize("task_type", ["significance", "summary", "multihop"])
+def test_catalog_only_significance_fallback_once_then_skips_candidate(
+    tmp_path: Path, task_type: str,
+):
+    seed, context, bad_catalog, _ = university_significance_fixtures()
+
+    class Retriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            self.queries.append(query)
+            if "bối cảnh" in query or "nguyên nhân" in query:
+                return [context]
+            return [bad_catalog]
+
+    retriever = Retriever()
+    config = CustomBuildConfig(
+        task_counts={task_type: 1}, top_k=6, seed=41, max_corpus_records=1,
+        max_candidate_attempts_per_task=10,
+    )
+    with pytest.raises(ValueError, match=rf"0/1 {task_type}"):
+        list(build_custom_trajectories(
+            write_corpus(tmp_path, [seed]), retriever, config=config,
+        ))
+    assert retriever.queries.count(f"{UNIVERSITY_TITLE} lịch sử") == 1
+    assert len(retriever.queries) == (2 if task_type == "significance" else 3)
+
+
 def test_significance_fallback_reapplies_filter_and_skips_only_inventory_candidate(tmp_path: Path):
     title = "Không quân Nhân dân Triều Tiên"
     seed = {
