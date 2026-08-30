@@ -59,7 +59,14 @@ class FakeRetriever:
 
     def search(self, query: str, *, top_k: int) -> list[dict]:
         self.calls.append(query)
-        return self._search(query)[:top_k]
+        results = []
+        for raw in self._search(query)[:top_k]:
+            result = copy.deepcopy(raw)
+            # Generic fixtures represent relevant hits; bind them explicitly to
+            # the requested target/facet so the production filter can stay strict.
+            result["text"] = f"{query}. {result.get('text') or ''}".strip()
+            results.append(result)
+        return results
 
 
 def evidence(chunk_id: str = "chunk_evidence", title: str = "Bằng chứng", text: str | None = None) -> dict:

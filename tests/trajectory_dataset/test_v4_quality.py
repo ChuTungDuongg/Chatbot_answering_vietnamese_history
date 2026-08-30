@@ -147,7 +147,7 @@ def test_claims_queries_and_answers_obey_v4_semantics(tmp_path: Path):
 
 @pytest.mark.parametrize(
     ("returned", "task_type"),
-    [([], "insufficient_evidence"), ([record("one", "Chiến dịch Một", "event")], "factual")],
+    [([], "insufficient_evidence"), ([record("one", "Chiến dịch Gốc", "event")], "factual")],
 )
 def test_requested_top_k_is_preserved_for_empty_and_short_results(
     tmp_path: Path, returned: list[dict], task_type: str,

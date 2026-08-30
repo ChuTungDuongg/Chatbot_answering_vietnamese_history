@@ -20,6 +20,12 @@ def _tokens(text: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]+", value) if len(token) > 2}
 
 
+def _normalized_text(text: str) -> str:
+    value = unicodedata.normalize("NFKD", str(text).casefold())
+    value = "".join(character for character in value if not unicodedata.combining(character))
+    return " ".join(re.findall(r"[a-z0-9]+", value))
+
+
 class FixtureRetriever:
     """Cheap lexical adapter for tests/offline fixtures, not production parity."""
 
@@ -28,9 +34,11 @@ class FixtureRetriever:
 
     def search(self, query: str, *, top_k: int) -> list[dict[str, Any]]:
         query_tokens = _tokens(query)
+        query_norm = f" {_normalized_text(query)} "
         ranked = sorted(
             self.records,
             key=lambda row: (
+                int(bool(_normalized_text(row.get("title", ""))) and f" {_normalized_text(row.get('title', ''))} " in query_norm),
                 len(query_tokens & _tokens(f"{row.get('title', '')} {row.get('text', '')}")),
                 str(row.get("chunk_id") or ""),
             ),

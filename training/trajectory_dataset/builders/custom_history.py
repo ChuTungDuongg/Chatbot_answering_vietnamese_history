@@ -77,6 +77,34 @@ PERSON_TEXT_CUES = (
     "sinh nam", "sinh ngay", "qua doi", "mat nam", "ten that", "ong la",
     "ba la", "vi vua", "danh tuong", "nha cach mang", "chinh tri gia",
     "nhan vat lich su", "anh hung dan toc", "cuoc doi", "tieu su",
+    "giao si", "linh muc", "giam muc", "tong giam muc", "tuong linh",
+)
+PERSON_ACTIVITY_CUES = (
+    "hoat dong", "lanh dao", "chi huy", "tham gia", "giu chuc", "dam nhiem",
+    "duoc bo nhiem", "duoc phong", "sang lap", "dung dau", "phuc vu",
+)
+ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
+    "biography_timeline": (*PERSON_TEXT_CUES, *PERSON_ACTIVITY_CUES, "nam", "tu nam", "den nam"),
+    "role_contribution": (
+        "vai tro", "dong gop", "gop phan", "lanh dao", "chi huy", "sang lap",
+        "anh huong", "hoat dong", "thuc day", "bao ve", "xay dung",
+    ),
+    "context_cause": TASK_TERMS["cause"],
+    "context_timeline": (*TASK_TERMS["cause"], "dien bien", "moc", "nam", "thoi ky", "giai doan"),
+    "result_significance": TASK_TERMS["significance"],
+    "corrective_facet": TASK_TERMS["hard_negative"],
+    "wrong_facet": ("thanh cong", "thang loi", "uu the", "thuan loi"),
+}
+NON_PERSON_TOPIC_PREFIXES = (
+    "chu ", "tieng ", "van hoa ", "ngon ngu ", "chu viet ", "van hoc ",
+)
+ALIAS_METADATA_FIELDS = (
+    "aliases", "alias", "alternative_names", "alternate_names", "other_names",
+    "also_known_as", "names",
+)
+REFERENCE_NOISE_CUES = (
+    "xem them", "tham khao", "chu thich", "lien ket ngoai", "muc luc",
+    "the loai", "danh sach bai", "trang dinh huong", "nguon tham khao",
 )
 
 
@@ -143,7 +171,14 @@ def _plain(text: Any) -> str:
 def _match_norm(text: Any) -> str:
     value = unicodedata.normalize("NFKD", _plain(text).casefold())
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = value.replace("đ", "d")
     return " ".join(re.sub(r"[^a-z0-9]+", " ", value).split())
+
+
+def _entity_norm(text: Any) -> str:
+    """Normalize spacing/punctuation while preserving Vietnamese distinctions."""
+    value = unicodedata.normalize("NFKC", _plain(text).casefold())
+    return " ".join(re.sub(r"[^\w]+", " ", value, flags=re.UNICODE).replace("_", " ").split())
 
 
 def _title(row: dict[str, Any]) -> str:
@@ -151,59 +186,103 @@ def _title(row: dict[str, Any]) -> str:
 
 
 def _entity_matches_title(title: str, values: Any) -> bool:
-    title_norm = _match_norm(title)
+    title_norm = _entity_norm(title)
     if not title_norm or not isinstance(values, list):
         return False
     for value in values:
-        entity = _match_norm(value)
+        entity = _entity_norm(value)
         if entity and (entity == title_norm or (len(entity) >= 6 and entity in title_norm)):
             return True
     return False
 
 
-def classify_subject(row: dict[str, Any]) -> str:
-    """Classify the article subject deterministically, using metadata first."""
-    title = _title(row)
+def _title_without_parenthetical(title: str) -> str:
+    return _plain(re.sub(r"\s*\([^()]*\)\s*$", "", title)).strip()
+
+
+def title_implied_subject_type(title: str) -> str | None:
+    """Return only strong non-person title evidence; otherwise remain uncertain."""
+    title = _plain(title)
     title_norm = _match_norm(title)
-    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-    explicit = _match_norm(
-        metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
-    )
-    if explicit in SUBJECT_TYPES:
-        return explicit
-    for field, subject_type in METADATA_FIELDS.items():
-        if _entity_matches_title(title, metadata.get(field)):
-            return subject_type
+    if not title_norm:
+        return None
     if re.fullmatch(r"(?:ngay\s+)?\d{1,2}(?:\s+thang\s+\d{1,2})?(?:\s+nam\s+\d{3,4})?|\d{3,4}", title_norm):
         return "date"
     parenthetical_labels = {
         _match_norm(value)
         for value in re.findall(r"\(([^()]*)\)", title, flags=re.UNICODE)
     }
-    parenthetical_is_location = any(
+    if any(
         value == label or value.startswith(f"{label} ")
         for value in parenthetical_labels
         for label in STRONG_LOCATION_LABELS
-    )
-    if parenthetical_is_location or any(
+    ) or any(
         title_norm == label or title_norm.startswith(f"{label} ")
         for label in STRONG_LOCATION_LABELS
     ):
         return "location"
-    title_words = " " + " ".join(re.findall(r"\w+", title.casefold(), flags=re.UNICODE)) + " "
+    if any(title_norm.startswith(prefix) for prefix in NON_PERSON_TOPIC_PREFIXES):
+        return "topic"
+    title_words = " " + " ".join(
+        re.findall(r"\w+", title.casefold(), flags=re.UNICODE)
+    ) + " "
     for subject_type, cues in TITLE_CUES:
         for cue in cues:
             cue_words = " ".join(re.findall(r"\w+", cue.casefold(), flags=re.UNICODE))
             if cue_words and f" {cue_words} " in title_words:
                 return subject_type
-    words = [word for word in re.findall(r"\w+", title, flags=re.UNICODE) if word]
-    text_norm = _match_norm(row.get("text"))
-    if 2 <= len(words) <= 6 and not any(ch.isdigit() for ch in title):
-        capitalized = sum(word[:1].isupper() for word in words)
-        padded_text = f" {text_norm} "
-        has_biographical_evidence = any(f" {cue} " in padded_text for cue in PERSON_TEXT_CUES)
-        if capitalized >= max(2, len(words) - 1) and has_biographical_evidence:
-            return "person"
+    return None
+
+
+def _contains_norm_phrase(text: Any, phrase: Any) -> bool:
+    text_norm = _entity_norm(text)
+    phrase_norm = _entity_norm(phrase)
+    return bool(text_norm and phrase_norm and f" {phrase_norm} " in f" {text_norm} ")
+
+
+def _biographical_person_evidence(title: str, text: Any) -> bool:
+    sentences = _split_sentences(text)
+    if not sentences:
+        sentences = [_plain(text)] if _plain(text) else []
+    for sentence in sentences:
+        sentence_norm = _match_norm(sentence)
+        mentions_title = _contains_norm_phrase(sentence, title)
+        has_biography_cue = any(
+            f" {cue} " in f" {sentence_norm} " for cue in PERSON_TEXT_CUES
+        )
+        has_activity_cue = any(
+            f" {cue} " in f" {sentence_norm} " for cue in PERSON_ACTIVITY_CUES
+        )
+        has_lifespan = bool(re.search(r"\b\d{3,4}\s*[-–—]\s*\d{3,4}\b", sentence))
+        if mentions_title and (has_biography_cue or has_activity_cue or has_lifespan):
+            return True
+    if sentences:
+        first_norm = _match_norm(sentences[0])
+        return any(first_norm.startswith(cue) for cue in PERSON_TEXT_CUES)
+    return False
+
+
+def classify_subject(row: dict[str, Any]) -> str:
+    """Classify conservatively: strong evidence is required to emit ``person``."""
+    title = _title(row)
+    implied_type = title_implied_subject_type(title)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    explicit = _match_norm(
+        metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
+    )
+    if explicit in SUBJECT_TYPES:
+        if explicit == "person" and implied_type is not None:
+            return implied_type
+        return explicit
+    for field, subject_type in METADATA_FIELDS.items():
+        if _entity_matches_title(title, metadata.get(field)):
+            if subject_type == "person" and implied_type is not None:
+                return implied_type
+            return subject_type
+    if implied_type is not None:
+        return implied_type
+    if _biographical_person_evidence(title, row.get("text")):
+        return "person"
     return "topic"
 
 
@@ -276,6 +355,78 @@ def _split_sentences(text: Any) -> list[str]:
     return [sentence.strip(" -") for sentence in sentences if len(sentence.strip(" -")) >= 20]
 
 
+def _text_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [_plain(value)] if _plain(value) else []
+    if isinstance(value, (list, tuple, set)):
+        return [_plain(item) for item in value if _plain(item)]
+    return []
+
+
+def _target_aliases(row: dict[str, Any]) -> tuple[str, ...]:
+    title_norm = _entity_norm(_title(row))
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    aliases: list[str] = []
+    for field in ALIAS_METADATA_FIELDS:
+        aliases.extend(_text_values(metadata.get(field)))
+        aliases.extend(_text_values(row.get(field)))
+    for field in METADATA_FIELDS:
+        for value in _text_values(metadata.get(field)):
+            value_norm = _entity_norm(value)
+            if value_norm == title_norm:
+                aliases.append(value)
+    return tuple(dict.fromkeys(alias for alias in aliases if _match_norm(alias)))
+
+
+def _entity_variants(target_title: str, target_aliases: Iterable[str] = ()) -> tuple[str, ...]:
+    values = [target_title, _title_without_parenthetical(target_title), *target_aliases]
+    return tuple(dict.fromkeys(value for value in (_entity_norm(item) for item in values) if value))
+
+
+def _contains_entity_variant(text: Any, variants: Iterable[str]) -> bool:
+    text_norm = _entity_norm(text)
+    padded = f" {text_norm} "
+    return any(f" {variant} " in padded for variant in variants if variant)
+
+
+def result_text_mentions_target(
+    result: dict[str, Any], *, target_title: str, target_aliases: Iterable[str] = (),
+) -> bool:
+    """Whether the actual evidence text explicitly names the target or a strong alias."""
+    return _contains_entity_variant(
+        result.get("text"), _entity_variants(target_title, target_aliases),
+    )
+
+
+def _metadata_mentions_target(metadata: Any, variants: tuple[str, ...]) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    fields = (*METADATA_FIELDS, *ALIAS_METADATA_FIELDS, "entities", "entity", "subjects")
+    for field in fields:
+        for value in _text_values(metadata.get(field)):
+            if _entity_norm(value) in variants:
+                return True
+    return False
+
+
+def is_result_relevant_to_target(
+    result: dict[str, Any], *, target_title: str, target_subject_type: str,
+    retrieval_role: str, target_aliases: Iterable[str] = (),
+) -> bool:
+    """Deterministically reject lexical hits that are not anchored to the target."""
+    del target_subject_type, retrieval_role
+    variants = _entity_variants(target_title, target_aliases)
+    if not variants:
+        return False
+    result_title_variants = _entity_variants(_title(result))
+    title_match = bool(set(variants) & set(result_title_variants))
+    return (
+        title_match
+        or _contains_entity_variant(result.get("text"), variants)
+        or _metadata_mentions_target(result.get("metadata"), variants)
+    )
+
+
 def _sentence_score(sentence: str, query: str, task_type: str) -> tuple[int, int, int]:
     sentence_norm = _match_norm(sentence)
     query_terms = {term for term in _match_norm(query).split() if len(term) > 2}
@@ -287,20 +438,128 @@ def _sentence_score(sentence: str, query: str, task_type: str) -> tuple[int, int
     )
 
 
-def _compact_text(text: Any, *, query: str, task_type: str, max_chars: int) -> str:
+def _facet_score(
+    sentence: str, *, query: str, task_type: str, retrieval_role: str,
+    target_subject_type: str, target_title: str, target_aliases: Iterable[str],
+) -> int:
+    sentence_norm = _match_norm(sentence)
+    padded = f" {sentence_norm} "
+    terms = ROLE_FACET_TERMS.get(retrieval_role, TASK_TERMS.get(task_type, ()))
+    score = sum(f" {_match_norm(term)} " in padded for term in terms if _match_norm(term))
+    if re.search(r"\b\d{3,4}\b", sentence):
+        score += 1
+    if retrieval_role in {"claim_support", "corroboration", "external_corroboration"}:
+        target_terms = {
+            term
+            for value in (target_title, *target_aliases)
+            for term in _match_norm(value).split()
+        }
+        query_terms = {
+            term for term in _match_norm(query).split()
+            if len(term) > 2
+            and term not in target_terms
+            and term not in {"lich", "nguon", "kiem", "chung", "doi", "chieu", "thoi", "gian"}
+        }
+        score += min(4, sum(f" {term} " in padded for term in query_terms))
+    if retrieval_role in {"target_a", "target_b"} and target_subject_type == "person":
+        person_terms = (*PERSON_TEXT_CUES, *PERSON_ACTIVITY_CUES, *ROLE_FACET_TERMS["role_contribution"])
+        score += sum(f" {_match_norm(term)} " in padded for term in person_terms)
+    return score
+
+
+def _facet_is_required(retrieval_role: str) -> bool:
+    return retrieval_role in {
+        "biography_timeline", "role_contribution", "context_cause", "context_timeline",
+        "result_significance", "corrective_facet", "wrong_facet", "claim_support",
+        "unsupported_claim", "target_a", "target_b",
+    }
+
+
+def _sentence_rank(
+    sentence: str, *, result_title: str, query: str, task_type: str,
+    target_title: str, target_subject_type: str, retrieval_role: str,
+    target_aliases: Iterable[str], excluded_titles: Iterable[str],
+) -> tuple[int, int, tuple[int, int, int]] | None:
+    sentence_norm = _match_norm(sentence)
+    if any(f" {cue} " in f" {sentence_norm} " for cue in REFERENCE_NOISE_CUES):
+        return None
+    target_variants = _entity_variants(target_title, target_aliases)
+    excluded_variants = tuple(
+        variant
+        for excluded in excluded_titles
+        for variant in _entity_variants(excluded)
+        if variant not in target_variants
+    )
+    if excluded_variants and _contains_entity_variant(sentence, excluded_variants):
+        return None
+    explicit_target = _contains_entity_variant(sentence, target_variants)
+    title_target = bool(set(_entity_variants(result_title)) & set(target_variants))
+    entity_strength = 2 if explicit_target else 1 if title_target else 0
+    if entity_strength == 0:
+        return None
+    person_specific_roles = {
+        "factual", "biography_timeline", "role_contribution", "target_a", "target_b",
+        "claim_support",
+    }
+    if target_subject_type == "person" and retrieval_role in person_specific_roles and not explicit_target:
+        return None
+    if retrieval_role == "unsupported_claim" and SYNTHETIC_MARKER.casefold() not in sentence.casefold():
+        return None
+    facet_score = _facet_score(
+        sentence, query=query, task_type=task_type, retrieval_role=retrieval_role,
+        target_subject_type=target_subject_type, target_title=target_title,
+        target_aliases=target_aliases,
+    )
+    minimum_facet_score = 2 if retrieval_role == "claim_support" else 1
+    if _facet_is_required(retrieval_role) and facet_score < minimum_facet_score:
+        return None
+    return entity_strength, facet_score, _sentence_score(sentence, query, task_type)
+
+
+def _compact_text(
+    text: Any, *, query: str, task_type: str, max_chars: int,
+    result_title: str = "", target_title: str = "", target_subject_type: str = "topic",
+    retrieval_role: str = "", target_aliases: Iterable[str] = (),
+    excluded_titles: Iterable[str] = (),
+) -> str:
     sentences = _split_sentences(text)
     if not sentences:
-        return _plain(text)[:max_chars]
-    ranked = sorted(
-        enumerate(sentences),
-        key=lambda item: (_sentence_score(item[1], query, task_type), -item[0]),
-        reverse=True,
-    )
+        return _plain(text)[:max_chars] if not target_title else ""
+    if target_title:
+        candidates = [
+            (
+                index,
+                sentence,
+                _sentence_rank(
+                    sentence, result_title=result_title, query=query, task_type=task_type,
+                    target_title=target_title, target_subject_type=target_subject_type,
+                    retrieval_role=retrieval_role, target_aliases=target_aliases,
+                    excluded_titles=excluded_titles,
+                ),
+            )
+            for index, sentence in enumerate(sentences)
+        ]
+        ranked = sorted(
+            (item for item in candidates if item[2] is not None),
+            key=lambda item: (item[2], -item[0]),
+            reverse=True,
+        )
+        if any(item[2][0] == 2 for item in ranked):
+            ranked = [item for item in ranked if item[2][0] == 2]
+    else:
+        ranked = [
+            (index, sentence, _sentence_score(sentence, query, task_type))
+            for index, sentence in sorted(
+                enumerate(sentences),
+                key=lambda item: (_sentence_score(item[1], query, task_type), -item[0]),
+                reverse=True,
+            )
+        ]
     selected: list[tuple[int, str]] = []
     chars = 0
-    for index, sentence in ranked:
+    for index, sentence, _ in ranked:
         addition = len(sentence) + int(bool(selected))
-        if addition > max_chars and selected:
+        if chars + addition > max_chars and selected:
             continue
         if not selected and addition > max_chars:
             sentence = sentence[:max_chars].rsplit(" ", 1)[0] or sentence[:max_chars]
@@ -315,13 +574,30 @@ def _compact_text(text: Any, *, query: str, task_type: str, max_chars: int) -> s
 def _compact_metadata(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return {}
-    allowed = ("content_facets", "events", "people", "dynasties", "locations", "periods", "years")
+    allowed = (
+        "content_facets", "events", "people", "documents", "organizations", "states",
+        "dynasties", "locations", "periods", "years", *ALIAS_METADATA_FIELDS,
+    )
     return {key: metadata[key] for key in allowed if metadata.get(key) not in (None, [], "")}
 
 
-def _compact_result(result: dict[str, Any], plan: QueryPlan, task_type: str, max_text_chars: int) -> dict[str, Any] | None:
+def _compact_result(
+    result: dict[str, Any], plan: QueryPlan, task_type: str, max_text_chars: int, *,
+    target_title: str = "", target_subject_type: str = "topic",
+    target_aliases: Iterable[str] = (), excluded_titles: Iterable[str] = (),
+) -> dict[str, Any] | None:
     chunk_id = str(result.get("chunk_id") or result.get("evidence_id") or "").strip()
-    text = _compact_text(result.get("text"), query=plan.query, task_type=task_type, max_chars=max_text_chars)
+    if target_title and not is_result_relevant_to_target(
+        result, target_title=target_title, target_subject_type=target_subject_type,
+        retrieval_role=plan.role, target_aliases=target_aliases,
+    ):
+        return None
+    text = _compact_text(
+        result.get("text"), query=plan.query, task_type=task_type, max_chars=max_text_chars,
+        result_title=_title(result), target_title=target_title,
+        target_subject_type=target_subject_type, retrieval_role=plan.role,
+        target_aliases=target_aliases, excluded_titles=excluded_titles,
+    )
     if not chunk_id or not text:
         return None
     compact: dict[str, Any] = {
@@ -347,12 +623,18 @@ def _compact_result(result: dict[str, Any], plan: QueryPlan, task_type: str, max
 def compact_observation(
     results: list[dict[str, Any]], plan: QueryPlan, *, task_type: str,
     observation_char_budget: int, max_result_text_chars: int,
+    target_title: str = "", target_subject_type: str = "topic",
+    target_aliases: Iterable[str] = (), excluded_titles: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
     """Return a compact evidence list whose serialized form respects the budget."""
     selected: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for raw in results:
-        compact = _compact_result(raw, plan, task_type, max_result_text_chars)
+        compact = _compact_result(
+            raw, plan, task_type, max_result_text_chars,
+            target_title=target_title, target_subject_type=target_subject_type,
+            target_aliases=target_aliases, excluded_titles=excluded_titles,
+        )
         if compact is None or compact["chunk_id"] in seen_ids:
             continue
         if len(json.dumps([*selected, compact], ensure_ascii=False, sort_keys=True)) <= observation_char_budget:
@@ -508,7 +790,8 @@ def build_query_plans(
 
 
 def _search_observations(
-    plans: list[QueryPlan], retriever: Any, *, task_type: str, subject_title: str,
+    plans: list[QueryPlan], retriever: Any, *, task_type: str,
+    primary: dict[str, Any], secondary: dict[str, Any] | None,
     config: CustomBuildConfig, observation_slots: int | None = None,
 ) -> list[Observation]:
     slots = observation_slots or len(plans)
@@ -520,21 +803,33 @@ def _search_observations(
     )
     observations = []
     for plan in plans:
+        target = secondary if plan.role == "target_b" and secondary is not None else primary
+        target_title = _title(target)
+        target_subject_type = classify_subject(target)
+        aliases = _target_aliases(target)
+        excluded_titles = (
+            (_title(primary),) if plan.role == "target_b" else
+            (_title(secondary),) if plan.role == "target_a" and secondary is not None else
+            ()
+        )
         compact = compact_observation(
             retriever.search(plan.query, top_k=plan.top_k), plan, task_type=task_type,
             observation_char_budget=slot_budget,
             max_result_text_chars=config.max_result_text_chars,
+            target_title=target_title, target_subject_type=target_subject_type,
+            target_aliases=aliases, excluded_titles=excluded_titles,
         )
         selected_plan = plan
         fallback_roles = {
             "summary": {"context_timeline", "result_significance", "biography_timeline", "role_contribution"},
             "multihop": {"context_cause", "result_significance"},
             "verification": {"corroboration"},
+            "compare": {"target_a", "target_b"},
         }
         if not compact and plan.role in fallback_roles.get(task_type, set()):
             fallback_plan = QueryPlan(
                 plan.tool_name,
-                f"{subject_title} lịch sử",
+                f"{target_title} lịch sử",
                 plan.top_k,
                 plan.role,
                 required=plan.required,
@@ -547,6 +842,8 @@ def _search_observations(
                 task_type=task_type,
                 observation_char_budget=slot_budget,
                 max_result_text_chars=config.max_result_text_chars,
+                target_title=target_title, target_subject_type=target_subject_type,
+                target_aliases=aliases, excluded_titles=excluded_titles,
             )
             selected_plan = fallback_plan
         observations.append(Observation(selected_plan, compact))
@@ -695,6 +992,8 @@ def _trajectory(
             "corpus_chunk_id": primary["chunk_id"],
             "secondary_corpus_chunk_id": (secondary or {}).get("chunk_id"),
             "primary_title": _title(primary), "secondary_title": _title(secondary or {}) or None,
+            "primary_aliases": list(_target_aliases(primary)),
+            "secondary_aliases": list(_target_aliases(secondary)) if secondary is not None else [],
             "subject_type": classify_subject(primary),
             "seed_history_score": primary.get("history_score"),
             "seed_content_facets": (
@@ -834,7 +1133,8 @@ def build_custom_trajectories(
                 plans,
                 retriever,
                 task_type=task_type,
-                subject_title=_title(primary),
+                primary=primary,
+                secondary=secondary,
                 config=config,
                 observation_slots=observation_slots,
             )
@@ -858,6 +1158,9 @@ def build_custom_trajectories(
                     plan, task_type=task_type,
                     observation_char_budget=slot_budget,
                     max_result_text_chars=config.max_result_text_chars,
+                    target_title=_title(primary),
+                    target_subject_type=classify_subject(primary),
+                    target_aliases=_target_aliases(primary),
                 )))
             row = _trajectory(
                 task_type=task_type, question=question, claim=claim,

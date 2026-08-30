@@ -5,6 +5,11 @@ import math
 from collections import Counter
 from typing import Any, Iterable
 
+from .builders.custom_history import (
+    is_result_relevant_to_target,
+    result_text_mentions_target,
+    title_implied_subject_type,
+)
 from .citations import extract_evidence_citations
 from .dedup import first_user_question, normalized_question
 from .preprocess import analyze_truncation
@@ -69,6 +74,23 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         provenance = row.get("provenance") or {}
         task = str(row.get("task_type") or "")
         subject = str(provenance.get("subject_type") or "unknown")
+        source_dataset = str(row.get("source_dataset") or "")
+        primary_title = str(provenance.get("primary_title") or "")
+        secondary_title = str(provenance.get("secondary_title") or "")
+        primary_aliases = provenance.get("primary_aliases") or []
+        secondary_aliases = provenance.get("secondary_aliases") or []
+        if not isinstance(primary_aliases, list):
+            primary_aliases = []
+        if not isinstance(secondary_aliases, list):
+            secondary_aliases = []
+        if source_dataset.startswith("custom_history") and primary_title:
+            implied_type = title_implied_subject_type(primary_title)
+            if implied_type is not None and implied_type != subject:
+                issue("subject_type_mismatch", row)
+            secondary_type = str(provenance.get("secondary_subject_type") or "")
+            secondary_implied_type = title_implied_subject_type(secondary_title)
+            if secondary_title and secondary_implied_type is not None and secondary_implied_type != secondary_type:
+                issue("subject_type_mismatch", row)
         question_key = normalized_question(first_user_question(row))
         if question_key in seen_questions:
             issue("duplicate_normalized_questions", row)
@@ -125,6 +147,10 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         results_by_role = {role: payload for role, payload in zip(roles, payloads)}
         direct_verification_present = bool(results_by_role.get("claim_support"))
         trajectory_chars = 0
+        semantic_result_by_id: dict[str, bool] = {}
+        semantic_role_by_id: dict[str, str] = {}
+        observation_target_mismatch = False
+        compare_target_contamination = False
         for index, payload in enumerate(payloads):
             total_results += 1
             encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -138,6 +164,50 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             )
             role = roles[index]
             metadata = query_metadata[index] if index < len(query_metadata) and isinstance(query_metadata[index], dict) else {}
+            target_title = secondary_title if role == "target_b" else primary_title
+            target_type = str(provenance.get("secondary_subject_type") or "") if role == "target_b" else subject
+            target_aliases = secondary_aliases if role == "target_b" else primary_aliases
+            other_title = primary_title if role == "target_b" else secondary_title if role == "target_a" else ""
+            other_type = subject if role == "target_b" else str(provenance.get("secondary_subject_type") or "")
+            other_aliases = primary_aliases if role == "target_b" else secondary_aliases
+            for result in payload:
+                if not isinstance(result, dict) or not target_title:
+                    continue
+                result_id = str(result.get("chunk_id") or result.get("evidence_id") or "")
+                relevant = is_result_relevant_to_target(
+                    result,
+                    target_title=target_title,
+                    target_subject_type=target_type,
+                    retrieval_role=role,
+                    target_aliases=target_aliases,
+                )
+                if target_type == "person" and role in {
+                    "factual", "biography_timeline", "role_contribution", "target_a", "target_b",
+                    "claim_support",
+                }:
+                    relevant = relevant and result_text_mentions_target(
+                        result, target_title=target_title, target_aliases=target_aliases,
+                    )
+                result_text_norm = normalized_question(str(result.get("text") or ""))
+                if role == "corrective_facet":
+                    relevant = relevant and any(
+                        cue in result_text_norm
+                        for cue in ("khó khăn", "hạn chế", "thất bại", "suy yếu", "bất lợi", "khủng hoảng", "sa lầy")
+                    )
+                if role == "unsupported_claim":
+                    relevant = relevant and "z 1901" in result_text_norm
+                semantic_result_by_id[result_id] = relevant
+                semantic_role_by_id[result_id] = role
+                observation_target_mismatch = observation_target_mismatch or not relevant
+                if task == "compare" and other_title:
+                    contaminates = is_result_relevant_to_target(
+                        result,
+                        target_title=other_title,
+                        target_subject_type=other_type,
+                        retrieval_role=role,
+                        target_aliases=other_aliases,
+                    )
+                    compare_target_contamination = compare_target_contamination or contaminates or not relevant
             required = bool(metadata.get("required", False))
             expected_empty = bool(metadata.get("expected_empty", False))
             if "required" not in metadata and "expected_empty" not in metadata:
@@ -170,6 +240,10 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                     role_counter["unexpected_empty_tool_results"] += 1
                     if str(row.get("source_dataset") or "").startswith("custom_history"):
                         issue("unexpected_empty_tool_results", row)
+        if source_dataset.startswith("custom_history") and observation_target_mismatch:
+            issue("observation_target_mismatch", row)
+        if source_dataset.startswith("custom_history") and compare_target_contamination:
+            issue("compare_target_contamination", row)
         configured_budget = provenance.get("trajectory_observation_char_budget")
         if isinstance(configured_budget, int) and trajectory_chars > configured_budget:
             issue("trajectory_observation_budget_exceeded", row)
@@ -179,6 +253,28 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         declared = {str(value) for value in provenance.get("evidence_ids", [])}
         if parsed_citations.unknown_ids or not citations.issubset(observed_ids) or not declared.issubset(observed_ids):
             issue("grounded_answer_invalid_observed_citations", row)
+        final_target_mismatch = source_dataset.startswith("custom_history") and any(
+            not semantic_result_by_id.get(citation, False) for citation in citations
+        )
+        if (
+            source_dataset.startswith("custom_history")
+            and task == "compare"
+            and not "chưa đủ bằng chứng" in final_answer.casefold()
+            and {semantic_role_by_id.get(citation) for citation in citations} != {"target_a", "target_b"}
+        ):
+            final_target_mismatch = True
+        final_target_mismatch = final_target_mismatch or (
+            source_dataset.startswith("custom_history")
+            and subject == "person"
+            and task != "insufficient_evidence"
+            and not "chưa đủ bằng chứng" in final_answer.casefold()
+            and primary_title
+            and not result_text_mentions_target(
+                {"text": final_answer}, target_title=primary_title, target_aliases=primary_aliases,
+            )
+        )
+        if final_target_mismatch:
+            issue("final_answer_target_mismatch", row)
         explicitly_insufficient = "chưa đủ bằng chứng" in final_answer.casefold()
         if (declared or (provenance.get("grounded") and observed_ids)) and not citations and not explicitly_insufficient:
             issue("grounded_answer_missing_citation", row)
@@ -191,6 +287,8 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "multihop_fewer_than_2_tool_calls", "duplicate_normalized_questions",
         "grounded_answer_invalid_observed_citations", "grounded_answer_missing_citation",
         "unexpected_empty_tool_results", "trajectory_observation_budget_exceeded",
+        "subject_type_mismatch", "observation_target_mismatch",
+        "final_answer_target_mismatch", "compare_target_contamination",
     }
     strict_violations = sum(issue_counts[name] for name in strict_issue_names)
     return {
