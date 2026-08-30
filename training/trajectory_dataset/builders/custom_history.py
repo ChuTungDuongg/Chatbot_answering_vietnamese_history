@@ -62,16 +62,19 @@ METADATA_FIELDS = {
 TITLE_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("document", ("hiệp định", "hiệp ước", "hòa ước", "tuyên ngôn", "chiếu ", "sắc lệnh", "văn kiện")),
     ("event", (
-        "hội nghị", "đảo chính", "trận ", "chiến thắng", "chiến dịch", "khởi nghĩa",
+        "đảo chính", "trận ", "chiến thắng", "chiến dịch", "khởi nghĩa",
         "cách mạng", "phong trào", "chiến tranh", "cuộc chiến", "tổng tiến công",
         "biến cố", "giải bóng đá", "đại hội thể thao",
     )),
     ("organization", (
         "đảng ", "hội ", "mặt trận", "việt minh", "tổ chức", "quân đội",
         "không quân", "hải quân", "lục quân", "quân chủng", "binh chủng",
-        "lực lượng", "chính phủ", "ủy ban", "liên minh", "trường quân",
+        "lực lượng", "chính phủ", "ủy ban", "liên minh",
     )),
-    ("state", ("việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam", "đại cồ việt", "vương quốc", "quốc gia", "chính quyền")),
+    ("state", (
+        "việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam",
+        "đại cồ việt", "vương quốc", "đế quốc", "quốc gia", "chính quyền",
+    )),
     ("dynasty", ("triều đại", "vương triều", "triều ", "chúa nguyễn", "chúa trịnh")),
     ("location", (
         "thành phố", "tỉnh ", "huyện ", "quận ", "xã ", "phường ",
@@ -84,6 +87,10 @@ STRONG_LOCATION_LABELS = {
     "thanh pho", "tinh", "huyen", "xa", "phuong", "thi tran",
     "thi xa", "lang", "thon", "ap", "ban", "buon", "dia danh", "tru so",
 }
+ORGANIZATION_TITLE_PREFIXES = (
+    "cơ quan", "bộ tư lệnh", "bộ quốc phòng", "trung tâm", "trường",
+    "học viện", "viện nghiên cứu", "viện hàn lâm", "viện kiểm sát", "văn phòng",
+)
 PERSON_TEXT_CUES = (
     "sinh nam", "sinh ngay", "qua doi", "mat nam", "ten that", "ong la",
     "ba la", "vi vua", "danh tuong", "nha cach mang", "chinh tri gia",
@@ -298,6 +305,16 @@ def title_implied_subject_type(title: str) -> str | None:
         for cue in CULTURAL_TOPIC_CUES
     ):
         return "topic"
+    # A conference title denotes an event; embedded phrases such as
+    # ``Trung tâm Hội nghị ...`` do not inherit that type.
+    if title_norm == "hoi nghi" or title_norm.startswith("hoi nghi "):
+        return "event"
+    title_entity = _entity_norm(title)
+    if any(
+        title_entity == prefix or title_entity.startswith(f"{prefix} ")
+        for prefix in ORGANIZATION_TITLE_PREFIXES
+    ):
+        return "organization"
     title_tokens = title_norm.split()
     if len(title_tokens) >= 2 and title_tokens[0] == "nha" and title_tokens[1] not in DYNASTY_NON_CUES:
         return "dynasty"
@@ -321,20 +338,30 @@ def _contains_norm_phrase(text: Any, phrase: Any) -> bool:
 
 
 def _biographical_person_evidence(title: str, text: Any) -> bool:
+    title_variants = tuple(
+        dict.fromkeys(
+            _match_norm(variant)
+            for variant in (title, _title_without_parenthetical(title))
+            if _match_norm(variant)
+        )
+    )
     sentences = _split_sentences(text)
     if not sentences:
         sentences = [_plain(text)] if _plain(text) else []
     for sentence in sentences:
         sentence_norm = _match_norm(sentence)
-        mentions_title = _contains_norm_phrase(sentence, title)
-        has_biography_cue = any(
-            f" {cue} " in f" {sentence_norm} " for cue in PERSON_TEXT_CUES
-        )
-        has_activity_cue = any(
-            f" {cue} " in f" {sentence_norm} " for cue in PERSON_ACTIVITY_CUES
-        )
-        has_lifespan = bool(re.search(r"\b\d{3,4}\s*[-–—]\s*\d{3,4}\b", sentence))
-        if mentions_title and (has_biography_cue or has_activity_cue or has_lifespan):
+        if any(
+            re.search(
+                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,7}} "
+                rf"(?:la (?:mot )?(?:nguoi|nhan vat|vua|hoang de|danh tuong|tuong linh|"
+                rf"si quan|chinh tri gia|dai bieu|doanh nhan|quan lai|can bo|giao su|hoc gia|"
+                rf"su gia|tac gia|dao dien|giao si|linh muc|giam muc|nha [a-z0-9]+)|"
+                rf"sinh|qua doi|mat|giu chuc|dam nhiem|lanh dao|chi huy|"
+                rf"tham gia|hoat dong|duoc bo nhiem|duoc phong|sang lap|dung dau|phuc vu)\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        ):
             return True
     if sentences:
         first_norm = _match_norm(sentences[0])
@@ -349,35 +376,71 @@ def _has_dynasty_evidence(row: dict[str, Any], implied_type: str | None) -> bool
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     if _entity_matches_title(title, metadata.get("dynasties")):
         return True
-    for sentence in _split_sentences(row.get("text")):
-        if not _contains_norm_phrase(sentence, title):
-            continue
-        sentence_norm = _match_norm(sentence)
-        if any(
-            f" {cue} " in f" {sentence_norm} "
-            for cue in ("trieu dai", "vuong trieu", "trieu", "hoang trieu")
-        ):
-            return True
     return False
 
 
 def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
     """Use only target-linked definitional language to correct noisy extracted labels."""
     title = _title(row)
+    title_variants = tuple(
+        dict.fromkeys(
+            _match_norm(variant)
+            for variant in (title, _title_without_parenthetical(title))
+            if _match_norm(variant)
+        )
+    )
+    combined_norm = _match_norm(row.get("text"))
+    if _match_norm(title).startswith("ky ") and any(
+        f" {cue} " in f" {combined_norm} "
+        for cue in (
+            "dia chat", "co sinh vat", "dai co sinh", "ky trias", "ky tam diep",
+            "ky cambri", "trieu nam truoc",
+        )
+    ):
+        return "topic"
+
+    def defines(sentence_norm: str, predicate: str) -> bool:
+        return any(
+            re.search(
+                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,6}} la (?:mot )?{predicate}\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        )
+
     for sentence in _split_sentences(row.get("text")):
-        if not _contains_norm_phrase(sentence, title):
+        if not any(
+            _contains_norm_phrase(sentence, variant)
+            for variant in (title, _title_without_parenthetical(title))
+            if variant
+        ):
             continue
         sentence_norm = _match_norm(sentence)
-        if re.search(r"\bla (?:mot )?(?:vuong quoc|de quoc|quoc gia|nha nuoc|chinh the)\b", sentence_norm):
-            return "state"
-        if re.search(
-            r"\bla (?:mot )?(?:cuoc thi|chuong trinh truyen hinh|chuong trinh thuc te)\b",
+        if defines(
             sentence_norm,
+            r"(?:vuong quoc|de quoc|quoc gia|nha nuoc|chinh the|dat nuoc|cong hoa|dao quoc)",
+        ):
+            return "state"
+        if defines(sentence_norm, r"(?:trieu dai|vuong trieu|hoang trieu)"):
+            return "dynasty"
+        if defines(
+            sentence_norm,
+            r"(?:co quan|to chuc|giao hoi|uy ban|bo tu lenh|binh chung|"
+            r"quan chung|truong|hoc vien|vien nghien cuu)",
+        ):
+            return "organization"
+        if defines(
+            sentence_norm,
+            r"(?:cuoc thi|chuong trinh truyen hinh|chuong trinh thuc te)",
         ):
             return "topic"
-        if re.search(r"\bla (?:mot )?(?:giai dau|su kien|cuoc hop|hoi nghi)\b", sentence_norm):
+        if defines(sentence_norm, r"(?:giai dau|su kien|cuoc hop|hoi nghi)"):
             return "event"
-        if re.search(r"\bla (?:mot )?(?:loai hinh|the loai|khai niem|hoc thuyet|cap bac)\b", sentence_norm):
+        if defines(
+            sentence_norm,
+            r"(?:loai hinh|the loai|khai niem|hoc thuyet|cap bac|ky dia chat|"
+            r"ky trong (?:nien dai|thang dia tang) dia chat|thoi ky dia chat)",
+        ):
             return "topic"
     return None
 
@@ -401,12 +464,20 @@ def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> b
 def classify_subject(row: dict[str, Any]) -> str:
     """Classify conservatively: strong evidence is required to emit ``person``."""
     title = _title(row)
-    implied_type = title_implied_subject_type(title) or _text_implied_subject_type(row)
+    title_implied_type = title_implied_subject_type(title)
+    text_implied_type = _text_implied_subject_type(row)
+    implied_type = title_implied_type or text_implied_type
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     explicit = _match_norm(
         metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
     )
     if explicit in SUBJECT_TYPES:
+        if (
+            explicit == "person"
+            and title_implied_type is None
+            and _biographical_person_evidence(title, row.get("text"))
+        ):
+            return "person"
         if _semantic_title_overrides(explicit, implied_type):
             return str(implied_type)
         if explicit == "dynasty" and not _has_dynasty_evidence(row, implied_type):
@@ -657,12 +728,15 @@ def _metadata_mentions_target(metadata: Any, variants: tuple[str, ...]) -> bool:
 def is_result_relevant_to_target(
     result: dict[str, Any], *, target_title: str, target_subject_type: str,
     retrieval_role: str, target_aliases: Iterable[str] = (),
+    require_selected_person_text: bool = False,
 ) -> bool:
     """Deterministically reject lexical hits that are not anchored to the target."""
     del retrieval_role
     variants = _subject_entity_variants(target_title, target_subject_type, target_aliases)
     if not variants:
         return False
+    if require_selected_person_text and target_subject_type == "person":
+        return _contains_entity_variant(result.get("text"), variants)
     result_title_variants = _entity_variants(_title(result))
     title_match = bool(set(variants) & set(result_title_variants))
     return (
@@ -704,7 +778,8 @@ def _target_formation_score(
 def _strong_formation_score(sentence_norm: str) -> int:
     """Recognize formation statements even when the exact-title article uses an implicit subject."""
     return int(bool(re.search(
-        r"^(?:da |chinh thuc )?(?:duoc )?(?:hinh thanh|thanh lap|ra doi)(?: |$)",
+        r"^(?:da |chinh thuc )?(?:duoc )?(?:hinh thanh|thanh lap|ra doi)"
+        r"(?: vao| tu| trong| sau| truoc| nam| \d|$)",
         sentence_norm,
     )))
 
@@ -953,6 +1028,12 @@ def _compact_result(
         target_aliases=target_aliases, excluded_titles=excluded_titles,
     )
     if not chunk_id or not text:
+        return None
+    if target_title and not is_result_relevant_to_target(
+        {**result, "text": text}, target_title=target_title,
+        target_subject_type=target_subject_type, retrieval_role=plan.role,
+        target_aliases=target_aliases, require_selected_person_text=True,
+    ):
         return None
     compact: dict[str, Any] = {
         "chunk_id": chunk_id, "title": _plain(result.get("title")), "text": text,

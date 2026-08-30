@@ -156,9 +156,11 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             issue("analytical_invalid_subject", row)
         if task == "compare":
             secondary_type = str(provenance.get("secondary_subject_type") or "")
+            primary_compare_record = audit_subject_record(primary_title, subject, secondary=False)
+            secondary_compare_record = audit_subject_record(secondary_title, secondary_type, secondary=True)
             if not secondary_type or not compare_subjects_compatible(
-                {"title": primary_title, "metadata": {"subject_type": subject}},
-                {"title": secondary_title, "metadata": {"subject_type": secondary_type}},
+                primary_compare_record,
+                secondary_compare_record,
             ):
                 issue("compare_type_mismatch", row)
             first = normalized_question(str(provenance.get("primary_title") or ""))
@@ -222,14 +224,8 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                     target_subject_type=target_type,
                     retrieval_role=role,
                     target_aliases=target_aliases,
+                    require_selected_person_text=True,
                 )
-                if target_type == "person" and role in {
-                    "factual", "biography_timeline", "role_contribution", "target_a", "target_b",
-                    "claim_support",
-                }:
-                    entity_relevant = entity_relevant and result_text_mentions_target(
-                        result, target_title=target_title, target_aliases=target_aliases,
-                    )
                 facet_relevant = is_result_facet_relevant(
                     result,
                     query=str(metadata.get("query") or ""),

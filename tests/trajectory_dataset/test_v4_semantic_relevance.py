@@ -13,6 +13,7 @@ from training.trajectory_dataset.builders.custom_history import (
     build_custom_trajectories,
     classify_subject,
     compact_observation,
+    compare_subjects_compatible,
     is_custom_history_eligible,
     is_result_relevant_to_target,
     is_vietnam_history_relevant,
@@ -120,7 +121,17 @@ def test_general_subject_typing_distinguishes_military_organization_dynasty_and_
     ("title", "text", "declared", "expected"),
     [
         ("Asian Idol", "Asian Idol là một cuộc thi ca hát theo dạng Pop Idol.", "person", "topic"),
+        ("Kỷ Permi", "Kỷ Permi là một kỷ địa chất trong đại Cổ sinh.", "person", "topic"),
+        (
+            "Tam Pháp Ty (nhà Nguyễn)",
+            "Tam Pháp Ty là cơ quan nhận đơn khiếu nại dưới triều Nguyễn.",
+            "dynasty", "organization",
+        ),
         ("Srivijaya", "Srivijaya là một đế quốc hàng hải từng tồn tại ở Đông Nam Á.", "person", "state"),
+        ("México", "México là một quốc gia tại Bắc Mỹ.", "person", "state"),
+        ("Nhà Mạc", "Nhà Mạc là một triều đại Việt Nam.", "dynasty", "dynasty"),
+        ("Nhà Nguyễn", "Nhà Nguyễn là một triều đại Việt Nam.", "dynasty", "dynasty"),
+        ("Ngô Xuân Lịch", "Ngô Xuân Lịch sinh năm 1954 và là một tướng lĩnh.", "person", "person"),
         (
             "Giải bóng đá Vô địch U-21 Quốc gia 2015",
             "Giải bóng đá Vô địch U-21 Quốc gia 2015 có vòng bảng và trận chung kết.",
@@ -206,6 +217,72 @@ def test_history_eligibility_requires_strong_historical_semantics(
         "subject_type": declared, "years": [2007], "events": [title],
     }}
     assert is_custom_history_eligible(row) is eligible
+
+
+def test_compare_type_contract_allows_semantic_peers_and_rejects_dynasty_institution():
+    nha_mac = {
+        "title": "Nhà Mạc", "text": "Nhà Mạc là một triều đại từ năm 1527.",
+        "metadata": {"subject_type": "dynasty"},
+    }
+    nha_nguyen = {
+        "title": "Nhà Nguyễn", "text": "Nhà Nguyễn là một triều đại từ năm 1802.",
+        "metadata": {"subject_type": "dynasty"},
+    }
+    tam_phap_ty = {
+        "title": "Tam Pháp Ty (nhà Nguyễn)",
+        "text": "Tam Pháp Ty là cơ quan tư pháp được lập năm 1832 dưới triều Nguyễn.",
+        "metadata": {"subject_type": "dynasty"},
+    }
+    nguyen_binh = person("nb", "Nguyễn Bình", "Nguyễn Bình sinh năm 1908 và là tướng lĩnh.")
+    vo_nguyen_giap = person("vng", "Võ Nguyên Giáp", "Võ Nguyên Giáp sinh năm 1911 và là đại tướng.")
+    first_event = event("e1", "Hội nghị Mẫu 1946", "Hội nghị Mẫu diễn ra năm 1946.")
+    second_event = event("e2", "Hội nghị Khác 1954", "Hội nghị Khác diễn ra năm 1954.")
+
+    assert compare_subjects_compatible(nha_mac, nha_nguyen)
+    assert compare_subjects_compatible(nguyen_binh, vo_nguyen_giap)
+    assert compare_subjects_compatible(first_event, second_event)
+    assert not compare_subjects_compatible(nha_mac, tam_phap_ty)
+
+
+def test_builder_skips_incompatible_compare_before_quota_and_finds_dynasty_peer(tmp_path: Path):
+    nha_mac = {
+        "chunk_id": "mac", "title": "Nhà Mạc",
+        "text": "Nhà Mạc là một triều đại trị vì từ năm 1527 và có vai trò lịch sử.",
+        "metadata": {"subject_type": "dynasty", "dynasties": ["Nhà Mạc"]},
+    }
+    tam_phap_ty = {
+        "chunk_id": "tam-phap-ty", "title": "Tam Pháp Ty (nhà Nguyễn)",
+        "text": "Tam Pháp Ty là cơ quan tư pháp được lập năm 1832 và có vai trò xét xử.",
+        "metadata": {"subject_type": "dynasty", "dynasties": ["Nhà Nguyễn"]},
+    }
+    nha_nguyen = {
+        "chunk_id": "nguyen", "title": "Nhà Nguyễn",
+        "text": "Nhà Nguyễn là một triều đại trị vì từ năm 1802 và có vai trò lịch sử.",
+        "metadata": {"subject_type": "dynasty", "dynasties": ["Nhà Nguyễn"]},
+    }
+    records = [nha_mac, tam_phap_ty, nha_nguyen]
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            matches = sorted(
+                (record for record in records if record["title"] in query),
+                key=lambda record: len(record["title"]), reverse=True,
+            )
+            return matches[:1]
+
+    config = CustomBuildConfig(
+        task_counts={"compare": 1}, top_k=6, seed=17, max_corpus_records=3,
+        max_candidate_attempts_per_task=20,
+    )
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, records), Retriever(), config=config,
+    ))[0]
+    assert {
+        row["provenance"]["primary_title"], row["provenance"]["secondary_title"],
+    } == {"Nhà Mạc", "Nhà Nguyễn"}
+    assert "Tam Pháp Ty (nhà Nguyễn)" not in {
+        row["provenance"]["primary_title"], row["provenance"]["secondary_title"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -355,11 +432,18 @@ def test_entity_relevance_rejects_similar_name_and_accepts_explicit_broader_arti
     assert is_result_relevant_to_target(broader, **kwargs)
 
 
-def test_full_builder_rejects_surname_article_for_multi_token_person(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("target_title", "target_text"),
+    [
+        ("Ngô Nhĩ Khai Hy", "Ngô Nhĩ Khai Hy là nhà lãnh đạo và hoạt động từ năm 1989."),
+        ("Ngô Xuân Lịch", "Ngô Xuân Lịch sinh năm 1954 và giữ vai trò tướng lĩnh."),
+    ],
+)
+def test_full_builder_rejects_surname_article_for_multi_token_person(
+    tmp_path: Path, target_title: str, target_text: str,
+):
     target = person(
-        "ngo-nhi-khai-hy",
-        "Ngô Nhĩ Khai Hy",
-        "Ngô Nhĩ Khai Hy là nhà lãnh đạo phong trào dân chủ và hoạt động từ năm 1989.",
+        "exact-target", target_title, target_text,
     )
     surname_article = {
         "chunk_id": "ngo-surname",
@@ -381,7 +465,7 @@ def test_full_builder_rejects_surname_article_for_multi_token_person(tmp_path: P
     payload = json.loads(next(
         message["content"] for message in row["messages"] if message["role"] == "tool"
     ))
-    assert [result["chunk_id"] for result in payload] == ["ngo-nhi-khai-hy"]
+    assert [result["chunk_id"] for result in payload] == ["exact-target"]
     assert "Ngô Ngạn Tổ" not in row["messages"][-1]["content"]
 
 
@@ -622,6 +706,25 @@ def test_cause_facet_rejects_decree_quote_and_authorship_as_background():
     assert compact == []
 
 
+def test_cause_facet_accepts_actual_background_leading_to_decree():
+    title = "Chiếu thoái vị của Bảo Đại"
+    plan = QueryPlan("search_history", f"{title} bối cảnh nguyên nhân", 4, "context_cause")
+    background = {
+        "chunk_id": "decree-background",
+        "title": title,
+        "text": (
+            "Thắng lợi của Cách mạng tháng Tám tạo nên tình thế chính trị mới, "
+            "dẫn đến việc ban hành Chiếu thoái vị của Bảo Đại."
+        ),
+        "metadata": {"subject_type": "document"},
+    }
+    compact = compact_observation(
+        [background], plan, task_type="cause", observation_char_budget=2_000,
+        max_result_text_chars=500, target_title=title, target_subject_type="document",
+    )
+    assert [result["chunk_id"] for result in compact] == ["decree-background"]
+
+
 def test_full_builder_selects_formation_sentence_and_rejects_late_strategy(tmp_path: Path):
     title = "Không quân Nhân dân Triều Tiên"
     seed = {
@@ -859,6 +962,61 @@ def test_strict_audit_catches_organization_as_dynasty_and_missing_history_eviden
     report = audit_rows([row], strict_custom=True)
     assert report["issues"]["subject_type_mismatch"] == 1
     assert report["issues"]["domain_mismatch"] == 1
+    assert not report["valid"]
+
+
+def test_strict_audit_flags_incompatible_dynasty_institution_compare():
+    row = make_trajectory(
+        trajectory_id="bad-compare-types",
+        source_dataset="custom_history",
+        task_type="compare",
+        messages=[
+            {"role": "user", "content": "So sánh Nhà Mạc và Tam Pháp Ty."},
+            {"role": "assistant", "content": "Chưa đủ bằng chứng."},
+        ],
+        tools=[],
+        difficulty="medium",
+        provenance={
+            "subject_type": "dynasty", "primary_title": "Nhà Mạc",
+            "secondary_subject_type": "dynasty",
+            "secondary_title": "Tam Pháp Ty (nhà Nguyễn)",
+            "source_group": "bad-pair", "requires_final_answer": True,
+        },
+    )
+    report = audit_rows([row], strict_custom=True)
+    assert report["issues"]["subject_type_mismatch"] == 1
+    assert report["issues"]["compare_type_mismatch"] == 1
+    assert not report["valid"]
+
+
+def test_strict_audit_flags_surname_only_person_observation_even_with_metadata(tmp_path: Path):
+    target = person(
+        "ngo-xuan-lich", "Ngô Xuân Lịch",
+        "Ngô Xuân Lịch sinh năm 1954 và giữ vai trò tướng lĩnh.",
+    )
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [target]
+
+    corrupted = list(build_custom_trajectories(
+        write_corpus(tmp_path, [target]), Retriever(), config=factual_config(),
+    ))[0]
+    surname = {
+        "chunk_id": "ngo-surname", "title": "Ngô (họ)",
+        "text": "Ngô Giáp Đậu, Ngô Đức Kế, Ngô Gia Tự và Ngô Đình Diệm.",
+        "metadata": {"people": ["Ngô Xuân Lịch"]},
+        "retrieval_role": "factual",
+    }
+    tool_message = next(message for message in corrupted["messages"] if message["role"] == "tool")
+    tool_message["content"] = json.dumps([surname], ensure_ascii=False)
+    corrupted["messages"][-1]["content"] = "Danh sách người mang họ Ngô. [ngo-surname]"
+    corrupted["provenance"]["observed_evidence_ids"] = ["ngo-surname"]
+    corrupted["provenance"]["evidence_ids"] = ["ngo-surname"]
+
+    report = audit_rows([corrupted], strict_custom=True)
+    assert report["issues"]["observation_target_mismatch"] == 1
+    assert report["issues"]["final_answer_target_mismatch"] == 1
     assert not report["valid"]
 
 
