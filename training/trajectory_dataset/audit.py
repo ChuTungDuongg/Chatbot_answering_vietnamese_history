@@ -6,6 +6,7 @@ from collections import Counter
 from typing import Any, Iterable
 
 from .builders.custom_history import (
+    is_result_facet_relevant,
     is_result_relevant_to_target,
     result_text_mentions_target,
     title_implied_subject_type,
@@ -147,9 +148,11 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         results_by_role = {role: payload for role, payload in zip(roles, payloads)}
         direct_verification_present = bool(results_by_role.get("claim_support"))
         trajectory_chars = 0
-        semantic_result_by_id: dict[str, bool] = {}
+        semantic_entity_by_id: dict[str, bool] = {}
+        semantic_facet_by_id: dict[str, bool] = {}
         semantic_role_by_id: dict[str, str] = {}
         observation_target_mismatch = False
+        observation_facet_mismatch = False
         compare_target_contamination = False
         for index, payload in enumerate(payloads):
             total_results += 1
@@ -174,7 +177,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 if not isinstance(result, dict) or not target_title:
                     continue
                 result_id = str(result.get("chunk_id") or result.get("evidence_id") or "")
-                relevant = is_result_relevant_to_target(
+                entity_relevant = is_result_relevant_to_target(
                     result,
                     target_title=target_title,
                     target_subject_type=target_type,
@@ -185,20 +188,23 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                     "factual", "biography_timeline", "role_contribution", "target_a", "target_b",
                     "claim_support",
                 }:
-                    relevant = relevant and result_text_mentions_target(
+                    entity_relevant = entity_relevant and result_text_mentions_target(
                         result, target_title=target_title, target_aliases=target_aliases,
                     )
-                result_text_norm = normalized_question(str(result.get("text") or ""))
-                if role == "corrective_facet":
-                    relevant = relevant and any(
-                        cue in result_text_norm
-                        for cue in ("khó khăn", "hạn chế", "thất bại", "suy yếu", "bất lợi", "khủng hoảng", "sa lầy")
-                    )
-                if role == "unsupported_claim":
-                    relevant = relevant and "z 1901" in result_text_norm
-                semantic_result_by_id[result_id] = relevant
+                facet_relevant = is_result_facet_relevant(
+                    result,
+                    query=str(metadata.get("query") or ""),
+                    task_type=task,
+                    retrieval_role=role,
+                    target_subject_type=target_type,
+                    target_title=target_title,
+                    target_aliases=target_aliases,
+                )
+                semantic_entity_by_id[result_id] = entity_relevant
+                semantic_facet_by_id[result_id] = facet_relevant
                 semantic_role_by_id[result_id] = role
-                observation_target_mismatch = observation_target_mismatch or not relevant
+                observation_target_mismatch = observation_target_mismatch or not entity_relevant
+                observation_facet_mismatch = observation_facet_mismatch or not facet_relevant
                 if task == "compare" and other_title:
                     contaminates = is_result_relevant_to_target(
                         result,
@@ -207,7 +213,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                         retrieval_role=role,
                         target_aliases=other_aliases,
                     )
-                    compare_target_contamination = compare_target_contamination or contaminates or not relevant
+                    compare_target_contamination = compare_target_contamination or contaminates or not entity_relevant
             required = bool(metadata.get("required", False))
             expected_empty = bool(metadata.get("expected_empty", False))
             if "required" not in metadata and "expected_empty" not in metadata:
@@ -242,6 +248,8 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                         issue("unexpected_empty_tool_results", row)
         if source_dataset.startswith("custom_history") and observation_target_mismatch:
             issue("observation_target_mismatch", row)
+        if source_dataset.startswith("custom_history") and observation_facet_mismatch:
+            issue("observation_facet_mismatch", row)
         if source_dataset.startswith("custom_history") and compare_target_contamination:
             issue("compare_target_contamination", row)
         configured_budget = provenance.get("trajectory_observation_char_budget")
@@ -253,14 +261,18 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         declared = {str(value) for value in provenance.get("evidence_ids", [])}
         if parsed_citations.unknown_ids or not citations.issubset(observed_ids) or not declared.issubset(observed_ids):
             issue("grounded_answer_invalid_observed_citations", row)
+        answer_evidence_ids = citations | declared
         final_target_mismatch = source_dataset.startswith("custom_history") and any(
-            not semantic_result_by_id.get(citation, False) for citation in citations
+            not semantic_entity_by_id.get(evidence_id, False) for evidence_id in answer_evidence_ids
+        )
+        final_facet_mismatch = source_dataset.startswith("custom_history") and any(
+            not semantic_facet_by_id.get(evidence_id, False) for evidence_id in answer_evidence_ids
         )
         if (
             source_dataset.startswith("custom_history")
             and task == "compare"
             and not "chưa đủ bằng chứng" in final_answer.casefold()
-            and {semantic_role_by_id.get(citation) for citation in citations} != {"target_a", "target_b"}
+            and {semantic_role_by_id.get(evidence_id) for evidence_id in answer_evidence_ids} != {"target_a", "target_b"}
         ):
             final_target_mismatch = True
         final_target_mismatch = final_target_mismatch or (
@@ -275,6 +287,8 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         )
         if final_target_mismatch:
             issue("final_answer_target_mismatch", row)
+        if final_facet_mismatch:
+            issue("final_answer_facet_mismatch", row)
         explicitly_insufficient = "chưa đủ bằng chứng" in final_answer.casefold()
         if (declared or (provenance.get("grounded") and observed_ids)) and not citations and not explicitly_insufficient:
             issue("grounded_answer_missing_citation", row)
@@ -289,6 +303,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "unexpected_empty_tool_results", "trajectory_observation_budget_exceeded",
         "subject_type_mismatch", "observation_target_mismatch",
         "final_answer_target_mismatch", "compare_target_contamination",
+        "observation_facet_mismatch", "final_answer_facet_mismatch",
     }
     strict_violations = sum(issue_counts[name] for name in strict_issue_names)
     return {

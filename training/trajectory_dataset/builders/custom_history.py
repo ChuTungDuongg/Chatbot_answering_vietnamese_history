@@ -96,7 +96,8 @@ ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
     "wrong_facet": ("thanh cong", "thang loi", "uu the", "thuan loi"),
 }
 NON_PERSON_TOPIC_PREFIXES = (
-    "chu ", "tieng ", "van hoa ", "ngon ngu ", "chu viet ", "van hoc ",
+    "chu", "tieng", "van hoa", "ngon ngu", "chu viet", "van hoc",
+    "ly hoc", "nho giao", "phat giao", "chu nghia",
 )
 ALIAS_METADATA_FIELDS = (
     "aliases", "alias", "alternative_names", "alternate_names", "other_names",
@@ -221,7 +222,10 @@ def title_implied_subject_type(title: str) -> str | None:
         for label in STRONG_LOCATION_LABELS
     ):
         return "location"
-    if any(title_norm.startswith(prefix) for prefix in NON_PERSON_TOPIC_PREFIXES):
+    if any(
+        title_norm == prefix or title_norm.startswith(f"{prefix} ")
+        for prefix in NON_PERSON_TOPIC_PREFIXES
+    ):
         return "topic"
     title_words = " " + " ".join(
         re.findall(r"\w+", title.casefold(), flags=re.UNICODE)
@@ -446,7 +450,9 @@ def _facet_score(
     padded = f" {sentence_norm} "
     terms = ROLE_FACET_TERMS.get(retrieval_role, TASK_TERMS.get(task_type, ()))
     score = sum(f" {_match_norm(term)} " in padded for term in terms if _match_norm(term))
-    if re.search(r"\b\d{3,4}\b", sentence):
+    if retrieval_role in {"biography_timeline", "context_timeline", "target_a", "target_b"} and re.search(
+        r"\b\d{3,4}\b", sentence,
+    ):
         score += 1
     if retrieval_role in {"claim_support", "corroboration", "external_corroboration"}:
         target_terms = {
@@ -473,6 +479,38 @@ def _facet_is_required(retrieval_role: str) -> bool:
         "result_significance", "corrective_facet", "wrong_facet", "claim_support",
         "unsupported_claim", "target_a", "target_b",
     }
+
+
+def _minimum_facet_score(retrieval_role: str) -> int:
+    return 2 if retrieval_role == "claim_support" else 1
+
+
+def is_result_facet_relevant(
+    result: dict[str, Any], *, query: str, task_type: str, retrieval_role: str,
+    target_subject_type: str, target_title: str = "",
+    target_aliases: Iterable[str] = (),
+) -> bool:
+    """Require explicit role-specific facet evidence for every hard-gated role."""
+    if not _facet_is_required(retrieval_role):
+        return True
+    if retrieval_role == "unsupported_claim":
+        return SYNTHETIC_MARKER.casefold() in _plain(result.get("text")).casefold()
+    for sentence in _split_sentences(result.get("text")):
+        sentence_norm = _match_norm(sentence)
+        if any(f" {cue} " in f" {sentence_norm} " for cue in REFERENCE_NOISE_CUES):
+            continue
+        score = _facet_score(
+            sentence,
+            query=query,
+            task_type=task_type,
+            retrieval_role=retrieval_role,
+            target_subject_type=target_subject_type,
+            target_title=target_title,
+            target_aliases=target_aliases,
+        )
+        if score >= _minimum_facet_score(retrieval_role):
+            return True
+    return False
 
 
 def _sentence_rank(
@@ -510,7 +548,7 @@ def _sentence_rank(
         target_subject_type=target_subject_type, target_title=target_title,
         target_aliases=target_aliases,
     )
-    minimum_facet_score = 2 if retrieval_role == "claim_support" else 1
+    minimum_facet_score = _minimum_facet_score(retrieval_role)
     if _facet_is_required(retrieval_role) and facet_score < minimum_facet_score:
         return None
     return entity_strength, facet_score, _sentence_score(sentence, query, task_type)
@@ -821,10 +859,13 @@ def _search_observations(
         )
         selected_plan = plan
         fallback_roles = {
+            "cause": {"context_cause"},
+            "significance": {"result_significance"},
             "summary": {"context_timeline", "result_significance", "biography_timeline", "role_contribution"},
             "multihop": {"context_cause", "result_significance"},
             "verification": {"corroboration"},
             "compare": {"target_a", "target_b"},
+            "hard_negative": {"corrective_facet"},
         }
         if not compact and plan.role in fallback_roles.get(task_type, set()):
             fallback_plan = QueryPlan(

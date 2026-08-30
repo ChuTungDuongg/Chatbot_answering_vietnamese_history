@@ -59,14 +59,21 @@ def factual_config(count: int = 1) -> CustomBuildConfig:
     )
 
 
-@pytest.mark.parametrize("title", ["Chữ Quốc ngữ", "Chữ Nôm", "Tiếng Việt", "Văn hóa Việt Nam"])
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Lý học", "Nho giáo", "Phật giáo", "Chủ nghĩa cộng sản",
+        "Chữ Quốc ngữ", "Chữ Nôm", "Tiếng Việt", "Văn hóa Việt Nam",
+    ],
+)
 def test_non_person_language_and_culture_titles_override_weak_or_wrong_person_evidence(title: str):
     row = {
         "title": title,
         "text": f"{title} là một chủ đề lịch sử. Thiết Mộc Chân là một nhân vật có tiểu sử riêng.",
         "metadata": {"subject_type": "person", "people": [title]},
     }
-    assert classify_subject(row) != "person"
+    assert classify_subject(row) == "topic"
+    assert classify_subject({"title": title, "text": f"{title} là một khái niệm lịch sử."}) == "topic"
 
 
 @pytest.mark.parametrize(
@@ -177,14 +184,18 @@ def test_person_summary_drops_unrelated_person_sentence_and_requires_each_facet(
     assert "Nguyễn Bình" in row["messages"][-1]["content"]
 
 
-def test_corrective_facet_rejects_success_only_sentence():
+def test_corrective_facet_rejects_definition_only_sentence_and_accepts_failure_evidence():
     plan = QueryPlan(
         "search_history", "Chiến dịch Mẫu khó khăn hạn chế thất bại", 4, "corrective_facet",
     )
-    success = event("success", "Chiến dịch Mẫu", "Chiến dịch Mẫu giành thắng lợi và có nhiều ưu thế.")
+    definition = event(
+        "definition",
+        "Chiến dịch Mẫu",
+        "Chiến dịch Mẫu là một loạt hoạt động quân sự diễn ra từ năm 1123 đến năm 1150.",
+    )
     limitation = event("limit", "Chiến dịch Mẫu", "Chiến dịch Mẫu gặp khó khăn, hạn chế và nhiều bất lợi.")
     compact = compact_observation(
-        [success, limitation],
+        [definition, limitation],
         plan,
         task_type="hard_negative",
         observation_char_budget=2_000,
@@ -193,6 +204,93 @@ def test_corrective_facet_rejects_success_only_sentence():
         target_subject_type="event",
     )
     assert [result["chunk_id"] for result in compact] == ["limit"]
+
+
+@pytest.mark.parametrize(
+    ("role", "task_type", "query", "invalid_text"),
+    [
+        (
+            "result_significance",
+            "significance",
+            "Chiến dịch Mẫu kết quả ý nghĩa tác động vai trò",
+            "Chiến dịch Mẫu nổ ra do điều kiện chính trị và bối cảnh khu vực.",
+        ),
+        (
+            "context_cause",
+            "cause",
+            "Chiến dịch Mẫu bối cảnh nguyên nhân điều kiện",
+            "Chiến dịch Mẫu kết thúc với thắng lợi và để lại kết quả quan trọng.",
+        ),
+    ],
+)
+def test_required_cause_and_significance_facets_reject_wrong_facet_sentences(
+    role: str, task_type: str, query: str, invalid_text: str,
+):
+    plan = QueryPlan("search_history", query, 4, role)
+    invalid = event("invalid", "Chiến dịch Mẫu", invalid_text)
+    compact = compact_observation(
+        [invalid],
+        plan,
+        task_type=task_type,
+        observation_char_budget=2_000,
+        max_result_text_chars=500,
+        target_title="Chiến dịch Mẫu",
+        target_subject_type="event",
+    )
+    assert compact == []
+
+
+def test_required_facet_empty_after_filter_and_fallback_skips_candidate(tmp_path: Path):
+    title = "Chiến tranh Đại Việt–Khmer"
+    seed = event(
+        "war",
+        title,
+        f"{title} là một loạt các cuộc chiến tranh diễn ra từ năm 1123 đến năm 1150.",
+    )
+
+    class DefinitionOnlyRetriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [seed]
+
+    config = CustomBuildConfig(task_counts={"hard_negative": 1}, seed=7, max_corpus_records=1)
+    with pytest.raises(ValueError, match="0/1 hard_negative"):
+        list(build_custom_trajectories(
+            write_corpus(tmp_path, [seed]), DefinitionOnlyRetriever(), config=config,
+        ))
+
+
+def test_strict_audit_separates_facet_mismatch_from_entity_mismatch(tmp_path: Path):
+    title = "Chiến tranh Đại Việt–Khmer"
+    seed = event(
+        "war",
+        title,
+        f"{title} gặp khó khăn, chịu nhiều bất lợi và cuối cùng thất bại.",
+    )
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [] if "thành công thắng lợi" in query else [seed]
+
+    config = CustomBuildConfig(task_counts={"hard_negative": 1}, seed=7, max_corpus_records=1)
+    corrupted = list(build_custom_trajectories(
+        write_corpus(tmp_path, [seed]), Retriever(), config=config,
+    ))[0]
+    definition = event(
+        "definition",
+        title,
+        f"{title} là một loạt các cuộc chiến tranh diễn ra từ năm 1123 đến năm 1150.",
+    )
+    tool_messages = [message for message in corrupted["messages"] if message["role"] == "tool"]
+    tool_messages[1]["content"] = json.dumps([definition], ensure_ascii=False)
+    corrupted["messages"][-1]["content"] = f"{definition['text']} [definition]"
+    corrupted["provenance"]["observed_evidence_ids"] = ["definition"]
+    corrupted["provenance"]["evidence_ids"] = ["definition"]
+
+    report = audit_rows([corrupted], strict_custom=True)
+    assert report["issues"]["observation_facet_mismatch"] == 1
+    assert report["issues"]["final_answer_facet_mismatch"] == 1
+    assert report["issues"].get("observation_target_mismatch", 0) == 0
+    assert not report["valid"]
 
 
 def test_compare_target_isolation_rejects_wrong_person_for_either_side():
@@ -290,4 +388,3 @@ def test_low_quality_candidates_do_not_count_and_build_remains_deterministic(tmp
     assert first == second
     assert first[0]["provenance"]["primary_title"] == second_seed["title"]
     assert any(first_seed["title"] in query for query in one.calls)
-

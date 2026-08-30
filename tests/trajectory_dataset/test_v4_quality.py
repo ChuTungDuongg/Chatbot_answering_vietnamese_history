@@ -116,8 +116,18 @@ def test_duplicate_title_chunks_do_not_underfill_or_emit_duplicate_questions(tmp
 
 def test_claims_queries_and_answers_obey_v4_semantics(tmp_path: Path):
     rows = [
-        record("a", "Chiến dịch A", "event", "Chiến dịch A bắt đầu năm 1950. Kết quả mở ra một giai đoạn mới."),
-        record("b", "Chiến dịch B", "event"),
+        record(
+            "a", "Chiến dịch A", "event",
+            "Chiến dịch A bắt đầu năm 1950 do bối cảnh và điều kiện lịch sử. "
+            "Chiến dịch A gặp khó khăn, hạn chế và bất lợi. "
+            "Kết quả của Chiến dịch A mở ra một giai đoạn mới và có ý nghĩa quan trọng.",
+        ),
+        record(
+            "b", "Chiến dịch B", "event",
+            "Chiến dịch B hình thành do bối cảnh và nguyên nhân lịch sử. "
+            "Chiến dịch B gặp khó khăn, suy yếu và thất bại. "
+            "Kết quả của Chiến dịch B có tác động và ý nghĩa lịch sử.",
+        ),
     ]
     corpus = write_corpus(tmp_path / "corpus.jsonl", rows)
     built = list(build_custom_trajectories(
