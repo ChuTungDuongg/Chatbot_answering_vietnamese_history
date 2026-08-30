@@ -27,6 +27,8 @@ def test_training_cli_help_smoke():
         "training.evidence_agent.validate_dataset",
         "training.evidence_agent.train",
         "training.evidence_agent.evaluate",
+        "training.train_qwen3_8b_agent",
+        "training.central_agent.cli",
         "training.scripts.build_corpus",
         "scripts.upload_modal_volume",
     ]

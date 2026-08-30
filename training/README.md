@@ -1,6 +1,6 @@
 # 🧠 Training Pipelines
 
-[🏠 README gốc](../README.md) · [🧭 History Answerer](history_answerer/README.md) · [🔎 Research Agent](research_agent/README.md) · [🧹 Evidence Agent](evidence_agent/README.md) · [🛠️ Data scripts](scripts/README.md)
+[🏠 README gốc](../README.md) · [🧠 Central Agent](central_agent/README.md) · [🧭 History Answerer](history_answerer/README.md) · [🔎 Research Agent](research_agent/README.md) · [🧹 Evidence Agent](evidence_agent/README.md) · [🛠️ Data scripts](scripts/README.md)
 
 Thư mục `training/` thay thế hoàn toàn workflow notebook Phase 1-10. Package viết thường có chủ đích để `python -m training...` chạy giống nhau trên Windows, Linux, Colab và Modal.
 
@@ -15,6 +15,13 @@ training/
 │   ├── sft.py                 # generic assistant-only CE for policy agents
 │   ├── datasets.py            # load/split chat rows
 │   └── jsonl.py               # typed JSONL I/O
+├── central_agent/           # final Qwen3-8B canonical-trajectory QLoRA CLI
+│   ├── cli.py                 # orchestration: dry-run, preflight, train, resume
+│   ├── config.py              # CLI/JSON config resolution + validation
+│   ├── data.py                # canonical validation, split stats, SHA256, token audit
+│   ├── runtime.py             # GPU/disk/manifest/checkpoint safeguards
+│   ├── engine.py              # QLoRA model, Trainer, eval, adapter exports
+│   └── configs/               # explicit L4/A100 starting profiles
 ├── history_answerer/          # fresh Qwen3 grounded RAG-SFT; Qwen2.5 Phase-1 legacy only
 ├── research_agent/            # Qwen3 tool policy
 ├── evidence_agent/            # Qwen3 critic/compressor
@@ -47,6 +54,49 @@ python -m training.history_answerer.train --max-samples 10 --dry-run
 ```
 
 Dry-run validate dataset/split và chạy tokenizer path thật, nhưng không tải model weights.
+
+## 🧠 Final central Qwen3-8B agent
+
+Trainer cuối cùng cho canonical trajectories được tách thành package `central_agent/` để dễ maintain và debug. Lệnh tương thích cũ vẫn là entry point chính:
+
+```bash
+python -m training.train_qwen3_8b_agent --help
+```
+
+Lệnh module tương đương:
+
+```bash
+python -m training.central_agent.cli --help
+```
+
+Ba chế độ tách biệt rõ ràng:
+
+- `--dry-run`: kiểm tra config, path và schema; không load tokenizer/model.
+- `--preflight-only`: load tokenizer và audit canonical loss/truncation; không load model weights.
+- Không có hai flag trên: GPU preflight rồi train QLoRA.
+
+Ví dụ validate dataset trên Google Drive mà không dùng GPU:
+
+```bash
+python -m training.train_qwen3_8b_agent \
+  --dataset-root /content/drive/MyDrive/vn-history/trajectory_dataset_FINAL/final \
+  --drive-root /content/drive/MyDrive/vn-history \
+  --run-name qwen3-8b-agent-v1 \
+  --dry-run
+```
+
+Tokenizer preflight:
+
+```bash
+python -m training.train_qwen3_8b_agent \
+  --dataset-root /content/drive/MyDrive/vn-history/trajectory_dataset_FINAL/final \
+  --drive-root /content/drive/MyDrive/vn-history \
+  --run-name qwen3-8b-agent-v1 \
+  --max-seq-length 4096 \
+  --preflight-only
+```
+
+Trainer hỗ trợ JSON config; precedence là defaults `<` `--config` `<` CLI flags. Các config L4/A100 trong `central_agent/configs/` chỉ là starting profiles tường minh, không tự áp dụng theo GPU. Xem toàn bộ lệnh train/resume, cấu trúc output và Colab recipe tại [Central Agent README](central_agent/README.md).
 
 ## 🎓 Thứ tự train đề xuất
 
