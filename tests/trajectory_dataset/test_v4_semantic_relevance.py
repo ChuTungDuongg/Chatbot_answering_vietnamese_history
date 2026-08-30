@@ -244,6 +244,172 @@ def test_compare_type_contract_allows_semantic_peers_and_rejects_dynasty_institu
     assert not compare_subjects_compatible(nha_mac, tam_phap_ty)
 
 
+@pytest.mark.parametrize(
+    ("title", "metadata", "text", "expected"),
+    [
+        ("Nhà Nguyễn", {"dynasties": ["Nhà Nguyễn"]}, "Nhà Nguyễn là một triều đại.", "dynasty"),
+        ("Nhà Mạc", {"dynasties": ["Nhà Mạc"]}, "Nhà Mạc là một triều đại.", "dynasty"),
+        (
+            "Hoàng tộc nhà Nguyễn", {"dynasties": ["Nhà Nguyễn"]},
+            "Hoàng tộc nhà Nguyễn gồm các thành viên hoàng gia.", "topic",
+        ),
+        (
+            "Quan chế nhà Nguyễn", {"dynasties": ["Nhà Nguyễn"]},
+            "Quan chế nhà Nguyễn quy định hệ thống quan lại.", "topic",
+        ),
+        (
+            "Vạc đồng (nhà Nguyễn)", {"dynasties": ["Nhà Nguyễn"]},
+            "Vạc đồng là các hiện vật được đúc dưới thời các chúa Nguyễn.", "topic",
+        ),
+        (
+            "Hành cung nhà Nguyễn", {"dynasties": ["Nhà Nguyễn"]},
+            "Hành cung nhà Nguyễn là các kiến trúc dành cho vua nghỉ lại.", "location",
+        ),
+        (
+            "Thành nhà Hồ", {"dynasties": ["Nhà Hồ"], "locations": ["Thành nhà Hồ"]},
+            "Thành nhà Hồ là một công trình thành lũy lịch sử.", "location",
+        ),
+        (
+            "Công chúa nhà Đinh", {"dynasties": ["Nhà Đinh"]},
+            "Công chúa nhà Đinh là tên gọi chung cho các công chúa của triều Đinh.", "topic",
+        ),
+        (
+            "Hoàng hậu nhà Đinh", {"dynasties": ["Nhà Đinh"]},
+            "Hoàng hậu nhà Đinh gồm năm hoàng hậu được sử sách ghi lại.", "topic",
+        ),
+        (
+            "Mộc bản triều Nguyễn", {"dynasties": ["Nhà Nguyễn"]},
+            "Mộc bản triều Nguyễn là những văn bản được khắc trên gỗ.", "document",
+        ),
+    ],
+)
+def test_whole_title_identity_precedes_contained_dynasty_metadata(
+    title: str, metadata: dict, text: str, expected: str,
+):
+    assert classify_subject({"title": title, "text": text, "metadata": metadata}) == expected
+
+
+def test_full_builder_resolves_identity_before_templates_and_candidate_selection(tmp_path: Path):
+    mexico = {
+        "chunk_id": "mexico-history",
+        "title": "México",
+        "text": (
+            "México đối mặt với nhiều biến động sau cuộc cách mạng năm 1910. "
+            "Đất nước México tái lập nền cộng hòa, và Benito Juárez trở thành tổng thống."
+        ),
+        "history_score": 24,
+        "metadata": {
+            "people": ["Benito Juárez"], "locations": ["Mexico"],
+            "events": ["Cách mạng Mexico"], "years": [1867, 1910],
+        },
+    }
+    nha_nguyen = {
+        "chunk_id": "nha-nguyen", "title": "Nhà Nguyễn", "history_score": 50,
+        "text": "Nhà Nguyễn là một triều đại bắt đầu năm 1802 và có vai trò lịch sử.",
+        "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1802]},
+    }
+    nha_mac = {
+        "chunk_id": "nha-mac", "title": "Nhà Mạc", "history_score": 50,
+        "text": "Nhà Mạc là một triều đại bắt đầu năm 1527 và có vai trò lịch sử.",
+        "metadata": {"dynasties": ["Nhà Mạc"], "years": [1527]},
+    }
+    ngo_xuan_lich = {
+        "chunk_id": "ngo-xuan-lich", "title": "Ngô Xuân Lịch", "history_score": 40,
+        "text": "Ngô Xuân Lịch sinh năm 1954, là một tướng lĩnh và giữ chức vụ lãnh đạo.",
+        "metadata": {"people": ["Ngô Xuân Lịch"], "years": [1954]},
+    }
+    conference = {
+        "chunk_id": "fontainebleau", "title": "Hội nghị Fontainebleau 1946",
+        "text": "Hội nghị Fontainebleau 1946 diễn ra năm 1946 trong lịch sử ngoại giao.",
+        "history_score": 40, "metadata": {"events": ["Hội nghị Fontainebleau 1946"], "years": [1946]},
+    }
+    rejected = [
+        {
+            "chunk_id": "royal-family", "title": "Hoàng tộc nhà Nguyễn", "history_score": 50,
+            "text": "Hoàng tộc nhà Nguyễn gồm các thành viên hoàng gia vào thế kỷ XIX.",
+            "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1830]},
+        },
+        {
+            "chunk_id": "official-system", "title": "Quan chế nhà Nguyễn", "history_score": 50,
+            "text": "Quan chế nhà Nguyễn quy định hệ thống quan lại từ năm 1804.",
+            "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1804]},
+        },
+        {
+            "chunk_id": "bronze-cauldrons", "title": "Vạc đồng (nhà Nguyễn)", "history_score": 50,
+            "text": "Vạc đồng là các hiện vật được đúc vào năm 1631.",
+            "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1631]},
+        },
+        {
+            "chunk_id": "royal-palaces", "title": "Hành cung nhà Nguyễn", "history_score": 50,
+            "text": "Hành cung nhà Nguyễn là các kiến trúc được xây dựng vào thế kỷ XIX.",
+            "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1840]},
+        },
+        {
+            "chunk_id": "ho-citadel", "title": "Thành nhà Hồ", "history_score": 50,
+            "text": "Thành nhà Hồ là một công trình thành lũy xây dựng năm 1397.",
+            "metadata": {"dynasties": ["Nhà Hồ"], "locations": ["Thành nhà Hồ"], "years": [1397]},
+        },
+    ]
+    records = [*rejected, mexico, nha_nguyen, nha_mac, ngo_xuan_lich, conference]
+
+    class Retriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            self.queries.append(query)
+            matches = [record for record in records if query.startswith(record["title"])]
+            return sorted(matches, key=lambda record: len(record["title"]), reverse=True)[:top_k]
+
+    retriever = Retriever()
+    config = CustomBuildConfig(
+        task_counts={"factual": 5, "compare": 1}, top_k=6, seed=73,
+        max_corpus_records=len(records), max_candidate_attempts_per_task=50,
+    )
+    rows = list(build_custom_trajectories(
+        write_corpus(tmp_path, records), retriever, config=config,
+    ))
+    factual_rows = [row for row in rows if row["task_type"] == "factual"]
+    assert len(factual_rows) == 5
+    assert not {record["title"] for record in rejected} & {
+        row["provenance"]["primary_title"] for row in rows
+    }
+    assert all(not query.startswith(record["title"]) for query in retriever.queries for record in rejected)
+
+    mexico_row = next(row for row in factual_rows if row["provenance"]["primary_title"] == "México")
+    mexico_question = next(message["content"] for message in mexico_row["messages"] if message["role"] == "user")
+    assert mexico_row["provenance"]["subject_type"] == "state"
+    assert all(fragment not in mexico_question.casefold() for fragment in ("là ai", "cuộc đời", "nhân vật này"))
+    factual_types = {
+        row["provenance"]["primary_title"]: row["provenance"]["subject_type"]
+        for row in factual_rows
+    }
+    assert factual_types == {
+        "México": "state", "Nhà Nguyễn": "dynasty", "Nhà Mạc": "dynasty",
+        "Ngô Xuân Lịch": "person", "Hội nghị Fontainebleau 1946": "event",
+    }
+    ngo_row = next(row for row in factual_rows if row["provenance"]["primary_title"] == "Ngô Xuân Lịch")
+    ngo_question = next(message["content"] for message in ngo_row["messages"] if message["role"] == "user")
+    assert "là ai" in ngo_question.casefold() and "nhân vật này" in ngo_question.casefold()
+    conference_row = next(
+        row for row in factual_rows
+        if row["provenance"]["primary_title"] == "Hội nghị Fontainebleau 1946"
+    )
+    conference_question = next(
+        message["content"] for message in conference_row["messages"] if message["role"] == "user"
+    )
+    assert all(fragment not in conference_question.casefold() for fragment in ("là ai", "cuộc đời"))
+
+    compare_row = next(row for row in rows if row["task_type"] == "compare")
+    assert {
+        compare_row["provenance"]["primary_title"], compare_row["provenance"]["secondary_title"],
+    } == {"Nhà Nguyễn", "Nhà Mạc"}
+    assert {
+        compare_row["provenance"]["subject_type"], compare_row["provenance"]["secondary_subject_type"],
+    } == {"dynasty"}
+    assert audit_rows(rows, strict_custom=True)["valid"]
+
+
 def test_builder_skips_incompatible_compare_before_quota_and_finds_dynasty_peer(tmp_path: Path):
     nha_mac = {
         "chunk_id": "mac", "title": "Nhà Mạc",
@@ -723,6 +889,45 @@ def test_cause_facet_accepts_actual_background_leading_to_decree():
         max_result_text_chars=500, target_title=title, target_subject_type="document",
     )
     assert [result["chunk_id"] for result in compact] == ["decree-background"]
+
+
+def test_full_builder_rejects_decree_wording_as_cause_after_one_fallback(tmp_path: Path):
+    title = "Chiếu thoái vị của Bảo Đại"
+    distant_context = " ".join(["lời chiếu nói về quyết định thoái vị"] * 70)
+    decree_wording = {
+        "chunk_id": "decree-wording",
+        "title": title,
+        "text": (
+            "Trong non bốn thế kỷ, Liệt Thánh chúng ta đã trải qua biết bao sự gian lao nguy hiểm, "
+            "vì nước vì dân mới truyền ngôi lại cho Trẫm được đến ngày nay. "
+            "Nay Trẫm nhất định thoái vị để giao vận mạng quốc gia cho một chính phủ mới "
+            f"{distant_context} bối cảnh lịch sử được nhắc đến ở cuối đoạn"
+        ),
+        "history_score": 48,
+        "metadata": {"dynasties": ["Nhà Nguyễn"], "years": [1945]},
+    }
+
+    class Retriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            self.queries.append(query)
+            return [decree_wording]
+
+    retriever = Retriever()
+    config = CustomBuildConfig(
+        task_counts={"cause": 1}, top_k=6, seed=19, max_corpus_records=1,
+        max_candidate_attempts_per_task=10,
+    )
+    with pytest.raises(ValueError, match=r"0/1 cause trajectories"):
+        list(build_custom_trajectories(
+            write_corpus(tmp_path, [decree_wording]), retriever, config=config,
+        ))
+    assert retriever.queries == [
+        f"{title} bối cảnh nguyên nhân điều kiện hình thành",
+        f"{title} lịch sử",
+    ]
 
 
 def test_full_builder_selects_formation_sentence_and_rejects_late_strategy(tmp_path: Path):

@@ -19,6 +19,7 @@ class LoRASettings:
     r: int = 32
     alpha: int = 64
     dropout: float = 0.05
+    bias: str = "none"
     target_modules: tuple[str, ...] = field(default_factory=lambda: DEFAULT_LORA_TARGETS)
 
 
@@ -102,7 +103,7 @@ def build_lora_config(settings: LoRASettings):
         r=settings.r,
         lora_alpha=settings.alpha,
         lora_dropout=settings.dropout,
-        bias="none",
+        bias=settings.bias,
         task_type="CAUSAL_LM",
         target_modules=list(settings.target_modules),
     )

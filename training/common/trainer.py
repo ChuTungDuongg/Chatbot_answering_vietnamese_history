@@ -1,27 +1,61 @@
 from __future__ import annotations
 
+import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 class JsonlMetricsCallback:
-    """Persist Trainer logs with lightweight GPU memory telemetry."""
+    """Persist inexpensive Trainer logs plus timing and CUDA peak telemetry."""
 
-    def __init__(self, output_dir: str | Path):
+    def __init__(
+        self,
+        output_dir: str | Path,
+        *,
+        effective_batch_size: int | None = None,
+        mean_train_tokens: float | None = None,
+    ):
         self.path = Path(output_dir) / "training_log.jsonl"
+        self.effective_batch_size = effective_batch_size
+        self.mean_train_tokens = mean_train_tokens
+        self.started_at = time.monotonic()
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.started_at = time.monotonic()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+        except (ImportError, RuntimeError):
+            pass
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        import json
-
+        elapsed = max(0.0, time.monotonic() - self.started_at)
+        max_steps = int(getattr(state, "max_steps", 0) or 0)
+        step = int(getattr(state, "global_step", 0) or 0)
+        remaining = None
+        if step > 0 and max_steps > step:
+            remaining = elapsed / step * (max_steps - step)
+        tokens_processed = None
+        if self.effective_batch_size and self.mean_train_tokens is not None:
+            tokens_processed = int(step * self.effective_batch_size * self.mean_train_tokens)
         payload = {
-            "step": state.global_step,
-            "epoch": state.epoch,
-            **(logs or {}),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "step": step,
+            "epoch": getattr(state, "epoch", None),
+            "elapsed_seconds": round(elapsed, 3),
+            "estimated_remaining_seconds": round(remaining, 3) if remaining is not None else None,
+            "effective_batch_size": self.effective_batch_size,
+            "tokens_processed_estimate": tokens_processed,
+            **dict(logs or {}),
             **{f"gpu_{key}": value for key, value in summarize_gpu().items()},
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
     def on_save(self, args, state, control, **kwargs):
         self.on_log(
@@ -51,6 +85,7 @@ def build_training_arguments(
     gradient_checkpointing: bool = True,
     seed: int = 42,
 ):
+    """Backward-compatible shared defaults for the other training CLIs."""
     from transformers import TrainingArguments
 
     return TrainingArguments(
@@ -81,13 +116,22 @@ def build_training_arguments(
     )
 
 
-def build_metrics_callback(output_dir: str | Path):
+def build_metrics_callback(
+    output_dir: str | Path,
+    *,
+    effective_batch_size: int | None = None,
+    mean_train_tokens: float | None = None,
+):
     from transformers import TrainerCallback
 
     class MetricsCallback(JsonlMetricsCallback, TrainerCallback):
         pass
 
-    return MetricsCallback(output_dir)
+    return MetricsCallback(
+        output_dir,
+        effective_batch_size=effective_batch_size,
+        mean_train_tokens=mean_train_tokens,
+    )
 
 
 def summarize_gpu() -> dict[str, Any]:
@@ -101,6 +145,8 @@ def summarize_gpu() -> dict[str, Any]:
             "device": torch.cuda.get_device_name(0),
             "allocated_gb": round(torch.cuda.memory_allocated() / 1024**3, 3),
             "reserved_gb": round(torch.cuda.memory_reserved() / 1024**3, 3),
+            "max_allocated_gb": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+            "max_reserved_gb": round(torch.cuda.max_memory_reserved() / 1024**3, 3),
         }
     except Exception as exc:
         return {"cuda": False, "error": str(exc)}

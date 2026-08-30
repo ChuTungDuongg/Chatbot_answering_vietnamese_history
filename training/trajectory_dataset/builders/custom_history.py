@@ -69,7 +69,7 @@ TITLE_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("organization", (
         "đảng ", "hội ", "mặt trận", "việt minh", "tổ chức", "quân đội",
         "không quân", "hải quân", "lục quân", "quân chủng", "binh chủng",
-        "lực lượng", "chính phủ", "ủy ban", "liên minh",
+        "quân lực", "lực lượng", "chính phủ", "ủy ban", "liên minh",
     )),
     ("state", (
         "việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam",
@@ -90,6 +90,13 @@ STRONG_LOCATION_LABELS = {
 ORGANIZATION_TITLE_PREFIXES = (
     "cơ quan", "bộ tư lệnh", "bộ quốc phòng", "trung tâm", "trường",
     "học viện", "viện nghiên cứu", "viện hàn lâm", "viện kiểm sát", "văn phòng",
+)
+DOCUMENT_TITLE_PREFIXES = (
+    "mộc bản", "châu bản", "văn bản", "sắc phong", "bia ký",
+)
+DYNASTY_CONTEXT_TOPIC_PREFIXES = (
+    "hoàng tộc", "công chúa", "hoàng hậu", "hậu cung", "quan chế",
+    "vạc đồng",
 )
 PERSON_TEXT_CUES = (
     "sinh nam", "sinh ngay", "qua doi", "mat nam", "ten that", "ong la",
@@ -258,12 +265,18 @@ def _title(row: dict[str, Any]) -> str:
 
 
 def _entity_matches_title(title: str, values: Any) -> bool:
-    title_norm = _entity_norm(title)
-    if not title_norm or not isinstance(values, list):
+    """Match metadata that identifies the whole subject, never a contained entity."""
+    title_variants = {
+        norm
+        for candidate in (title, _title_without_parenthetical(title))
+        for norm in (_entity_norm(candidate), _match_norm(candidate))
+        if norm
+    }
+    if not title_variants or not isinstance(values, list):
         return False
     for value in values:
-        entity = _entity_norm(value)
-        if entity and (entity == title_norm or (len(entity) >= 6 and entity in title_norm)):
+        entity_variants = {_entity_norm(value), _match_norm(value)} - {""}
+        if title_variants & entity_variants:
             return True
     return False
 
@@ -305,6 +318,18 @@ def title_implied_subject_type(title: str) -> str | None:
         for cue in CULTURAL_TOPIC_CUES
     ):
         return "topic"
+    if any(
+        cultural_title == prefix or cultural_title.startswith(f"{prefix} ")
+        for prefix in DYNASTY_CONTEXT_TOPIC_PREFIXES
+    ):
+        return "topic"
+    if cultural_title.startswith("thành nhà ") or cultural_title.startswith("hành cung "):
+        return "location"
+    if any(
+        cultural_title == prefix or cultural_title.startswith(f"{prefix} ")
+        for prefix in DOCUMENT_TITLE_PREFIXES
+    ):
+        return "document"
     # A conference title denotes an event; embedded phrases such as
     # ``Trung tâm Hội nghị ...`` do not inherit that type.
     if title_norm == "hoi nghi" or title_norm.startswith("hoi nghi "):
@@ -318,13 +343,13 @@ def title_implied_subject_type(title: str) -> str | None:
     title_tokens = title_norm.split()
     if len(title_tokens) >= 2 and title_tokens[0] == "nha" and title_tokens[1] not in DYNASTY_NON_CUES:
         return "dynasty"
-    title_words = " " + " ".join(
-        re.findall(r"\w+", title.casefold(), flags=re.UNICODE)
-    ) + " "
+    title_words = " ".join(re.findall(r"\w+", title.casefold(), flags=re.UNICODE))
     for subject_type, cues in TITLE_CUES:
         for cue in cues:
             cue_words = " ".join(re.findall(r"\w+", cue.casefold(), flags=re.UNICODE))
-            if cue_words and f" {cue_words} " in title_words:
+            prefix_match = title_words == cue_words or title_words.startswith(f"{cue_words} ")
+            event_match = subject_type == "event" and f" {cue_words} " in f" {title_words} "
+            if cue_words and (prefix_match or event_match):
                 return subject_type
     if "quan su" in parenthetical_labels:
         return "topic"
@@ -350,13 +375,26 @@ def _biographical_person_evidence(title: str, text: Any) -> bool:
         sentences = [_plain(text)] if _plain(text) else []
     for sentence in sentences:
         sentence_norm = _match_norm(sentence)
+        sentence_entity = _entity_norm(sentence)
+        if any(
+            re.search(
+                rf"^{re.escape(variant)}(?: \w+){{0,7}} mất(?: |$)",
+                sentence_entity,
+            )
+            for variant in dict.fromkeys(
+                _entity_norm(value)
+                for value in (title, _title_without_parenthetical(title))
+                if _entity_norm(value)
+            )
+        ):
+            return True
         if any(
             re.search(
                 rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,7}} "
                 rf"(?:la (?:mot )?(?:nguoi|nhan vat|vua|hoang de|danh tuong|tuong linh|"
                 rf"si quan|chinh tri gia|dai bieu|doanh nhan|quan lai|can bo|giao su|hoc gia|"
                 rf"su gia|tac gia|dao dien|giao si|linh muc|giam muc|nha [a-z0-9]+)|"
-                rf"sinh|qua doi|mat|giu chuc|dam nhiem|lanh dao|chi huy|"
+                rf"sinh (?:nam|ngay|tai|o|[0-9])|qua doi|giu chuc|dam nhiem|lanh dao|chi huy|"
                 rf"tham gia|hoat dong|duoc bo nhiem|duoc phong|sang lap|dung dau|phuc vu)\b",
                 sentence_norm,
             )
@@ -398,6 +436,14 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
         )
     ):
         return "topic"
+
+    for variant in title_variants:
+        if re.search(
+            rf"\b(?:dat nuoc|quoc gia|nha nuoc|nen cong hoa|vuong quoc|de quoc) "
+            rf"{re.escape(variant)}\b",
+            combined_norm,
+        ):
+            return "state"
 
     def defines(sentence_norm: str, predicate: str) -> bool:
         return any(
@@ -453,6 +499,8 @@ def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> b
     if implied_type in {"topic", "location"}:
         return True
     if implied_type in {"event", "state"} and declared_type in {"organization", "state", "event"}:
+        return True
+    if implied_type == "state" and declared_type == "location":
         return True
     if implied_type == "organization" and declared_type in {"state", "event"}:
         return True
@@ -1087,7 +1135,9 @@ def _compact_result(
     )
     if not chunk_id or not text:
         return None
-    if plan.role == "result_significance" and not is_result_facet_relevant(
+    # Truncation can remove the only qualifying phrase from a long unsplit span.
+    # Reapply every required facet contract to the exact text that will be stored.
+    if _facet_is_required(plan.role) and not is_result_facet_relevant(
         {**result, "text": text}, query=plan.query, task_type=task_type,
         retrieval_role=plan.role, target_subject_type=target_subject_type,
         target_title=target_title, target_aliases=target_aliases,
