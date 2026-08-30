@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from .builders.custom_history import (
     is_result_facet_relevant,
     is_result_relevant_to_target,
+    is_vietnam_history_relevant,
     result_text_mentions_target,
     title_implied_subject_type,
 )
@@ -92,6 +93,29 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             secondary_implied_type = title_implied_subject_type(secondary_title)
             if secondary_title and secondary_implied_type is not None and secondary_implied_type != secondary_type:
                 issue("subject_type_mismatch", row)
+            primary_signals = provenance.get("vietnam_history_relevance_signals") or []
+            primary_domain_ok = (
+                provenance.get("vietnam_history_relevant") is True
+                and isinstance(primary_signals, list)
+                and bool(primary_signals)
+            )
+            if not primary_domain_ok and not is_vietnam_history_relevant({
+                "title": primary_title,
+                "metadata": {"subject_type": subject},
+            }):
+                issue("domain_mismatch", row)
+            if secondary_title:
+                secondary_signals = provenance.get("secondary_vietnam_history_relevance_signals") or []
+                secondary_domain_ok = (
+                    provenance.get("secondary_vietnam_history_relevant") is True
+                    and isinstance(secondary_signals, list)
+                    and bool(secondary_signals)
+                )
+                if not secondary_domain_ok and not is_vietnam_history_relevant({
+                    "title": secondary_title,
+                    "metadata": {"subject_type": secondary_type},
+                }):
+                    issue("domain_mismatch", row)
         question_key = normalized_question(first_user_question(row))
         if question_key in seen_questions:
             issue("duplicate_normalized_questions", row)
@@ -304,6 +328,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "subject_type_mismatch", "observation_target_mismatch",
         "final_answer_target_mismatch", "compare_target_contamination",
         "observation_facet_mismatch", "final_answer_facet_mismatch",
+        "domain_mismatch",
     }
     strict_violations = sum(issue_counts[name] for name in strict_issue_names)
     return {

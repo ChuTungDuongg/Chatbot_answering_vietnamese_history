@@ -19,7 +19,7 @@ from training.trajectory_dataset.preprocess import analyze_truncation
 
 
 def record(chunk_id: str, title: str, subject_type: str | None = "event", text: str | None = None) -> dict:
-    metadata = {"content_facets": ["bối cảnh", "kết quả"]}
+    metadata = {"content_facets": ["bối cảnh", "kết quả"], "countries": ["Việt Nam"]}
     if subject_type:
         metadata["subject_type"] = subject_type
     return {

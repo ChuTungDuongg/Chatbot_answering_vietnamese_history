@@ -36,7 +36,11 @@ def record(chunk_id: str, title: str, subject_type: str, text: str | None = None
         "title": title,
         "text": text or f"{title} diễn ra năm 1945. Sự kiện có kết quả và ý nghĩa lịch sử quan trọng.",
         "url": f"https://example.test/{chunk_id}",
-        "metadata": {"subject_type": subject_type, "content_facets": ["nguyên nhân", "kết quả"]},
+        "metadata": {
+            "subject_type": subject_type,
+            "content_facets": ["nguyên nhân", "kết quả"],
+            "countries": ["Việt Nam"],
+        },
     }
 
 

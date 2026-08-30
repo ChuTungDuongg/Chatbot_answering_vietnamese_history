@@ -59,9 +59,13 @@ METADATA_FIELDS = {
 TITLE_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("document", ("hiệp định", "hiệp ước", "hòa ước", "tuyên ngôn", "chiếu ", "sắc lệnh", "văn kiện")),
     ("event", ("trận ", "chiến thắng", "chiến dịch", "khởi nghĩa", "cách mạng", "phong trào", "chiến tranh", "cuộc chiến", "tổng tiến công", "biến cố")),
-    ("organization", ("đảng ", "mặt trận", "việt minh", "tổ chức", "quân đội", "hội ", "liên minh")),
+    ("organization", (
+        "đảng ", "hội ", "mặt trận", "việt minh", "tổ chức", "quân đội",
+        "không quân", "hải quân", "lục quân", "quân chủng", "lực lượng",
+        "chính phủ", "ủy ban", "liên minh",
+    )),
     ("state", ("việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam", "đại cồ việt", "vương quốc", "quốc gia", "chính quyền")),
-    ("dynasty", ("nhà lý", "nhà trần", "nhà lê", "nhà nguyễn", "nhà hồ", "nhà đinh", "triều đại", "triều ", "chúa nguyễn", "chúa trịnh")),
+    ("dynasty", ("triều đại", "vương triều", "triều ", "chúa nguyễn", "chúa trịnh")),
     ("location", (
         "thành phố", "tỉnh ", "huyện ", "quận ", "xã ", "phường ",
         "thị trấn", "thị xã", "làng ", "thôn ", "ấp ", "bản ", "buôn ",
@@ -89,9 +93,16 @@ ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
         "vai tro", "dong gop", "gop phan", "lanh dao", "chi huy", "sang lap",
         "anh huong", "hoat dong", "thuc day", "bao ve", "xay dung",
     ),
-    "context_cause": TASK_TERMS["cause"],
+    "context_cause": (
+        "nguyen nhan", "boi canh", "dieu kien", "do", "vi", "bat nguon",
+        "xuat phat", "hinh thanh", "thanh lap", "ra doi",
+    ),
     "context_timeline": (*TASK_TERMS["cause"], "dien bien", "moc", "nam", "thoi ky", "giai doan"),
-    "result_significance": TASK_TERMS["significance"],
+    "result_significance": (
+        "y nghia", "tac dong", "he qua", "ket qua", "vai tro", "danh dau",
+        "gop phan", "cham dut", "thuc day", "tao dieu kien", "khang dinh",
+        "cung co", "anh huong", "buoc", "de lai",
+    ),
     "corrective_facet": TASK_TERMS["hard_negative"],
     "wrong_facet": ("thanh cong", "thang loi", "uu the", "thuan loi"),
 }
@@ -99,6 +110,29 @@ NON_PERSON_TOPIC_PREFIXES = (
     "chu", "tieng", "van hoa", "ngon ngu", "chu viet", "van hoc",
     "ly hoc", "nho giao", "phat giao", "chu nghia",
 )
+CULTURAL_TOPIC_CUES = (
+    "xẩm", "ca trù", "chèo", "tuồng", "quan họ", "dân ca", "nghệ thuật",
+    "âm nhạc", "tín ngưỡng", "tôn giáo", "triết học", "học thuyết",
+)
+DYNASTY_NON_CUES = {
+    "hat", "nuoc", "van", "tho", "may", "hang", "bao", "xuat ban",
+    "nghien cuu", "truong", "ga", "khach", "rong",
+}
+VIETNAM_DOMAIN_CUES = (
+    "viet nam", "dai viet", "dai nam", "dai co viet", "van lang", "au lac",
+    "an nam", "giao chi", "viet minh", "nam bo", "bac bo", "trung bo",
+    "mien nam", "mien bac", "sai gon", "gia dinh", "thang long", "ha noi",
+    "hue", "bach dang", "lam son", "dien bien phu", "bac thuoc",
+)
+VIETNAMESE_DYNASTY_TITLES = {
+    "nha ngo", "nha dinh", "nha tien le", "nha ly", "nha tran", "nha ho",
+    "nha hau le", "nha le", "nha mac", "nha tay son", "nha nguyen",
+    "chua trinh", "chua nguyen",
+}
+VIETNAMESE_PERSON_SURNAMES = {
+    "nguyen", "tran", "le", "pham", "phan", "vo", "vu", "dang", "bui",
+    "do", "ho", "ngo", "dinh", "duong", "ly", "truong", "hoang", "huynh",
+}
 ALIAS_METADATA_FIELDS = (
     "aliases", "alias", "alternative_names", "alternate_names", "other_names",
     "also_known_as", "names",
@@ -227,6 +261,16 @@ def title_implied_subject_type(title: str) -> str | None:
         for prefix in NON_PERSON_TOPIC_PREFIXES
     ):
         return "topic"
+    cultural_title = _entity_norm(_title_without_parenthetical(title))
+    if any(
+        cultural_title == _entity_norm(cue)
+        or cultural_title.startswith(f"{_entity_norm(cue)} ")
+        for cue in CULTURAL_TOPIC_CUES
+    ):
+        return "topic"
+    title_tokens = title_norm.split()
+    if len(title_tokens) >= 2 and title_tokens[0] == "nha" and title_tokens[1] not in DYNASTY_NON_CUES:
+        return "dynasty"
     title_words = " " + " ".join(
         re.findall(r"\w+", title.casefold(), flags=re.UNICODE)
     ) + " "
@@ -266,6 +310,35 @@ def _biographical_person_evidence(title: str, text: Any) -> bool:
     return False
 
 
+def _has_dynasty_evidence(row: dict[str, Any], implied_type: str | None) -> bool:
+    if implied_type == "dynasty":
+        return True
+    title = _title(row)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    if _entity_matches_title(title, metadata.get("dynasties")):
+        return True
+    for sentence in _split_sentences(row.get("text")):
+        if not _contains_norm_phrase(sentence, title):
+            continue
+        sentence_norm = _match_norm(sentence)
+        if any(
+            f" {cue} " in f" {sentence_norm} "
+            for cue in ("trieu dai", "vuong trieu", "trieu", "hoang trieu")
+        ):
+            return True
+    return False
+
+
+def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> bool:
+    if implied_type is None or implied_type == declared_type:
+        return False
+    if declared_type in {"person", "dynasty"}:
+        return True
+    if declared_type == "topic" and implied_type in {"organization", "dynasty"}:
+        return True
+    return {declared_type, implied_type} == {"organization", "dynasty"}
+
+
 def classify_subject(row: dict[str, Any]) -> str:
     """Classify conservatively: strong evidence is required to emit ``person``."""
     title = _title(row)
@@ -275,19 +348,73 @@ def classify_subject(row: dict[str, Any]) -> str:
         metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
     )
     if explicit in SUBJECT_TYPES:
-        if explicit == "person" and implied_type is not None:
-            return implied_type
+        if _semantic_title_overrides(explicit, implied_type):
+            return str(implied_type)
+        if explicit == "dynasty" and not _has_dynasty_evidence(row, implied_type):
+            return "topic"
         return explicit
     for field, subject_type in METADATA_FIELDS.items():
         if _entity_matches_title(title, metadata.get(field)):
-            if subject_type == "person" and implied_type is not None:
-                return implied_type
+            if _semantic_title_overrides(subject_type, implied_type):
+                return str(implied_type)
+            if subject_type == "dynasty" and not _has_dynasty_evidence(row, implied_type):
+                return "topic"
             return subject_type
     if implied_type is not None:
         return implied_type
     if _biographical_person_evidence(title, row.get("text")):
         return "person"
     return "topic"
+
+
+def _domain_text_values(value: Any) -> Iterable[str]:
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _domain_text_values(nested)
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            yield from _domain_text_values(nested)
+    elif isinstance(value, (str, int, float)):
+        clean = _plain(value)
+        if clean:
+            yield clean
+
+
+def vietnam_history_relevance_signals(row: dict[str, Any]) -> tuple[str, ...]:
+    """Return deterministic evidence labels used by the Vietnamese-history gate."""
+    title = _title(row)
+    title_norm = _match_norm(title)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    title_blob = f" {_match_norm(title)} "
+    metadata_blob = f" {_match_norm(' '.join(_domain_text_values(metadata)))} "
+    signals: list[str] = []
+    for cue in VIETNAM_DOMAIN_CUES:
+        if f" {cue} " in title_blob:
+            signals.append(f"title:{cue}")
+        if f" {cue} " in metadata_blob:
+            signals.append(f"metadata:{cue}")
+    for sentence in _split_sentences(row.get("text")):
+        sentence_norm = _match_norm(sentence)
+        if not title_norm or f" {title_norm} " not in f" {sentence_norm} ":
+            continue
+        for cue in VIETNAM_DOMAIN_CUES:
+            if f" {cue} " in f" {sentence_norm} ":
+                signals.append(f"text:{cue}")
+    if title_norm in VIETNAMESE_DYNASTY_TITLES:
+        signals.append(f"dynasty:{title_norm}")
+    title_tokens = title_norm.split()
+    if (
+        classify_subject(row) == "person"
+        and len(title_tokens) >= 2
+        and title_tokens[0] in VIETNAMESE_PERSON_SURNAMES
+    ):
+        signals.append(f"surname:{title_tokens[0]}")
+    return tuple(dict.fromkeys(signals))
+
+
+def is_vietnam_history_relevant(row: dict[str, Any]) -> bool:
+    """Conservative deterministic domain gate for custom Vietnamese-history rows."""
+    return bool(vietnam_history_relevance_signals(row))
 
 
 def task_eligible(row: dict[str, Any], task_type: str) -> bool:
@@ -442,6 +569,24 @@ def _sentence_score(sentence: str, query: str, task_type: str) -> tuple[int, int
     )
 
 
+def _target_formation_score(
+    sentence_norm: str, target_title: str, target_aliases: Iterable[str],
+) -> int:
+    formation = r"(?:hinh thanh|thanh lap|ra doi)"
+    for value in (target_title, *target_aliases):
+        target_norm = _match_norm(value)
+        if not target_norm:
+            continue
+        target_pattern = re.escape(target_norm)
+        if re.search(
+            rf"(?:{target_pattern}(?: [a-z0-9]+){{0,5}} (?:duoc )?{formation}|"
+            rf"{formation}(?: cua| nen| thanh)? {target_pattern})",
+            sentence_norm,
+        ):
+            return 1
+    return 0
+
+
 def _facet_score(
     sentence: str, *, query: str, task_type: str, retrieval_role: str,
     target_subject_type: str, target_title: str, target_aliases: Iterable[str],
@@ -449,7 +594,18 @@ def _facet_score(
     sentence_norm = _match_norm(sentence)
     padded = f" {sentence_norm} "
     terms = ROLE_FACET_TERMS.get(retrieval_role, TASK_TERMS.get(task_type, ()))
-    score = sum(f" {_match_norm(term)} " in padded for term in terms if _match_norm(term))
+    if retrieval_role == "context_cause":
+        formation_terms = {"do", "vi", "hinh thanh", "thanh lap", "ra doi"}
+        score = sum(
+            f" {_match_norm(term)} " in padded
+            for term in terms
+            if _match_norm(term) and _match_norm(term) not in formation_terms
+        )
+        entity_padded = f" {_entity_norm(sentence)} "
+        score += int(" do " in entity_padded) + int(" vì " in entity_padded)
+        score += _target_formation_score(sentence_norm, target_title, target_aliases)
+    else:
+        score = sum(f" {_match_norm(term)} " in padded for term in terms if _match_norm(term))
     if retrieval_role in {"biography_timeline", "context_timeline", "target_a", "target_b"} and re.search(
         r"\b\d{3,4}\b", sentence,
     ):
@@ -1036,12 +1192,20 @@ def _trajectory(
             "primary_aliases": list(_target_aliases(primary)),
             "secondary_aliases": list(_target_aliases(secondary)) if secondary is not None else [],
             "subject_type": classify_subject(primary),
+            "vietnam_history_relevant": is_vietnam_history_relevant(primary),
+            "vietnam_history_relevance_signals": list(vietnam_history_relevance_signals(primary)),
             "seed_history_score": primary.get("history_score"),
             "seed_content_facets": (
                 primary.get("metadata", {}).get("content_facets", [])
                 if isinstance(primary.get("metadata"), dict) else []
             ),
             "secondary_subject_type": classify_subject(secondary) if secondary is not None else None,
+            "secondary_vietnam_history_relevant": (
+                is_vietnam_history_relevant(secondary) if secondary is not None else None
+            ),
+            "secondary_vietnam_history_relevance_signals": (
+                list(vietnam_history_relevance_signals(secondary)) if secondary is not None else []
+            ),
             "compare_pair_key": pair_key,
             "concrete_claim": claim if task_type == "verification" else None,
             "synthetic_claim": claim if task_type == "insufficient_evidence" else None,
@@ -1080,6 +1244,7 @@ def _find_compare_secondary(
         if (
             candidate_title and candidate_title != primary_title
             and classify_subject(candidate) == primary_type
+            and is_vietnam_history_relevant(candidate)
             and task_eligible(candidate, "compare") and pair_key not in used_pairs
         ):
             return candidate
@@ -1142,7 +1307,7 @@ def build_custom_trajectories(
         for primary_index, primary in enumerate(records):
             if selected >= wanted or candidate_attempts >= config.max_candidate_attempts_per_task:
                 break
-            if not task_eligible(primary, task_type):
+            if not is_vietnam_history_relevant(primary) or not task_eligible(primary, task_type):
                 continue
             title_key = _match_norm(_title(primary))
             if not title_key:

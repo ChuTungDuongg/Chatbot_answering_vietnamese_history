@@ -43,7 +43,11 @@ def _bracketed_source() -> dict:
             "Sự kiện này có một số kết quả lịch sử quan trọng [chú thích]."
         ),
         "url": "https://example.test/chunk_abc",
-        "metadata": {"subject_type": "event", "content_facets": ["kết quả"]},
+        "metadata": {
+            "subject_type": "event",
+            "content_facets": ["kết quả"],
+            "countries": ["Việt Nam"],
+        },
     }
 
 

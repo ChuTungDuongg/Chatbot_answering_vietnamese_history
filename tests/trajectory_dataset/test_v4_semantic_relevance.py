@@ -14,6 +14,7 @@ from training.trajectory_dataset.builders.custom_history import (
     classify_subject,
     compact_observation,
     is_result_relevant_to_target,
+    is_vietnam_history_relevant,
     load_seed_records,
 )
 from training.trajectory_dataset.io_utils import atomic_write_jsonl
@@ -26,7 +27,7 @@ def person(chunk_id: str, title: str, text: str) -> dict:
         "title": title,
         "text": text,
         "url": f"https://example.test/{chunk_id}",
-        "metadata": {"subject_type": "person", "people": [title]},
+        "metadata": {"subject_type": "person", "people": [title], "countries": ["Việt Nam"]},
     }
 
 
@@ -36,7 +37,7 @@ def event(chunk_id: str, title: str, text: str) -> dict:
         "title": title,
         "text": text,
         "url": f"https://example.test/{chunk_id}",
-        "metadata": {"subject_type": "event", "events": [title]},
+        "metadata": {"subject_type": "event", "events": [title], "countries": ["Việt Nam"]},
     }
 
 
@@ -62,7 +63,7 @@ def factual_config(count: int = 1) -> CustomBuildConfig:
 @pytest.mark.parametrize(
     "title",
     [
-        "Lý học", "Nho giáo", "Phật giáo", "Chủ nghĩa cộng sản",
+        "Xẩm", "Lý học", "Nho giáo", "Phật giáo", "Chủ nghĩa cộng sản",
         "Chữ Quốc ngữ", "Chữ Nôm", "Tiếng Việt", "Văn hóa Việt Nam",
     ],
 )
@@ -86,6 +87,59 @@ def test_non_person_language_and_culture_titles_override_weak_or_wrong_person_ev
 )
 def test_person_fallback_requires_subject_linked_biographical_evidence(title: str, text: str):
     assert classify_subject({"title": title, "text": text}) == "person"
+
+
+def test_general_subject_typing_distinguishes_military_organization_dynasty_and_person():
+    foreign_air_force = {
+        "title": "Không quân Nhân dân Triều Tiên",
+        "text": "Không quân Nhân dân Triều Tiên là lực lượng quân sự của Triều Tiên.",
+        "metadata": {"subject_type": "dynasty", "dynasties": ["Không quân Nhân dân Triều Tiên"]},
+    }
+    nha_mac = {
+        "title": "Nhà Mạc",
+        "text": "Nhà Mạc là một triều đại trong lịch sử Việt Nam.",
+        "metadata": {"subject_type": "dynasty", "dynasties": ["Nhà Mạc"]},
+    }
+    nguyen_binh = {
+        "title": "Nguyễn Bình",
+        "text": "Nguyễn Bình (1908–1951) là một tướng lĩnh Việt Nam.",
+    }
+    hoi_an = {
+        "title": "Hội An",
+        "text": "Hội An là một đô thị lịch sử tại Việt Nam.",
+        "metadata": {"subject_type": "location", "locations": ["Hội An"]},
+    }
+    assert classify_subject(foreign_air_force) == "organization"
+    assert classify_subject(nha_mac) == "dynasty"
+    assert classify_subject(nguyen_binh) == "person"
+    assert classify_subject(hoi_an) == "location"
+
+
+def test_vietnam_history_domain_eligibility_is_conservative():
+    nha_mac = {
+        "title": "Nhà Mạc",
+        "text": "Nhà Mạc là một triều đại trong lịch sử Việt Nam.",
+        "metadata": {"subject_type": "dynasty"},
+    }
+    nguyen_binh = {
+        "title": "Nguyễn Bình",
+        "text": "Nguyễn Bình là một tướng lĩnh Việt Nam.",
+        "metadata": {"subject_type": "person"},
+    }
+    border_war = event(
+        "border-war",
+        "Chiến tranh biên giới Việt Nam–Campuchia",
+        "Chiến tranh biên giới Việt Nam–Campuchia có Việt Nam là một chủ thể trực tiếp.",
+    )
+    foreign_air_force = {
+        "title": "Không quân Nhân dân Triều Tiên",
+        "text": "Lực lượng này phụ trách phòng không và không quân của Triều Tiên.",
+        "metadata": {"subject_type": "organization", "countries": ["Triều Tiên"]},
+    }
+    assert is_vietnam_history_relevant(nha_mac)
+    assert is_vietnam_history_relevant(nguyen_binh)
+    assert is_vietnam_history_relevant(border_war)
+    assert not is_vietnam_history_relevant(foreign_air_force)
 
 
 def test_entity_relevance_rejects_similar_name_and_accepts_explicit_broader_article():
@@ -240,6 +294,51 @@ def test_required_cause_and_significance_facets_reject_wrong_facet_sentences(
     assert compact == []
 
 
+def test_significance_rejects_weak_opening_sentence_without_impact_or_result():
+    plan = QueryPlan(
+        "search_history", "Nhà Mạc kết quả ý nghĩa tác động vai trò", 4, "result_significance",
+    )
+    weak = {
+        "chunk_id": "weak",
+        "title": "Nhà Mạc",
+        "text": "Những người đắc lực giúp ông mở ra nhà Mạc.",
+        "metadata": {"subject_type": "dynasty", "countries": ["Việt Nam"]},
+    }
+    compact = compact_observation(
+        [weak],
+        plan,
+        task_type="significance",
+        observation_char_budget=2_000,
+        max_result_text_chars=500,
+        target_title="Nhà Mạc",
+        target_subject_type="dynasty",
+    )
+    assert compact == []
+
+
+def test_cause_rejects_late_equipment_and_parade_sentence():
+    title = "Không quân Nhân dân Triều Tiên"
+    plan = QueryPlan(
+        "search_history", f"{title} bối cảnh nguyên nhân điều kiện hình thành", 4, "context_cause",
+    )
+    late_event = {
+        "chunk_id": "pechora",
+        "title": title,
+        "text": f"{title} trang bị hệ thống Pechora và trình diễn trong các cuộc duyệt binh năm 2011 và 2012.",
+        "metadata": {"subject_type": "organization"},
+    }
+    compact = compact_observation(
+        [late_event],
+        plan,
+        task_type="cause",
+        observation_char_budget=2_000,
+        max_result_text_chars=500,
+        target_title=title,
+        target_subject_type="organization",
+    )
+    assert compact == []
+
+
 def test_required_facet_empty_after_filter_and_fallback_skips_candidate(tmp_path: Path):
     title = "Chiến tranh Đại Việt–Khmer"
     seed = event(
@@ -257,6 +356,57 @@ def test_required_facet_empty_after_filter_and_fallback_skips_candidate(tmp_path
         list(build_custom_trajectories(
             write_corpus(tmp_path, [seed]), DefinitionOnlyRetriever(), config=config,
         ))
+
+
+def test_unrelated_foreign_subject_is_skipped_before_quota_counting(tmp_path: Path):
+    foreign = {
+        "chunk_id": "foreign-air-force",
+        "title": "Không quân Nhân dân Triều Tiên",
+        "text": "Không quân Nhân dân Triều Tiên là lực lượng quân sự của Triều Tiên.",
+        "metadata": {"subject_type": "dynasty", "countries": ["Triều Tiên"]},
+    }
+    vietnamese = {
+        "chunk_id": "nha-mac",
+        "title": "Nhà Mạc",
+        "text": "Nhà Mạc là một triều đại trong lịch sử Việt Nam và có nhiều dấu mốc lịch sử.",
+        "metadata": {"subject_type": "dynasty", "countries": ["Việt Nam"]},
+    }
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [foreign, vietnamese][:top_k]
+
+    config = CustomBuildConfig(task_counts={"factual": 1}, seed=13, max_corpus_records=2)
+    built = list(build_custom_trajectories(
+        write_corpus(tmp_path, [foreign, vietnamese]), Retriever(), config=config,
+    ))
+    assert len(built) == 1
+    assert built[0]["provenance"]["primary_title"] == "Nhà Mạc"
+
+
+def test_strict_audit_catches_organization_as_dynasty_and_foreign_domain():
+    title = "Không quân Nhân dân Triều Tiên"
+    row = make_trajectory(
+        trajectory_id="bad-foreign-subject",
+        source_dataset="custom_history",
+        task_type="factual",
+        messages=[
+            {"role": "user", "content": f"Các dấu mốc của {title} là gì?"},
+            {"role": "assistant", "content": "Chưa đủ bằng chứng."},
+        ],
+        tools=[],
+        difficulty="medium",
+        provenance={
+            "subject_type": "dynasty",
+            "primary_title": title,
+            "source_group": "foreign",
+            "requires_final_answer": True,
+        },
+    )
+    report = audit_rows([row], strict_custom=True)
+    assert report["issues"]["subject_type_mismatch"] == 1
+    assert report["issues"]["domain_mismatch"] == 1
+    assert not report["valid"]
 
 
 def test_strict_audit_separates_facet_mismatch_from_entity_mismatch(tmp_path: Path):
