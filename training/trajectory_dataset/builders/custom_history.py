@@ -95,15 +95,19 @@ ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
     ),
     "context_cause": (
         "nguyen nhan", "boi canh", "dieu kien", "do", "vi", "bat nguon",
-        "xuat phat", "hinh thanh", "thanh lap", "ra doi",
+        "xuat phat", "hinh thanh", "thanh lap", "ra doi", "truoc do", "tien de",
     ),
     "context_timeline": (*TASK_TERMS["cause"], "dien bien", "moc", "nam", "thoi ky", "giai doan"),
     "result_significance": (
-        "y nghia", "tac dong", "he qua", "ket qua", "vai tro", "danh dau",
-        "gop phan", "cham dut", "thuc day", "tao dieu kien", "khang dinh",
-        "cung co", "anh huong", "buoc", "de lai",
+        "y nghia", "tac dong", "he qua", "hau qua", "ket qua", "vai tro",
+        "danh dau", "gop phan", "dan toi", "lam thay doi", "cham dut",
+        "ket thuc", "thuc day", "tao dieu kien", "khang dinh",
+        "anh huong", "de lai", "suy yeu", "phat trien", "duoc xem la",
     ),
-    "corrective_facet": TASK_TERMS["hard_negative"],
+    "corrective_facet": (
+        *TASK_TERMS["hard_negative"], "thieu", "khong du", "thua", "ton that",
+        "mat", "bi danh bai",
+    ),
     "wrong_facet": ("thanh cong", "thang loi", "uu the", "thuan loi"),
 }
 NON_PERSON_TOPIC_PREFIXES = (
@@ -122,7 +126,9 @@ VIETNAM_DOMAIN_CUES = (
     "viet nam", "dai viet", "dai nam", "dai co viet", "van lang", "au lac",
     "an nam", "giao chi", "viet minh", "nam bo", "bac bo", "trung bo",
     "mien nam", "mien bac", "sai gon", "gia dinh", "thang long", "ha noi",
-    "hue", "bach dang", "lam son", "dien bien phu", "bac thuoc",
+    "hue", "bach dang", "lam son", "dien bien phu", "bac thuoc", "cham pa",
+    "champa", "panduranga", "nguoi cham", "trieu nguyen", "tay son",
+    "nha ly", "nha tran", "nha le", "nha mac", "chua nguyen",
 )
 VIETNAMESE_DYNASTY_TITLES = {
     "nha ngo", "nha dinh", "nha tien le", "nha ly", "nha tran", "nha ho",
@@ -403,12 +409,13 @@ def vietnam_history_relevance_signals(row: dict[str, Any]) -> tuple[str, ...]:
     if title_norm in VIETNAMESE_DYNASTY_TITLES:
         signals.append(f"dynasty:{title_norm}")
     title_tokens = title_norm.split()
-    if (
-        classify_subject(row) == "person"
-        and len(title_tokens) >= 2
-        and title_tokens[0] in VIETNAMESE_PERSON_SURNAMES
-    ):
-        signals.append(f"surname:{title_tokens[0]}")
+    if classify_subject(row) == "person" and len(title_tokens) >= 2:
+        surname = next(
+            (token for token in title_tokens[:2] if token in VIETNAMESE_PERSON_SURNAMES),
+            None,
+        )
+        if surname:
+            signals.append(f"surname:{surname}")
     return tuple(dict.fromkeys(signals))
 
 
@@ -587,6 +594,28 @@ def _target_formation_score(
     return 0
 
 
+def _strong_formation_score(sentence_norm: str) -> int:
+    """Recognize formation statements even when the exact-title article uses an implicit subject."""
+    return int(bool(re.search(
+        r"^(?:da |chinh thuc )?(?:duoc )?(?:hinh thanh|thanh lap|ra doi)(?: |$)",
+        sentence_norm,
+    )))
+
+
+def _target_leading_cause_score(
+    sentence_norm: str, target_title: str, target_aliases: Iterable[str],
+) -> int:
+    """Count ``dẫn đến`` only when the stated circumstance leads to the target."""
+    for value in (target_title, *target_aliases):
+        target_norm = _match_norm(value)
+        if target_norm and re.search(
+            rf"(?:dan den|dan toi)(?: su| viec| qua trinh)?(?: [a-z0-9]+){{0,5}} {re.escape(target_norm)}(?: |$)",
+            sentence_norm,
+        ):
+            return 1
+    return 0
+
+
 def _facet_score(
     sentence: str, *, query: str, task_type: str, retrieval_role: str,
     target_subject_type: str, target_title: str, target_aliases: Iterable[str],
@@ -604,8 +633,13 @@ def _facet_score(
         entity_padded = f" {_entity_norm(sentence)} "
         score += int(" do " in entity_padded) + int(" vì " in entity_padded)
         score += _target_formation_score(sentence_norm, target_title, target_aliases)
+        score += _strong_formation_score(sentence_norm)
+        score += _target_leading_cause_score(sentence_norm, target_title, target_aliases)
     else:
         score = sum(f" {_match_norm(term)} " in padded for term in terms if _match_norm(term))
+        if retrieval_role == "result_significance":
+            # Preserve the dấu distinction: ``củng cố`` is impact evidence, ``cũng có`` is not.
+            score += int(" củng cố " in f" {_entity_norm(sentence)} ")
     if retrieval_role in {"biography_timeline", "context_timeline", "target_a", "target_b"} and re.search(
         r"\b\d{3,4}\b", sentence,
     ):
@@ -632,7 +666,7 @@ def _facet_score(
 def _facet_is_required(retrieval_role: str) -> bool:
     return retrieval_role in {
         "biography_timeline", "role_contribution", "context_cause", "context_timeline",
-        "result_significance", "corrective_facet", "wrong_facet", "claim_support",
+        "result_significance", "corrective_facet", "claim_support",
         "unsupported_claim", "target_a", "target_b",
     }
 

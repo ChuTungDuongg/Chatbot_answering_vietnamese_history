@@ -18,7 +18,7 @@ from training.trajectory_dataset.builders.custom_history import (
     load_seed_records,
 )
 from training.trajectory_dataset.io_utils import atomic_write_jsonl
-from training.trajectory_dataset.schema import make_trajectory
+from training.trajectory_dataset.schema import make_trajectory, tool_call
 
 
 def person(chunk_id: str, title: str, text: str) -> dict:
@@ -140,6 +140,50 @@ def test_vietnam_history_domain_eligibility_is_conservative():
     assert is_vietnam_history_relevant(nguyen_binh)
     assert is_vietnam_history_relevant(border_war)
     assert not is_vietnam_history_relevant(foreign_air_force)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"title": "Võ Trứ", "text": "Võ Trứ lãnh đạo một cuộc khởi nghĩa.", "metadata": {"subject_type": "person"}},
+        {"title": "Dương Văn Hiếu", "text": "Dương Văn Hiếu hoạt động trong thế kỷ XX.", "metadata": {"subject_type": "person"}},
+        {"title": "Phaolô Nguyễn Văn Bình", "text": "Phaolô Nguyễn Văn Bình sinh năm 1910.", "metadata": {"subject_type": "person"}},
+        {"title": "Po Saong Nyung Ceng", "text": "Po Saong Nyung Ceng lãnh đạo nhiều hoạt động trong lịch sử người Chăm.", "metadata": {"subject_type": "person"}},
+        {"title": "Chiến tranh Đại Việt–Khmer", "text": "Chiến tranh Đại Việt–Khmer diễn ra trong thế kỷ XII.", "metadata": {"subject_type": "event"}},
+        {"title": "Chiến tranh biên giới Việt Nam – Campuchia", "text": "Việt Nam là một chủ thể trực tiếp trong cuộc chiến.", "metadata": {"subject_type": "event"}},
+        {"title": "Panduranga", "text": "Panduranga là một chủ thể trong lịch sử Chăm Pa và Đại Việt.", "metadata": {"subject_type": "state"}},
+        {"title": "Pháp", "text": "Pháp thiết lập chế độ thuộc địa tại Việt Nam trong thế kỷ XIX.", "metadata": {"subject_type": "state"}},
+    ],
+)
+def test_vietnam_history_domain_accepts_vietnamese_regional_and_direct_foreign_context(row: dict):
+    assert is_vietnam_history_relevant(row)
+
+
+def test_compare_requires_both_targets_to_pass_domain_gate(tmp_path: Path):
+    vietnamese_people = [
+        person("nguyen-binh", "Nguyễn Bình", "Nguyễn Bình giữ vai trò chỉ huy và đóng góp tại Nam Bộ."),
+        person("vo-tru", "Võ Trứ", "Võ Trứ lãnh đạo hoạt động và có đóng góp trong lịch sử Việt Nam."),
+    ]
+    foreign = {
+        "chunk_id": "foreign-person",
+        "title": "Kim Mẫu",
+        "text": "Kim Mẫu giữ vai trò chỉ huy tại Triều Tiên.",
+        "metadata": {"subject_type": "person", "people": ["Kim Mẫu"], "countries": ["Triều Tiên"]},
+    }
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [*vietnamese_people, foreign][:top_k]
+
+    config = CustomBuildConfig(task_counts={"compare": 1}, seed=29, max_corpus_records=3)
+    built = list(build_custom_trajectories(
+        write_corpus(tmp_path, [foreign, *vietnamese_people]), Retriever(), config=config,
+    ))
+    assert len(built) == 1
+    assert {
+        built[0]["provenance"]["primary_title"],
+        built[0]["provenance"]["secondary_title"],
+    } == {"Nguyễn Bình", "Võ Trứ"}
 
 
 def test_entity_relevance_rejects_similar_name_and_accepts_explicit_broader_article():
@@ -339,6 +383,114 @@ def test_cause_rejects_late_equipment_and_parade_sentence():
     assert compact == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Chiến dịch Mẫu có nguyên nhân từ những xung đột kéo dài trước đó.",
+        "Bối cảnh lúc này khiến Chiến dịch Mẫu nổ ra trên toàn khu vực.",
+        "Được thành lập vào năm 1951 trong tình thế cấp bách của khu vực.",
+    ],
+)
+def test_cause_facet_accepts_actual_cause_background_and_formation(text: str):
+    plan = QueryPlan("search_history", "Chiến dịch Mẫu bối cảnh nguyên nhân", 4, "context_cause")
+    compact = compact_observation(
+        [event("cause", "Chiến dịch Mẫu", text)], plan,
+        task_type="cause", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title="Chiến dịch Mẫu", target_subject_type="event",
+    )
+    assert [result["chunk_id"] for result in compact] == ["cause"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Không quân Nhân dân Triều Tiên duy trì năng lực quân sự tương đương bằng không quân như một lực lượng ngăn chặn.",
+        "Không quân Nhân dân Triều Tiên trang bị hệ thống Pechora và máy bay chiến đấu mới.",
+        "Không quân Nhân dân Triều Tiên kết thúc chiến dịch với hệ quả đáng kể cho khu vực.",
+    ],
+)
+def test_cause_facet_rejects_later_capability_equipment_and_consequence(text: str):
+    title = "Không quân Nhân dân Triều Tiên"
+    plan = QueryPlan("search_history", f"{title} bối cảnh nguyên nhân", 4, "context_cause")
+    compact = compact_observation(
+        [{"chunk_id": "late", "title": title, "text": text, "metadata": {"subject_type": "organization"}}],
+        plan, task_type="cause", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title=title, target_subject_type="organization",
+    )
+    assert compact == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Nhà Mạc có vai trò tích cực nhất định trong lịch sử Việt Nam.",
+        "Nhà Mạc góp phần làm thay đổi cục diện chính trị đương thời.",
+        "Nhà Mạc có tác động lâu dài, với hệ quả là một thời kỳ phân tranh.",
+    ],
+)
+def test_significance_facet_accepts_role_contribution_impact_and_consequence(text: str):
+    plan = QueryPlan("search_history", "Nhà Mạc ý nghĩa tác động", 4, "result_significance")
+    compact = compact_observation(
+        [{"chunk_id": "impact", "title": "Nhà Mạc", "text": text, "metadata": {"subject_type": "dynasty"}}],
+        plan, task_type="significance", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title="Nhà Mạc", target_subject_type="dynasty",
+    )
+    assert [result["chunk_id"] for result in compact] == ["impact"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Không quân Nhân dân Triều Tiên cũng có một ít máy bay MiG-29 hiện đại hơn.",
+        "Không quân Nhân dân Triều Tiên sở hữu nhiều loại máy bay và trang thiết bị.",
+        "Không quân Nhân dân Triều Tiên được thành lập vào tháng 1 năm 1951.",
+    ],
+)
+def test_significance_facet_rejects_equipment_inventory_and_plain_biography(text: str):
+    title = "Không quân Nhân dân Triều Tiên"
+    plan = QueryPlan("search_history", f"{title} ý nghĩa tác động", 4, "result_significance")
+    compact = compact_observation(
+        [{"chunk_id": "weak", "title": title, "text": text, "metadata": {"subject_type": "organization"}}],
+        plan, task_type="significance", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title=title, target_subject_type="organization",
+    )
+    assert compact == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Chiến dịch Mẫu thất bại và chịu nhiều tổn thất.",
+        "Chiến dịch Mẫu suy yếu trong khủng hoảng kéo dài.",
+        "Chiến dịch Mẫu gặp khó khăn vì lực lượng không đủ.",
+    ],
+)
+def test_corrective_facet_accepts_substantive_failure_weakness_and_difficulty(text: str):
+    plan = QueryPlan("search_history", "Chiến dịch Mẫu khó khăn thất bại", 4, "corrective_facet")
+    compact = compact_observation(
+        [event("negative", "Chiến dịch Mẫu", text)], plan,
+        task_type="hard_negative", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title="Chiến dịch Mẫu", target_subject_type="event",
+    )
+    assert [result["chunk_id"] for result in compact] == ["negative"]
+
+
+def test_wrong_facet_remains_optional_and_is_not_hard_gated():
+    plan = QueryPlan(
+        "search_history", "Chiến dịch Mẫu thành công thắng lợi", 4,
+        "wrong_facet", required=False, expected_empty=True,
+    )
+    neutral = event(
+        "neutral", "Chiến dịch Mẫu",
+        "Chiến dịch Mẫu diễn ra qua nhiều giai đoạn từ năm 1123 đến năm 1150.",
+    )
+    compact = compact_observation(
+        [neutral], plan, task_type="hard_negative", observation_char_budget=2_000,
+        max_result_text_chars=500, target_title="Chiến dịch Mẫu", target_subject_type="event",
+    )
+    assert [result["chunk_id"] for result in compact] == ["neutral"]
+
+
 def test_required_facet_empty_after_filter_and_fallback_skips_candidate(tmp_path: Path):
     title = "Chiến tranh Đại Việt–Khmer"
     seed = event(
@@ -440,6 +592,53 @@ def test_strict_audit_separates_facet_mismatch_from_entity_mismatch(tmp_path: Pa
     assert report["issues"]["observation_facet_mismatch"] == 1
     assert report["issues"]["final_answer_facet_mismatch"] == 1
     assert report["issues"].get("observation_target_mismatch", 0) == 0
+    assert not report["valid"]
+
+
+@pytest.mark.parametrize(
+    ("task_type", "role", "query", "bad_text"),
+    [
+        (
+            "cause", "context_cause", "Chiến tranh Đại Việt–Khmer bối cảnh nguyên nhân",
+            "Chiến tranh Đại Việt–Khmer duy trì năng lực quân sự bằng lực lượng ngăn chặn.",
+        ),
+        (
+            "significance", "result_significance", "Chiến tranh Đại Việt–Khmer ý nghĩa tác động",
+            "Chiến tranh Đại Việt–Khmer có một ít trang bị quân sự hiện đại hơn.",
+        ),
+    ],
+)
+def test_strict_audit_rejects_required_observation_and_answer_with_wrong_facet(
+    task_type: str, role: str, query: str, bad_text: str,
+):
+    evidence = event("bad-facet", "Chiến tranh Đại Việt–Khmer", bad_text)
+    row = make_trajectory(
+        trajectory_id=f"bad-{role}",
+        source_dataset="custom_history",
+        task_type=task_type,
+        messages=[
+            {"role": "user", "content": query},
+            {"role": "assistant", "content": "", "tool_calls": [
+                tool_call("call-1", "search_history", {"query": query, "top_k": 4}),
+            ]},
+            {"role": "tool", "tool_call_id": "call-1", "content": json.dumps([evidence], ensure_ascii=False)},
+            {"role": "assistant", "content": f"{bad_text} [bad-facet]"},
+        ],
+        provenance={
+            "subject_type": "event",
+            "primary_title": "Chiến tranh Đại Việt–Khmer",
+            "primary_aliases": [],
+            "vietnam_history_relevant": True,
+            "vietnam_history_relevance_signals": ["title:dai viet"],
+            "retrieval_queries": [{"query": query, "role": role, "required": True}],
+            "observed_evidence_ids": ["bad-facet"],
+            "evidence_ids": ["bad-facet"],
+            "requires_final_answer": True,
+        },
+    )
+    report = audit_rows([row], strict_custom=True)
+    assert report["issues"]["observation_facet_mismatch"] == 1
+    assert report["issues"]["final_answer_facet_mismatch"] == 1
     assert not report["valid"]
 
 
