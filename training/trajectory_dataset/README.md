@@ -1,4 +1,4 @@
-# Central Qwen3-8B trajectory dataset pipeline
+# Central Qwen3-8B trajectory dataset pipeline (custom builder V4)
 
 This additive pipeline prepares behavioral training examples for one possible future central Qwen3-8B Vietnamese-history agent. It does not replace the current Research Agent, Evidence Critic, or History Answerer. It does not rebuild the retrieval indexes and it never edits the enriched corpus.
 
@@ -25,7 +25,7 @@ V1 supports three bounded public sources plus custom corpus-grounded rows:
 
 These datasets do not share one raw schema. Each has a separate adapter in `adapters/`; incompatible rows become rejected records with a reason. Original split, source metadata, row identity, transformations, and known license are preserved under `provenance`. Missing licenses stay `null`; the pipeline does not invent them.
 
-Agent-FLAN has heterogeneous subsets. Rows that contain semantic calls but omit matching tool definitions are rejected. Text-only action examples remain text-only instead of receiving invented tools. Use `--include-reasoning` only when deliberately evaluating a subset whose reasoning text is suitable as a public training target; the default is `--no-include-reasoning`.
+Agent-FLAN has heterogeneous subsets. The adapter accepts `messages`, `conversations`, and `conversation`; those raw conversation fields are excluded from `source_metadata` to avoid duplicating the transcript. Its default compatible split is `agent_instruct_react` (override with `--split`). Rows that contain semantic calls but omit matching tool definitions are rejected. Text-only action examples remain text-only instead of receiving invented tools. Use `--include-reasoning` only when deliberately evaluating a subset whose reasoning text is suitable as a public training target; the default is `--no-include-reasoning`.
 
 Vietnam-History filtering utilities favor causes, context, significance, comparison, summary, and multi-part explanation and can reject malformed or extreme-length answers. Do not normalize all 200K rows by default. `rag_grounded` is preferred when a compatible retriever or precomputed observation file is available; `style_only` is deliberately bounded in the final mix.
 
@@ -69,6 +69,23 @@ Stored JSONL remains semantic and does not contain manually baked Qwen tokens:
 
 The trainer calls `tokenizer.apply_chat_template(messages, tools=tools, ...)`. It masks system, user, and tool-observation spans from loss. Every assistant action is supervised: tool calls and final answers both receive labels.
 
+## Custom builder V4 contract
+
+V4 classifies each selected corpus subject deterministically as `person`, `event`, `organization`, `state`, `dynasty`, `document`, `location`, `date`, or `topic`. Enriched metadata is checked before title cues, and the result is stored in provenance. Task eligibility then excludes semantically invalid combinations: for example, plain people, locations, dates, and general topics cannot seed cause trajectories; analytical summaries avoid location/date/topic pages; compare pairs must be distinct subjects of the same type.
+
+Seed selection streams the entire corpus read-only and retains a bounded deterministic top-hash sample. It is not a sample of only the first `--max-corpus-records` lines. Within a build, normalized questions, repeated article titles, and canonical unordered compare pairs are deduplicated before requested task counts are credited.
+
+Query plans are task-specific. Summary and multihop use separate context/cause and result/significance calls; compare searches each subject; verification searches a proposition derived from seed evidence plus a corroboration facet; hard negatives issue a wrong-facet call followed by a corrective call. Assistant tool calls preserve the requested `top_k` even when retrieval returns fewer rows.
+
+Tool observations use a compact training-only evidence contract. Each result retains its ID, title, task/query-relevant sentences, source identity, optional ranking score, and a small metadata allow-list. Configure the serialized per-observation and per-result limits with:
+
+```text
+--observation-char-budget 12000
+--max-result-text-chars 1600
+```
+
+Deterministic answers select task-relevant sentences only from those compact observations and cite only observed IDs. Verification uses a conservative normalized exact-substring support check. Insufficient-evidence examples contain a concrete deliberately unsupported proposition marked `Z-1901`, never treat merely related chunks as proof, and do not cite unrelated results.
+
 ## Installation and help
 
 From the repository root:
@@ -99,6 +116,9 @@ python -m training.trajectory_dataset.cli build-custom `
   --corpus-path artifacts/vn_history_deployment/corpus `
   --output-dir D:/vn-history/trajectory_dataset_v1 `
   --retrieval-backend project `
+  --rerank-batch-size 4 `
+  --observation-char-budget 12000 `
+  --max-result-text-chars 1600 `
   --num-factual 100 `
   --num-cause 50 `
   --num-significance 50 `
@@ -131,12 +151,14 @@ Disputed-claim trajectories can optionally include a project-named external step
 
 ## Build public sources separately
 
-Commands are bounded by `--max-samples`; they never request all rows by default:
+Commands are bounded by `--max-samples`; they never request all rows by default. `--max-samples N` means up to N successfully written canonical rows, while `--max-attempts` bounds raw rows scanned (default `max(N*10, N+100)`). Reports distinguish attempted, written, rejected, resume-skipped, and whether the attempt limit was hit.
 
 ```powershell
 python -m training.trajectory_dataset.cli normalize-public `
   --source agent_flan `
+  --split agent_instruct_react `
   --max-samples 2000 `
+  --max-attempts 20000 `
   --cache-dir D:/hf-cache `
   --output D:/vn-history/trajectory_dataset_v1/intermediate/agent_flan.jsonl `
   --no-include-reasoning `
@@ -156,7 +178,7 @@ python -m training.trajectory_dataset.cli normalize-public `
   --resume
 ```
 
-Add `--input-jsonl path/to/raw_fixture.jsonl` to exercise adapters offline without a network call. In `rag_grounded` mode, also select `project`, `precomputed`, or fixture retrieval and provide the corpus where required.
+Add `--input-jsonl path/to/raw_fixture.jsonl` to exercise adapters offline without a network call. In `rag_grounded` mode, also select `project`, `precomputed`, or fixture retrieval and provide the corpus where required. `--rerank-batch-size` overrides the loaded project service config in memory only; it never edits `inference_config.json` or any deployment artifact.
 
 ## Mix, validate, and split
 
@@ -189,7 +211,7 @@ python -m training.trajectory_dataset.cli split `
   --seed 42
 ```
 
-Mixing uses deterministic sampling without duplicating rows. Exact normalized user questions and trajectory IDs are deduplicated. Splitting keeps a custom source document/article group in one split and honors official public validation/test split metadata when it is unambiguous.
+Mixing uses deterministic sampling without duplicating rows. Exact normalized user questions and trajectory IDs are deduplicated. Custom provenance retains legacy `source_group` and also records every contributing stable group in `source_groups`. Splitting connects rows that share any group, then assigns the whole connected component to one split. This prevents a compare row using A+B from leaking apart from another row based on B, while preserving legacy single-group behavior and unambiguous official public validation/test splits.
 
 Validation checks roles, final answers, tool definitions, call/result ID consistency, non-empty search queries, unique IDs, provenance, and internal evidence/citation IDs. Every rejected row contains a reason.
 
@@ -199,11 +221,49 @@ Public normalization and custom generation append incrementally. `--checkpoint-e
 
 Do not combine outputs from different generation configurations under one resumed file. Use a new output directory when changing task counts, seed, source revision, teacher, or retrieval backend.
 
-## Optional local teacher
+## Audit before training
 
-The default is `--teacher-backend none`; no large model is loaded unexpectedly. Deterministic corpus templates, public normalization, fixture/precomputed retrieval, validation, mixing, and splitting all work without a teacher.
+The tokenizer-free audit loads no model and checks semantic eligibility, concrete claims, pair consistency, multihop call counts, duplicate questions, grounding, empty observations, observation sizes, and tool-call counts:
 
-An explicitly requested local model can generate question/answer targets behind the `Teacher` interface:
+```powershell
+python -m training.trajectory_dataset.cli audit `
+  --input D:/vn-history/trajectory_dataset_v1/custom_history.jsonl `
+  --strict-custom
+```
+
+An optional tokenizer-only pass renders the canonical chat template and reports token p50/p95/max, overlength rows, lost initial questions, lost tool-call targets, and lost final/all assistant targets. It does not load model weights:
+
+```powershell
+python -m training.trajectory_dataset.cli audit `
+  --input D:/vn-history/trajectory_dataset_v1/custom_history.jsonl `
+  --strict-custom `
+  --tokenizer-model-id YOUR_TOKENIZER_ID_OR_PATH `
+  --max-seq-length 4096
+```
+
+Preprocessing no longer silently left-truncates a row when doing so would damage the initial user question or any assistant action target; compact observations or increase the sequence length instead.
+
+## Optional post-retrieval local teacher
+
+The default is `--teacher-backend none`; no large model is loaded unexpectedly. This mode is the deterministic controller/tool-behavior validation baseline. Deterministic generation, public normalization, fixture/precomputed retrieval, validation, mixing, and splitting all work without a teacher.
+
+Teacher enhancement is answer-only and happens after retrieval. The builder owns the task, question, tool calls, and compact observations. The teacher receives those immutable fields plus allowed evidence IDs and may change only the final assistant answer. Unknown citations, empty output, and invalid rows follow an explicit `fallback` or `reject` policy. A teacher-enhanced answer is not assumed to be better; audit it.
+
+For a standalone pilot that does not regenerate retrieval:
+
+```powershell
+python -m training.trajectory_dataset.cli enhance-teacher `
+  --input D:/vn-history/trajectory_dataset_v1/custom_history.jsonl `
+  --output D:/vn-history/trajectory_dataset_v1/custom_history.teacher.jsonl `
+  --teacher-backend local_hf `
+  --teacher-model YOUR_LOCAL_TEACHER_ID_OR_PATH `
+  --task-type cause --task-type significance --task-type compare `
+  --task-type summary --task-type multihop --task-type verification `
+  --teacher-device auto --teacher-batch-size 1 `
+  --max-new-tokens 512 --temperature 0
+```
+
+Compatibility mode on `build-custom` uses the same two-stage process:
 
 ```powershell
 python -m training.trajectory_dataset.cli build-custom `
@@ -212,14 +272,15 @@ python -m training.trajectory_dataset.cli build-custom `
   --retrieval-backend project `
   --teacher-backend local_hf `
   --teacher-model YOUR_LOCAL_TEACHER_ID_OR_PATH `
-  --teacher-device cuda `
-  --teacher-batch-size 4 `
+  --teacher-device auto `
+  --teacher-batch-size 1 `
+  --teacher-failure-policy fallback `
   --max-new-tokens 512 `
   --temperature 0 `
   --dry-run
 ```
 
-Remove `--dry-run` manually when you intend to load that model. No paid API is required.
+When this mode is enabled, deterministic trajectories are written first, the project retriever is closed, and only then is the local teacher loaded. The intermediate file is `custom_history.deterministic.jsonl`; the final output remains `custom_history.jsonl`. Factual, hard-negative, insufficient-evidence, and no-tool rows remain deterministic by default. Remove `--dry-run` manually when you intend to load the teacher. No paid API is required.
 
 ## Colab and Google Drive
 
@@ -308,7 +369,7 @@ trajectory_dataset_v1/
     └── manifest.json
 ```
 
-Statistics include rows per source and task, tool/no-tool ratio, single/multi-tool ratio, answer word lengths, and trajectory turn counts.
+Statistics include rows per source and task, tool/no-tool ratio, single/multi-tool ratio, answer word lengths, trajectory turn counts, observation characters, and observation result counts.
 
 ## Troubleshooting
 
@@ -320,7 +381,7 @@ Statistics include rows per source and task, tool/no-tool ratio, single/multi-to
 - **Resume seems to skip rows:** deterministic IDs already present in the output are treated as completed. Use a new output directory for a changed configuration.
 - **Empty split:** increase source groups or adjust ratios. Tiny sets with fewer than three groups cannot provide meaningful train/validation/test isolation.
 - **Chat-template preprocessing error:** use a tokenizer revision that supports the stored semantic `messages`, `tools`, and `tool_calls` format.
-- **Final target truncated:** increase `--max-seq-length`; preprocessing refuses a sample when truncation removes every assistant target.
+- **Question or assistant target would be truncated:** reduce observation budgets or increase `--max-seq-length`; preprocessing refuses silent loss of the initial question or any assistant target.
 
 ## Large-file safety
 

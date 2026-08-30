@@ -31,10 +31,11 @@ class LocalHFTeacher:
     def generate(self, requests: list[TeacherRequest]) -> list[TeacherResponse]:
         prompts = [
             (
-                "Tạo đúng một JSON object có hai khóa question và answer. "
-                f"Loại câu hỏi: {request.task_type}. Tiêu đề: {request.title}. "
-                "Chỉ dùng bằng chứng sau, không thêm kiến thức ngoài:\n"
-                f"{request.evidence}"
+                "Tạo đúng một JSON object có khóa answer. Không thay đổi câu hỏi, không tạo tool call. "
+                "Chỉ dùng bằng chứng quan sát và chỉ trích dẫn ID nằm trong allowed_evidence_ids. "
+                f"Loại tác vụ: {request.task_type}. Câu hỏi: {request.question}\n"
+                f"allowed_evidence_ids: {json.dumps(request.allowed_evidence_ids, ensure_ascii=False)}\n"
+                f"Bằng chứng quan sát:\n{request.evidence}"
             )
             for request in requests
         ]
@@ -55,9 +56,8 @@ class LocalHFTeacher:
                 value = json.loads(text.strip())
             except json.JSONDecodeError as exc:
                 raise ValueError("local teacher did not return valid JSON") from exc
-            question = str(value.get("question") or "").strip()
             answer = str(value.get("answer") or "").strip()
-            if not question or not answer:
-                raise ValueError("local teacher response is missing question or answer")
-            responses.append(TeacherResponse(question=question, answer=answer))
+            if not answer:
+                raise ValueError("local teacher response is missing answer")
+            responses.append(TeacherResponse(answer=answer))
         return responses

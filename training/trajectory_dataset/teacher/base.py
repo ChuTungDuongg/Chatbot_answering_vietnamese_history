@@ -7,15 +7,17 @@ from typing import Protocol
 @dataclass(frozen=True)
 class TeacherRequest:
     task_type: str
-    title: str
+    question: str
     evidence: str
+    allowed_evidence_ids: tuple[str, ...]
     seed: int
 
 
 @dataclass(frozen=True)
 class TeacherResponse:
-    question: str
     answer: str
+    # Accepted for compatibility with old mocks; V4 never uses teacher-authored questions.
+    question: str | None = None
 
 
 class Teacher(Protocol):
@@ -26,6 +28,6 @@ class Teacher(Protocol):
 class NoTeacher:
     def generate(self, requests: list[TeacherRequest]) -> list[TeacherResponse]:
         raise RuntimeError(
-            "teacher-backend=none cannot synthesize free-form targets; use deterministic corpus templates, "
-            "precomputed fixtures, or explicitly configure local_hf"
+            "teacher-backend=none leaves deterministic evidence-grounded answers unchanged; "
+            "explicitly configure local_hf only for post-retrieval answer enhancement"
         )

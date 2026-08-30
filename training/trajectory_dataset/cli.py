@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable
 
 from .adapters import normalize_agent_flan, normalize_multihop, normalize_vietnam_history
 from .adapters.common import AdapterError, get_messages, semantic_messages
+from .audit import audit_rows, tokenizer_audit
 from .builders.custom_history import (
     CustomBuildConfig,
     build_custom_trajectories,
@@ -19,8 +20,9 @@ from .drive import resolve_corpus_path
 from .io_utils import IncrementalJsonlWriter, atomic_write_json, atomic_write_jsonl, iter_jsonl, read_jsonl
 from .mix import DEFAULT_MIX_RATIOS, mix_sources
 from .retrieval import FixtureRetriever, PrecomputedRetriever, PrecomputedToolRetriever, ProjectRetriever
-from .split import source_group, split_trajectories
+from .split import source_groups, split_trajectories
 from .stats import dataset_stats
+from .teacher.enhance import DEFAULT_TEACHER_TASKS, enhance_rows
 from .teacher.local_hf import LocalHFTeacher
 from .validate import validate_rows
 
@@ -29,6 +31,11 @@ PUBLIC_SOURCES: dict[str, tuple[str, Callable[..., dict[str, Any]]]] = {
     "agent_flan": ("internlm/Agent-FLAN", normalize_agent_flan),
     "multihop": ("khaimaitien/multi-hop-qa-function-calling-format-V1.0", normalize_multihop),
     "vietnam_history": ("minhxthanh/Vietnam-History-200K-Vi", normalize_vietnam_history),
+}
+PUBLIC_SOURCE_DEFAULT_SPLITS = {
+    "agent_flan": "agent_instruct_react",
+    "multihop": "train",
+    "vietnam_history": "train",
 }
 
 
@@ -84,9 +91,10 @@ def _public_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
         from datasets import load_dataset
     except ImportError as exc:
         raise RuntimeError("Install requirements-training.txt to load public Hugging Face datasets") from exc
+    split = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
     kwargs: dict[str, Any] = {
         "path": dataset_id,
-        "split": args.split,
+        "split": split,
         "streaming": True,
     }
     if args.dataset_config:
@@ -109,12 +117,17 @@ def _make_retriever(args: argparse.Namespace, corpus: Path | None = None):
         records = load_seed_records(corpus, limit=args.max_corpus_records, seed=args.seed)
         return FixtureRetriever(records)
     if backend == "project":
-        return ProjectRetriever.load(corpus, device=args.device)
+        return ProjectRetriever.load(
+            corpus,
+            device=args.device,
+            rerank_batch_size=getattr(args, "rerank_batch_size", None),
+        )
     raise ValueError(f"unknown retrieval backend: {backend}")
 
 
 def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
     _, adapter = PUBLIC_SOURCES[args.source]
+    resolved_split = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
     output = Path(args.output)
     rejected_path = Path(args.rejected_output or output.with_name(f"{output.stem}.rejected.jsonl"))
     if args.dry_run:
@@ -123,12 +136,12 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
             "source": args.source,
             "dataset_id": args.dataset_id or PUBLIC_SOURCES[args.source][0],
             "max_samples": args.max_samples,
+            "max_attempts": getattr(args, "max_attempts", None),
+            "split": resolved_split,
             "output": str(output),
             "no_model_or_dataset_loaded": True,
         }
     retriever = None
-    if args.source == "vietnam_history" and args.history_mode == "rag_grounded":
-        retriever = _make_retriever(args, _corpus(args))
     rejected: list[dict[str, Any]] = []
     attempted = 0
     seen_questions: set[str] = set()
@@ -136,49 +149,65 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
         seen_questions = {
             normalized_question(first_user_question(row)) for row in iter_jsonl(output)
         }
-    with IncrementalJsonlWriter(output, resume=args.resume, checkpoint_every=args.checkpoint_every) as writer:
-        for index, raw_row in enumerate(_public_rows(args)):
-            if attempted >= args.max_samples:
-                break
-            attempted += 1
-            try:
-                if args.source == "agent_flan":
-                    row = adapter(raw_row, index=index, split=args.split, include_reasoning=args.include_reasoning)
-                elif args.source == "multihop":
-                    row = adapter(raw_row, index=index, split=args.split, include_reasoning=args.include_reasoning)
-                else:
-                    retrieval_results = None
-                    if retriever is not None:
-                        raw_messages = semantic_messages(get_messages(raw_row), include_reasoning=False)
-                        question = next(str(item["content"]) for item in raw_messages if item["role"] == "user")
-                        retrieval_results = retriever.search(question, top_k=args.top_k)
-                    row = adapter(
-                        raw_row,
-                        index=index,
-                        split=args.split,
-                        mode=args.history_mode,
-                        retrieval_results=retrieval_results,
-                        preferred_only=args.history_preferred_only,
-                    )
-                question_key = normalized_question(first_user_question(row))
-                if question_key and question_key in seen_questions:
-                    raise AdapterError("duplicate normalized user question")
-                validation = validate_rows([row])
-                if validation.rejected:
-                    raise AdapterError(validation.rejected[0]["reason"])
-                writer.write(row)
-                if question_key:
-                    seen_questions.add(question_key)
-            except (AdapterError, ValueError, KeyError, TypeError) as exc:
-                rejected.append({"id": raw_row.get("id"), "reason": str(exc), "source_index": index})
-    if hasattr(retriever, "close"):
-        retriever.close()
+    max_attempts = getattr(args, "max_attempts", None) or max(args.max_samples * 10, args.max_samples + 100)
+    hit_max_attempts = False
+    try:
+        if args.source == "vietnam_history" and args.history_mode == "rag_grounded":
+            retriever = _make_retriever(args, _corpus(args))
+        with IncrementalJsonlWriter(output, resume=args.resume, checkpoint_every=args.checkpoint_every) as writer:
+            existing = len(writer.completed_ids)
+            target_new = max(0, args.max_samples - existing)
+            raw_rows = _public_rows(args) if target_new else ()
+            for index, raw_row in enumerate(raw_rows):
+                if writer.written >= target_new or attempted >= max_attempts:
+                    break
+                attempted += 1
+                try:
+                    if args.source == "agent_flan":
+                        row = adapter(raw_row, index=index, split=resolved_split, include_reasoning=args.include_reasoning)
+                    elif args.source == "multihop":
+                        row = adapter(raw_row, index=index, split=resolved_split, include_reasoning=args.include_reasoning)
+                    else:
+                        retrieval_results = None
+                        if retriever is not None:
+                            raw_messages = semantic_messages(get_messages(raw_row), include_reasoning=False)
+                            question = next(str(item["content"]) for item in raw_messages if item["role"] == "user")
+                            retrieval_results = retriever.search(question, top_k=args.top_k)
+                        row = adapter(
+                            raw_row,
+                            index=index,
+                            split=resolved_split,
+                            mode=args.history_mode,
+                            retrieval_results=retrieval_results,
+                            preferred_only=args.history_preferred_only,
+                        )
+                    if str(row.get("id", "")) in writer.completed_ids:
+                        writer.write(row)
+                        continue
+                    question_key = normalized_question(first_user_question(row))
+                    if question_key and question_key in seen_questions:
+                        raise AdapterError("duplicate normalized user question")
+                    validation = validate_rows([row])
+                    if validation.rejected:
+                        raise AdapterError(validation.rejected[0]["reason"])
+                    writer.write(row)
+                    if question_key:
+                        seen_questions.add(question_key)
+                except (AdapterError, ValueError, KeyError, TypeError) as exc:
+                    rejected.append({"id": raw_row.get("id"), "reason": str(exc), "source_index": index})
+            hit_max_attempts = attempted >= max_attempts and writer.written < target_new
+    finally:
+        if hasattr(retriever, "close"):
+            retriever.close()
     atomic_write_jsonl(rejected_path, rejected)
     return {
         "attempted": attempted,
         "written": writer.written,
         "resume_skipped": writer.skipped,
         "rejected": len(rejected),
+        "split": resolved_split,
+        "max_attempts": max_attempts,
+        "hit_max_attempts": hit_max_attempts,
         "output": str(output),
         "rejected_output": str(rejected_path),
     }
@@ -193,6 +222,8 @@ def _custom_config(args: argparse.Namespace) -> CustomBuildConfig:
         top_k=args.top_k,
         seed=args.seed,
         max_corpus_records=args.max_corpus_records,
+        observation_char_budget=args.observation_char_budget,
+        max_result_text_chars=args.max_result_text_chars,
     )
 
 
@@ -202,6 +233,8 @@ def _build_custom(args: argparse.Namespace) -> dict[str, Any]:
     output = output_dir / "custom_history.jsonl"
     rejected_path = output_dir / "custom_history.rejected.jsonl"
     config = _custom_config(args)
+    if args.teacher_backend == "local_hf" and not args.teacher_model:
+        raise ValueError("--teacher-model is required for teacher-backend=local_hf")
     if args.dry_run:
         return {
             "dry_run": True,
@@ -213,12 +246,41 @@ def _build_custom(args: argparse.Namespace) -> dict[str, Any]:
             "output": str(output),
             "no_model_or_retriever_loaded": True,
         }
-    retriever = _make_retriever(args, corpus)
-    teacher = None
+    deterministic_output = (
+        output_dir / "custom_history.deterministic.jsonl"
+        if args.teacher_backend == "local_hf"
+        else output
+    )
     external_retriever = PrecomputedToolRetriever(args.external_results) if args.external_results else None
+    rejected: list[dict[str, Any]] = []
+    retriever = None
+    try:
+        retriever = _make_retriever(args, corpus)
+        with IncrementalJsonlWriter(
+            deterministic_output,
+            resume=args.resume,
+            checkpoint_every=args.checkpoint_every,
+        ) as writer:
+            for row in build_custom_trajectories(
+                corpus,
+                retriever,
+                config=config,
+                completed_ids=writer.completed_ids,
+                external_retriever=external_retriever,
+            ):
+                validation = validate_rows([row])
+                if validation.rejected:
+                    rejected.extend(validation.rejected)
+                else:
+                    writer.write(row)
+            if args.include_no_tool:
+                for row in build_no_tool_trajectories():
+                    writer.write(row)
+    finally:
+        if hasattr(retriever, "close"):
+            retriever.close()
+
     if args.teacher_backend == "local_hf":
-        if not args.teacher_model:
-            raise ValueError("--teacher-model is required for teacher-backend=local_hf")
         teacher = LocalHFTeacher(
             args.teacher_model,
             device=args.teacher_device,
@@ -226,35 +288,82 @@ def _build_custom(args: argparse.Namespace) -> dict[str, Any]:
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
         )
-    rejected: list[dict[str, Any]] = []
-    with IncrementalJsonlWriter(output, resume=args.resume, checkpoint_every=args.checkpoint_every) as writer:
-        for row in build_custom_trajectories(
-            corpus,
-            retriever,
-            config=config,
-            completed_ids=writer.completed_ids,
-            teacher=teacher,
-            external_retriever=external_retriever,
-        ):
-            validation = validate_rows([row])
-            if validation.rejected:
-                rejected.extend(validation.rejected)
-            else:
-                writer.write(row)
-        if args.include_no_tool:
-            for row in build_no_tool_trajectories():
-                writer.write(row)
-    if hasattr(retriever, "close"):
-        retriever.close()
+        enhanced = enhance_rows(
+            read_jsonl(deterministic_output),
+            teacher,
+            task_types=DEFAULT_TEACHER_TASKS,
+            failure_policy=args.teacher_failure_policy,
+            seed=args.seed,
+        )
+        atomic_write_jsonl(output, enhanced.rows)
+        rejected.extend(enhanced.rejected)
+        final_written = len(enhanced.rows)
+    else:
+        final_written = len(read_jsonl(output))
     atomic_write_jsonl(rejected_path, rejected)
     return {
-        "written": writer.written,
+        "written": final_written,
         "resume_skipped": writer.skipped,
         "rejected": len(rejected),
         "output": str(output),
+        "deterministic_output": str(deterministic_output),
         "rejected_output": str(rejected_path),
         "corpus_read_only": True,
     }
+
+
+def _enhance_teacher(args: argparse.Namespace) -> dict[str, Any]:
+    if args.teacher_backend != "local_hf":
+        raise ValueError("enhance-teacher currently requires --teacher-backend local_hf")
+    if not args.teacher_model:
+        raise ValueError("--teacher-model is required")
+    rows = read_jsonl(args.input)
+    teacher = LocalHFTeacher(
+        args.teacher_model,
+        device=args.teacher_device,
+        batch_size=args.teacher_batch_size,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+    )
+    enhanced = enhance_rows(
+        rows,
+        teacher,
+        task_types=args.task_type or DEFAULT_TEACHER_TASKS,
+        failure_policy=args.failure_policy,
+        seed=args.seed,
+    )
+    atomic_write_jsonl(args.output, enhanced.rows)
+    rejected_output = args.rejected_output or str(Path(args.output).with_name(f"{Path(args.output).stem}.rejected.jsonl"))
+    atomic_write_jsonl(rejected_output, enhanced.rejected)
+    return {
+        "input": len(rows),
+        "written": len(enhanced.rows),
+        "enhanced": enhanced.enhanced,
+        "fallback": enhanced.fallback,
+        "rejected": len(enhanced.rejected),
+        "output": args.output,
+        "rejected_output": rejected_output,
+    }
+
+
+def _audit_command(args: argparse.Namespace) -> dict[str, Any]:
+    rows = read_jsonl(args.input)
+    report = audit_rows(rows, strict_custom=args.strict_custom)
+    if args.tokenizer:
+        try:
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError("transformers is required for --tokenizer audit") from exc
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=args.trust_remote_code)
+        report["tokenizer"] = tokenizer_audit(rows, tokenizer, max_seq_length=args.max_seq_length)
+        if args.strict_custom and (
+            report["tokenizer"]["rows_initial_user_lost"]
+            or report["tokenizer"]["rows_any_tool_call_supervision_lost"]
+        ):
+            report["valid"] = False
+    if args.output:
+        atomic_write_json(args.output, report)
+    return report
 
 
 def _validate_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -297,7 +406,7 @@ def _split_command(args: argparse.Namespace) -> dict[str, Any]:
         "ratios": {"train": args.train_ratio, "validation": args.val_ratio, "test": args.test_ratio},
         "rows": {name: len(getattr(splits, name)) for name in ("train", "validation", "test")},
         "source_groups": {
-            name: sorted({source_group(row) for row in getattr(splits, name)})
+            name: sorted({group for row in getattr(splits, name) for group in source_groups(row)})
             for name in ("train", "validation", "test")
         },
     }
@@ -332,7 +441,7 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
         namespace.input_jsonl = None
         namespace.dataset_id = None
         namespace.dataset_config = None
-        namespace.split = "train"
+        namespace.split = None
         namespace.include_reasoning = args.include_reasoning
         namespace.history_mode = args.history_mode
         namespace.history_preferred_only = args.history_preferred_only
@@ -380,12 +489,17 @@ def build_parser() -> argparse.ArgumentParser:
     public.add_argument("--source", choices=sorted(PUBLIC_SOURCES), required=True)
     public.add_argument("--dataset-id", default=None)
     public.add_argument("--dataset-config", default=None)
-    public.add_argument("--split", default="train")
+    public.add_argument(
+        "--split",
+        default=None,
+        help="Dataset split/config. Defaults per source (Agent-FLAN: agent_instruct_react).",
+    )
     public.add_argument("--input-jsonl", default=None, help="Offline raw fixture instead of Hugging Face.")
     public.add_argument("--output", required=True)
     public.add_argument("--rejected-output", default=None)
     public.add_argument("--cache-dir", default=None)
     public.add_argument("--max-samples", type=_positive, default=1000)
+    public.add_argument("--max-attempts", type=_positive, default=None)
     public.add_argument("--include-reasoning", action=argparse.BooleanOptionalAction, default=False)
     public.add_argument("--history-mode", choices=("style_only", "rag_grounded"), default="style_only")
     public.add_argument("--history-preferred-only", action=argparse.BooleanOptionalAction, default=False)
@@ -398,6 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
     public.add_argument("--max-corpus-records", type=_positive, default=10_000)
     public.add_argument("--seed", type=int, default=42)
     public.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    public.add_argument("--rerank-batch-size", type=_positive, default=None)
     _add_corpus_arguments(public)
 
     custom = subparsers.add_parser("build-custom", help="Build read-only corpus-grounded custom trajectories.")
@@ -408,6 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
     custom.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     custom.add_argument("--top-k", type=_positive, default=6)
     custom.add_argument("--max-corpus-records", type=_positive, default=10_000)
+    custom.add_argument("--observation-char-budget", type=_positive, default=12_000)
+    custom.add_argument("--max-result-text-chars", type=_positive, default=1_600)
+    custom.add_argument("--rerank-batch-size", type=_positive, default=None)
     for name, default in (("factual", 20), ("cause", 10), ("significance", 10), ("compare", 8), ("summary", 10), ("multihop", 10), ("verification", 6), ("hard-negative", 6), ("insufficient-evidence", 6)):
         custom.add_argument(f"--num-{name}", dest=f"num_{name.replace('-', '_')}", type=int, default=default)
     custom.add_argument("--external-results", default=None, help="Optional precomputed search_wikipedia/search_web results.")
@@ -418,6 +536,7 @@ def build_parser() -> argparse.ArgumentParser:
     custom.add_argument("--teacher-batch-size", type=_positive, default=1)
     custom.add_argument("--max-new-tokens", type=_positive, default=512)
     custom.add_argument("--temperature", type=float, default=0.0)
+    custom.add_argument("--teacher-failure-policy", choices=("fallback", "reject"), default="fallback")
     custom.add_argument("--seed", type=int, default=42)
     custom.add_argument("--resume", action="store_true")
     custom.add_argument("--checkpoint-every", type=_positive, default=25)
@@ -446,11 +565,37 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--seed", type=int, default=42)
     split.add_argument("--dry-run", action="store_true")
 
+    enhance = subparsers.add_parser("enhance-teacher", help="Post-process canonical rows with an answer-only local teacher.")
+    enhance.add_argument("--input", required=True)
+    enhance.add_argument("--output", required=True)
+    enhance.add_argument("--rejected-output", default=None)
+    enhance.add_argument("--teacher-backend", choices=("local_hf",), default="local_hf")
+    enhance.add_argument("--teacher-model", required=True)
+    enhance.add_argument("--teacher-device", choices=("auto", "cpu", "cuda"), default="auto")
+    enhance.add_argument("--teacher-batch-size", type=_positive, default=1)
+    enhance.add_argument("--max-new-tokens", type=_positive, default=512)
+    enhance.add_argument("--temperature", type=float, default=0.0)
+    enhance.add_argument("--task-type", action="append", choices=sorted(DEFAULT_TEACHER_TASKS), default=None)
+    enhance.add_argument("--failure-policy", choices=("fallback", "reject"), default="fallback")
+    enhance.add_argument("--seed", type=int, default=42)
+
+    audit = subparsers.add_parser("audit", help="Audit semantic, grounding, compactness, and optional token safety.")
+    audit.add_argument("--input", required=True)
+    audit.add_argument("--output", default=None)
+    audit.add_argument("--strict-custom", action="store_true")
+    audit.add_argument(
+        "--tokenizer", "--tokenizer-model-id", dest="tokenizer", default=None,
+        help="Optional local/Hugging Face tokenizer id for token-only audit.",
+    )
+    audit.add_argument("--max-seq-length", type=_positive, default=8192)
+    audit.add_argument("--trust-remote-code", action=argparse.BooleanOptionalAction, default=True)
+
     all_parser = subparsers.add_parser("build-all", help="Normalize, build, mix, validate, deduplicate, and split.")
     _add_corpus_arguments(all_parser)
     all_parser.add_argument("--output-dir", required=True)
     all_parser.add_argument("--cache-dir", default=None)
     all_parser.add_argument("--max-samples-per-source", type=_positive, default=1000)
+    all_parser.add_argument("--max-attempts", type=_positive, default=None)
     all_parser.add_argument("--max-samples", type=_positive, default=None)
     all_parser.add_argument("--mix-config", default=str(Path(__file__).with_name("configs") / "mix_v1.json"))
     all_parser.add_argument("--history-mode", choices=("style_only", "rag_grounded"), default="style_only")
@@ -461,6 +606,9 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     all_parser.add_argument("--top-k", type=_positive, default=6)
     all_parser.add_argument("--max-corpus-records", type=_positive, default=10_000)
+    all_parser.add_argument("--observation-char-budget", type=_positive, default=12_000)
+    all_parser.add_argument("--max-result-text-chars", type=_positive, default=1_600)
+    all_parser.add_argument("--rerank-batch-size", type=_positive, default=None)
     for name, default in (("factual", 20), ("cause", 10), ("significance", 10), ("compare", 8), ("summary", 10), ("multihop", 10), ("verification", 6), ("hard-negative", 6), ("insufficient-evidence", 6)):
         all_parser.add_argument(f"--num-{name}", dest=f"num_{name.replace('-', '_')}", type=int, default=default)
     all_parser.add_argument("--external-results", default=None)
@@ -471,6 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("--teacher-batch-size", type=_positive, default=1)
     all_parser.add_argument("--max-new-tokens", type=_positive, default=512)
     all_parser.add_argument("--temperature", type=float, default=0.0)
+    all_parser.add_argument("--teacher-failure-policy", choices=("fallback", "reject"), default="fallback")
     all_parser.add_argument("--checkpoint-every", type=_positive, default=25)
     all_parser.add_argument("--resume", action="store_true")
     all_parser.add_argument("--train-ratio", type=_ratio, default=0.90)
@@ -495,12 +644,16 @@ def main(argv: list[str] | None = None) -> int:
         result = _mix_command(args)
     elif args.command == "split":
         result = _split_command(args)
+    elif args.command == "enhance-teacher":
+        result = _enhance_teacher(args)
+    elif args.command == "audit":
+        result = _audit_command(args)
     elif args.command == "build-all":
         result = _build_all(args)
     else:
         raise AssertionError(args.command)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
+    return 0 if not (args.command == "audit" and not result.get("valid", True)) else 2
 
 
 if __name__ == "__main__":

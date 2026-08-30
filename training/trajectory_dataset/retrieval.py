@@ -84,7 +84,13 @@ class ProjectRetriever:
         self._service = service
 
     @classmethod
-    def load(cls, corpus_file: str | Path, *, device: str = "cpu") -> "ProjectRetriever":
+    def load(
+        cls,
+        corpus_file: str | Path,
+        *,
+        device: str = "cpu",
+        rerank_batch_size: int | None = None,
+    ) -> "ProjectRetriever":
         # Heavy project imports and model/index loading happen only after the user
         # explicitly selects this backend and never during package import/dry-run.
         from app.config import settings
@@ -93,13 +99,13 @@ class ProjectRetriever:
         from app.tools.local_search import SearchHistoryInput, SearchHistoryTool
 
         corpus_file = Path(corpus_file).resolve()
-        expected = settings.artifact_root / "corpus" / corpus_file.name
         artifact_root = corpus_file.parent.parent
         settings.app_mode = "retrieval-only"
         settings.artifact_root = artifact_root
         settings.device = device
         service = RAGService()
         service.load()
+        apply_rerank_batch_override(service, rerank_batch_size)
         return cls(SearchHistoryTool(HybridRetriever(service)), SearchHistoryInput, service)
 
     def search(self, query: str, *, top_k: int) -> list[dict[str, Any]]:
@@ -107,3 +113,17 @@ class ProjectRetriever:
 
     def close(self) -> None:
         self._service.shutdown()
+
+
+def apply_rerank_batch_override(service: Any, rerank_batch_size: int | None) -> None:
+    """Apply a process-local retrieval override without writing artifact config."""
+    if rerank_batch_size is None:
+        return
+    if rerank_batch_size < 1:
+        raise ValueError("rerank_batch_size must be positive")
+    if not isinstance(service.config, dict):
+        service.config = {}
+    retrieval = service.config.setdefault("retrieval", {})
+    if not isinstance(retrieval, dict):
+        raise ValueError("loaded service retrieval config must be an object")
+    retrieval["rerank_batch_size"] = rerank_batch_size

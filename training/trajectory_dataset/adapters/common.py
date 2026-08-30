@@ -48,9 +48,9 @@ def normalize_tool_definition(tool: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_messages(row: dict[str, Any]) -> list[dict[str, Any]]:
-    messages = row.get("messages") or row.get("conversations")
+    messages = row.get("messages") or row.get("conversations") or row.get("conversation")
     if not isinstance(messages, list) or not messages:
-        raise AdapterError("row has no compatible messages/conversations list")
+        raise AdapterError("row has no compatible messages/conversations/conversation list")
     return messages
 
 
@@ -134,7 +134,11 @@ def provenance(
     license_name: str | None,
     transformations: list[str],
 ) -> dict[str, Any]:
-    metadata = {key: copy.deepcopy(value) for key, value in row.items() if key not in {"messages", "conversations"}}
+    metadata = {
+        key: copy.deepcopy(value)
+        for key, value in row.items()
+        if key not in {"messages", "conversations", "conversation"}
+    }
     return {
         "dataset_id": dataset_id,
         "original_split": split,

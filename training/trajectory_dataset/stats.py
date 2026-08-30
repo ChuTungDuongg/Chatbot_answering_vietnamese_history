@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from collections import Counter
 from statistics import mean, median
@@ -26,6 +27,8 @@ def dataset_stats(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     tool_counts: list[int] = []
     answer_lengths: list[int] = []
     turn_counts: list[int] = []
+    observation_chars: list[int] = []
+    observation_result_counts: list[int] = []
     for row in materialized:
         messages = row.get("messages") or []
         tool_counts.append(sum(len(message.get("tool_calls") or []) for message in messages))
@@ -36,6 +39,16 @@ def dataset_stats(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         ]
         answer_lengths.append(len(answers[-1].split()) if answers else 0)
         turn_counts.append(len(messages))
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+            content = str(message.get("content") or "")
+            observation_chars.append(len(content))
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                payload = []
+            observation_result_counts.append(len(payload) if isinstance(payload, list) else 0)
     total = len(materialized)
     with_tools = sum(count > 0 for count in tool_counts)
     multi_step = sum(count > 1 for count in tool_counts)
@@ -53,4 +66,6 @@ def dataset_stats(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         },
         "answer_length_words": _describe(answer_lengths),
         "trajectory_turn_count": _describe(turn_counts),
+        "observation_chars": _describe(observation_chars),
+        "observation_result_counts": _describe(observation_result_counts),
     }
