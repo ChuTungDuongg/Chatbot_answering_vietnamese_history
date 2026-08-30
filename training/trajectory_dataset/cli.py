@@ -223,7 +223,9 @@ def _custom_config(args: argparse.Namespace) -> CustomBuildConfig:
         seed=args.seed,
         max_corpus_records=args.max_corpus_records,
         observation_char_budget=args.observation_char_budget,
+        trajectory_observation_char_budget=args.trajectory_observation_char_budget,
         max_result_text_chars=args.max_result_text_chars,
+        max_candidate_attempts_per_task=args.max_candidate_attempts_per_task,
     )
 
 
@@ -524,7 +526,9 @@ def build_parser() -> argparse.ArgumentParser:
     custom.add_argument("--top-k", type=_positive, default=6)
     custom.add_argument("--max-corpus-records", type=_positive, default=10_000)
     custom.add_argument("--observation-char-budget", type=_positive, default=12_000)
+    custom.add_argument("--trajectory-observation-char-budget", type=_positive, default=6_000)
     custom.add_argument("--max-result-text-chars", type=_positive, default=1_600)
+    custom.add_argument("--max-candidate-attempts-per-task", type=_positive, default=10_000)
     custom.add_argument("--rerank-batch-size", type=_positive, default=None)
     for name, default in (("factual", 20), ("cause", 10), ("significance", 10), ("compare", 8), ("summary", 10), ("multihop", 10), ("verification", 6), ("hard-negative", 6), ("insufficient-evidence", 6)):
         custom.add_argument(f"--num-{name}", dest=f"num_{name.replace('-', '_')}", type=int, default=default)
@@ -607,7 +611,9 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("--top-k", type=_positive, default=6)
     all_parser.add_argument("--max-corpus-records", type=_positive, default=10_000)
     all_parser.add_argument("--observation-char-budget", type=_positive, default=12_000)
+    all_parser.add_argument("--trajectory-observation-char-budget", type=_positive, default=6_000)
     all_parser.add_argument("--max-result-text-chars", type=_positive, default=1_600)
+    all_parser.add_argument("--max-candidate-attempts-per-task", type=_positive, default=10_000)
     all_parser.add_argument("--rerank-batch-size", type=_positive, default=None)
     for name, default in (("factual", 20), ("cause", 10), ("significance", 10), ("compare", 8), ("summary", 10), ("multihop", 10), ("verification", 6), ("hard-negative", 6), ("insufficient-evidence", 6)):
         all_parser.add_argument(f"--num-{name}", dest=f"num_{name.replace('-', '_')}", type=int, default=default)

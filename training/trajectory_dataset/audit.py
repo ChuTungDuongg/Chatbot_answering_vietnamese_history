@@ -34,13 +34,27 @@ def _tool_payloads(row: dict[str, Any]) -> list[list[dict[str, Any]]]:
     return payloads
 
 
+def _empty_breakdown(groups: dict[str, Counter[str]]) -> dict[str, dict[str, int | float]]:
+    report: dict[str, dict[str, int | float]] = {}
+    for key, counts in sorted(groups.items()):
+        values: dict[str, int | float] = dict(sorted(counts.items()))
+        total = counts["tool_results_total"]
+        values["empty_tool_result_rate"] = round(
+            counts["empty_tool_results_total"] / total, 6,
+        ) if total else 0.0
+        report[key] = values
+    return report
+
+
 def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -> dict[str, Any]:
     materialized = list(rows)
     tasks = Counter(str(row.get("task_type") or "unknown") for row in materialized)
     sources = Counter(str(row.get("source_dataset") or "unknown") for row in materialized)
     subjects = Counter(str((row.get("provenance") or {}).get("subject_type") or "unknown") for row in materialized)
     observation_chars: list[int] = []
-    empty_results = total_results = 0
+    empty_results = expected_empty_results = unexpected_empty_results = total_results = 0
+    empty_by_task: dict[str, Counter[str]] = {}
+    empty_by_role: dict[str, Counter[str]] = {}
     max_tool_calls = 0
     issue_counts: Counter[str] = Counter()
     issue_rows: dict[str, list[str]] = {}
@@ -98,17 +112,67 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
 
         observed_ids: set[str] = set()
         payloads = _tool_payloads(row)
-        for payload in payloads:
+        retrieval_queries = provenance.get("retrieval_queries")
+        query_metadata = retrieval_queries if isinstance(retrieval_queries, list) else []
+        roles = [
+            str(query_metadata[index].get("role") or "unknown")
+            if index < len(query_metadata) and isinstance(query_metadata[index], dict)
+            else str(payload[0].get("retrieval_role") or "unknown")
+            if payload and isinstance(payload[0], dict)
+            else "unknown"
+            for index, payload in enumerate(payloads)
+        ]
+        results_by_role = {role: payload for role, payload in zip(roles, payloads)}
+        direct_verification_present = bool(results_by_role.get("claim_support"))
+        trajectory_chars = 0
+        for index, payload in enumerate(payloads):
             total_results += 1
-            if not payload:
-                empty_results += 1
             encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-            observation_chars.append(len(encoded))
+            payload_chars = len(encoded)
+            trajectory_chars += payload_chars
+            observation_chars.append(payload_chars)
             observed_ids.update(
                 str(result.get("chunk_id") or result.get("evidence_id"))
                 for result in payload
                 if isinstance(result, dict) and (result.get("chunk_id") or result.get("evidence_id"))
             )
+            role = roles[index]
+            metadata = query_metadata[index] if index < len(query_metadata) and isinstance(query_metadata[index], dict) else {}
+            required = bool(metadata.get("required", False))
+            expected_empty = bool(metadata.get("expected_empty", False))
+            if "required" not in metadata and "expected_empty" not in metadata:
+                expected_empty = (
+                    task == "insufficient_evidence"
+                    or (task == "hard_negative" and role == "wrong_facet")
+                    or (
+                        task == "verification" and role in {"corroboration", "external_corroboration"}
+                        and direct_verification_present
+                    )
+                )
+                required = not expected_empty
+            if task == "verification" and role in {"corroboration", "external_corroboration"}:
+                expected_empty = expected_empty and direct_verification_present
+            task_counter = empty_by_task.setdefault(task or "unknown", Counter())
+            role_counter = empty_by_role.setdefault(role, Counter())
+            task_counter["tool_results_total"] += 1
+            role_counter["tool_results_total"] += 1
+            if not payload:
+                empty_results += 1
+                task_counter["empty_tool_results_total"] += 1
+                role_counter["empty_tool_results_total"] += 1
+                if expected_empty and not required:
+                    expected_empty_results += 1
+                    task_counter["expected_empty_tool_results"] += 1
+                    role_counter["expected_empty_tool_results"] += 1
+                else:
+                    unexpected_empty_results += 1
+                    task_counter["unexpected_empty_tool_results"] += 1
+                    role_counter["unexpected_empty_tool_results"] += 1
+                    if str(row.get("source_dataset") or "").startswith("custom_history"):
+                        issue("unexpected_empty_tool_results", row)
+        configured_budget = provenance.get("trajectory_observation_char_budget")
+        if isinstance(configured_budget, int) and trajectory_chars > configured_budget:
+            issue("trajectory_observation_budget_exceeded", row)
         final_answer = str((row.get("messages") or [{}])[-1].get("content") or "")
         parsed_citations = extract_evidence_citations(final_answer, observed_ids)
         citations = set(parsed_citations.citations)
@@ -126,6 +190,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "verification_invalid_subject", "insufficient_invalid_subject",
         "multihop_fewer_than_2_tool_calls", "duplicate_normalized_questions",
         "grounded_answer_invalid_observed_citations", "grounded_answer_missing_citation",
+        "unexpected_empty_tool_results", "trajectory_observation_budget_exceeded",
     }
     strict_violations = sum(issue_counts[name] for name in strict_issue_names)
     return {
@@ -136,6 +201,11 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "issues": dict(sorted(issue_counts.items())),
         "issue_row_ids": {key: values[:20] for key, values in sorted(issue_rows.items())},
         "empty_tool_result_rate": round(empty_results / total_results, 6) if total_results else 0.0,
+        "empty_tool_results_total": empty_results,
+        "expected_empty_tool_results": expected_empty_results,
+        "unexpected_empty_tool_results": unexpected_empty_results,
+        "empty_tool_results_by_task_type": _empty_breakdown(empty_by_task),
+        "empty_tool_results_by_retrieval_role": _empty_breakdown(empty_by_role),
         "observation_chars": _describe(observation_chars),
         "max_tool_calls": max_tool_calls,
         "strict_custom": strict_custom,

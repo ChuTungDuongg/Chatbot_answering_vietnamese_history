@@ -62,7 +62,21 @@ TITLE_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("organization", ("đảng ", "mặt trận", "việt minh", "tổ chức", "quân đội", "hội ", "liên minh")),
     ("state", ("việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam", "đại cồ việt", "vương quốc", "quốc gia", "chính quyền")),
     ("dynasty", ("nhà lý", "nhà trần", "nhà lê", "nhà nguyễn", "nhà hồ", "nhà đinh", "triều đại", "triều ", "chúa nguyễn", "chúa trịnh")),
-    ("location", ("thành phố", "tỉnh ", "huyện ", "quận ", "xã ", "phường ", "sông ", "núi ", "đảo ", "vịnh ", "cần thơ", "hà nội", "sài gòn")),
+    ("location", (
+        "thành phố", "tỉnh ", "huyện ", "quận ", "xã ", "phường ",
+        "thị trấn", "thị xã", "làng ", "thôn ", "ấp ", "bản ", "buôn ",
+        "địa danh", "sông ", "núi ", "đảo ", "vịnh ",
+        "cần thơ", "hà nội", "sài gòn",
+    )),
+)
+STRONG_LOCATION_LABELS = {
+    "thanh pho", "tinh", "huyen", "quan", "xa", "phuong", "thi tran",
+    "thi xa", "lang", "thon", "ap", "ban", "buon", "dia danh",
+}
+PERSON_TEXT_CUES = (
+    "sinh nam", "sinh ngay", "qua doi", "mat nam", "ten that", "ong la",
+    "ba la", "vi vua", "danh tuong", "nha cach mang", "chinh tri gia",
+    "nhan vat lich su", "anh hung dan toc", "cuoc doi", "tieu su",
 )
 
 
@@ -77,7 +91,9 @@ class CustomBuildConfig:
     seed: int = 42
     max_corpus_records: int = 10_000
     observation_char_budget: int = 12_000
+    trajectory_observation_char_budget: int = 6_000
     max_result_text_chars: int = 1_600
+    max_candidate_attempts_per_task: int = 10_000
 
     def __post_init__(self) -> None:
         unknown = set(self.task_counts) - set(TASK_TYPES)
@@ -89,8 +105,12 @@ class CustomBuildConfig:
             raise ValueError("top_k and max_corpus_records must be positive")
         if self.observation_char_budget < 256:
             raise ValueError("observation_char_budget must be at least 256")
+        if self.trajectory_observation_char_budget < 768:
+            raise ValueError("trajectory_observation_char_budget must be at least 768")
         if self.max_result_text_chars < 64:
             raise ValueError("max_result_text_chars must be at least 64")
+        if self.max_candidate_attempts_per_task < 1:
+            raise ValueError("max_candidate_attempts_per_task must be positive")
 
 
 @dataclass(frozen=True)
@@ -99,6 +119,9 @@ class QueryPlan:
     query: str
     top_k: int
     role: str
+    required: bool = True
+    expected_empty: bool = False
+    is_fallback: bool = False
 
     def arguments(self) -> dict[str, Any]:
         arguments: dict[str, Any] = {"query": self.query, "top_k": self.top_k}
@@ -153,16 +176,33 @@ def classify_subject(row: dict[str, Any]) -> str:
             return subject_type
     if re.fullmatch(r"(?:ngay\s+)?\d{1,2}(?:\s+thang\s+\d{1,2})?(?:\s+nam\s+\d{3,4})?|\d{3,4}", title_norm):
         return "date"
+    parenthetical_labels = {
+        _match_norm(value)
+        for value in re.findall(r"\(([^()]*)\)", title, flags=re.UNICODE)
+    }
+    parenthetical_is_location = any(
+        value == label or value.startswith(f"{label} ")
+        for value in parenthetical_labels
+        for label in STRONG_LOCATION_LABELS
+    )
+    if parenthetical_is_location or any(
+        title_norm == label or title_norm.startswith(f"{label} ")
+        for label in STRONG_LOCATION_LABELS
+    ):
+        return "location"
     title_words = " " + " ".join(re.findall(r"\w+", title.casefold(), flags=re.UNICODE)) + " "
     for subject_type, cues in TITLE_CUES:
         for cue in cues:
             cue_words = " ".join(re.findall(r"\w+", cue.casefold(), flags=re.UNICODE))
             if cue_words and f" {cue_words} " in title_words:
                 return subject_type
-    words = title.split()
+    words = [word for word in re.findall(r"\w+", title, flags=re.UNICODE) if word]
+    text_norm = _match_norm(row.get("text"))
     if 2 <= len(words) <= 6 and not any(ch.isdigit() for ch in title):
-        capitalized = sum(word[:1].isupper() for word in words if word)
-        if capitalized >= max(2, len(words) - 1):
+        capitalized = sum(word[:1].isupper() for word in words)
+        padded_text = f" {text_norm} "
+        has_biographical_evidence = any(f" {cue} " in padded_text for cue in PERSON_TEXT_CUES)
+        if capitalized >= max(2, len(words) - 1) and has_biographical_evidence:
             return "person"
     return "topic"
 
@@ -378,7 +418,21 @@ def _question(task_type: str, primary: dict[str, Any], secondary: dict[str, Any]
             f"So sánh {title} và {other} theo bối cảnh, diễn biến, kết quả và ý nghĩa."
         )
     elif task_type == "summary":
-        question = f"Hãy tóm tắt có cấu trúc về {title}, gồm bối cảnh, diễn biến hoặc mốc chính, kết quả và ý nghĩa."
+        if subject_type == "person":
+            question = (
+                f"Hãy tóm tắt có cấu trúc về {title}, gồm bối cảnh hoặc tiểu sử, "
+                "các dấu mốc hoạt động, vai trò và đóng góp lịch sử."
+            )
+        elif subject_type == "event":
+            question = (
+                f"Hãy tóm tắt có cấu trúc về {title}, gồm bối cảnh, diễn biến chính, "
+                "kết quả và ý nghĩa lịch sử."
+            )
+        else:
+            question = (
+                f"Hãy tóm tắt có cấu trúc về {title}, gồm bối cảnh hoặc sự hình thành, "
+                "những phát triển chính, vai trò, kết quả và ý nghĩa lịch sử."
+            )
     elif task_type == "multihop":
         question = f"Bối cảnh và nguyên nhân của {title} liên hệ như thế nào với kết quả, hệ quả và ý nghĩa của đối tượng này?"
     elif task_type == "verification":
@@ -407,6 +461,11 @@ def build_query_plans(
     if task_type == "significance":
         return [QueryPlan("search_history", f"{title} ý nghĩa tác động vai trò kết quả", top_k, "result_significance")]
     if task_type == "summary":
+        if classify_subject(primary) == "person":
+            return [
+                QueryPlan("search_history", f"{title} tiểu sử cuộc đời dấu mốc hoạt động", top_k, "biography_timeline"),
+                QueryPlan("search_history", f"{title} vai trò đóng góp lịch sử", top_k, "role_contribution"),
+            ]
         return [
             QueryPlan("search_history", f"{title} bối cảnh nguyên nhân hình thành diễn biến mốc thời gian", top_k, "context_timeline"),
             QueryPlan("search_history", f"{title} kết quả ý nghĩa tác động vai trò", top_k, "result_significance"),
@@ -427,30 +486,75 @@ def build_query_plans(
     if task_type == "verification":
         return [
             QueryPlan("search_history", f"{title} {claim}", top_k, "claim_support"),
-            QueryPlan("search_history", f"{title} mốc thời gian nguồn đối chiếu kết quả", top_k, "corroboration"),
+            QueryPlan(
+                "search_history", f"{title} mốc thời gian nguồn đối chiếu kết quả",
+                top_k, "corroboration", required=False, expected_empty=True,
+            ),
         ]
     if task_type == "hard_negative":
         return [
-            QueryPlan("search_history", f"{title} thành công thắng lợi ưu thế", top_k, "wrong_facet"),
+            QueryPlan(
+                "search_history", f"{title} thành công thắng lợi ưu thế", top_k,
+                "wrong_facet", required=False, expected_empty=True,
+            ),
             QueryPlan("search_history", f"{title} khó khăn hạn chế thất bại suy yếu bất lợi", top_k, "corrective_facet"),
         ]
     if task_type == "insufficient_evidence":
-        return [QueryPlan("search_history", f"{title} {claim}", top_k, "unsupported_claim")]
+        return [QueryPlan(
+            "search_history", f"{title} {claim}", top_k, "unsupported_claim",
+            required=False, expected_empty=True,
+        )]
     raise ValueError(f"unsupported task type: {task_type}")
 
 
 def _search_observations(
-    plans: list[QueryPlan], retriever: Any, *, task_type: str, config: CustomBuildConfig,
+    plans: list[QueryPlan], retriever: Any, *, task_type: str, subject_title: str,
+    config: CustomBuildConfig, observation_slots: int | None = None,
 ) -> list[Observation]:
+    slots = observation_slots or len(plans)
+    if slots < 1:
+        return []
+    slot_budget = min(
+        config.observation_char_budget,
+        config.trajectory_observation_char_budget // slots,
+    )
     observations = []
     for plan in plans:
         compact = compact_observation(
             retriever.search(plan.query, top_k=plan.top_k), plan, task_type=task_type,
-            observation_char_budget=config.observation_char_budget,
+            observation_char_budget=slot_budget,
             max_result_text_chars=config.max_result_text_chars,
         )
-        observations.append(Observation(plan, compact))
+        selected_plan = plan
+        fallback_roles = {
+            "summary": {"context_timeline", "result_significance", "biography_timeline", "role_contribution"},
+            "multihop": {"context_cause", "result_significance"},
+            "verification": {"corroboration"},
+        }
+        if not compact and plan.role in fallback_roles.get(task_type, set()):
+            fallback_plan = QueryPlan(
+                plan.tool_name,
+                f"{subject_title} lịch sử",
+                plan.top_k,
+                plan.role,
+                required=plan.required,
+                expected_empty=plan.expected_empty,
+                is_fallback=True,
+            )
+            compact = compact_observation(
+                retriever.search(fallback_plan.query, top_k=fallback_plan.top_k),
+                fallback_plan,
+                task_type=task_type,
+                observation_char_budget=slot_budget,
+                max_result_text_chars=config.max_result_text_chars,
+            )
+            selected_plan = fallback_plan
+        observations.append(Observation(selected_plan, compact))
     return observations
+
+
+def _required_observations_present(observations: list[Observation]) -> bool:
+    return all(observation.results for observation in observations if observation.plan.required)
 
 
 def _result_sentences(results: list[dict[str, Any]], task_type: str, *, limit: int = 3) -> list[tuple[str, str]]:
@@ -502,13 +606,19 @@ def _answer(task_type: str, observations: list[Observation], *, claim: str | Non
             return "Chưa đủ bằng chứng cân bằng cho cả hai đối tượng để so sánh đáng tin cậy." + (("\n" + "\n".join(evidence)) if evidence else "")
         return "Bằng chứng cho đối tượng thứ nhất:\n" + "\n".join(_format_evidence(left)) + "\nBằng chứng cho đối tượng thứ hai:\n" + "\n".join(_format_evidence(right))
     if task_type in {"summary", "multihop"}:
+        biography = _result_sentences(by_role.get("biography_timeline", []), "factual", limit=2)
+        contribution = _result_sentences(by_role.get("role_contribution", []), "significance", limit=2)
         context = _result_sentences(
             by_role.get("context_timeline", []) + by_role.get("context_cause", []), "cause", limit=2,
         )
         outcomes = _result_sentences(by_role.get("result_significance", []), "significance", limit=2)
-        if not context and not outcomes:
+        if not biography and not contribution and not context and not outcomes:
             return "Chưa đủ bằng chứng quan sát để xây dựng câu trả lời có cấu trúc."
         parts = []
+        if biography:
+            parts.append("Tiểu sử và các dấu mốc hoạt động:\n" + "\n".join(_format_evidence(biography)))
+        if contribution:
+            parts.append("Vai trò và đóng góp lịch sử:\n" + "\n".join(_format_evidence(contribution)))
         if context:
             parts.append("Bối cảnh/nguyên nhân:\n" + "\n".join(_format_evidence(context)))
         if outcomes:
@@ -538,6 +648,7 @@ def _stable_source_group(row: dict[str, Any]) -> str:
 def _trajectory(
     *, task_type: str, question: str, claim: str | None,
     observations: list[Observation], primary: dict[str, Any], secondary: dict[str, Any] | None,
+    trajectory_observation_char_budget: int,
 ) -> dict[str, Any]:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
@@ -598,10 +709,18 @@ def _trajectory(
             "source_groups": source_groups, "grounded": True,
             "evidence_ids": cited_ids, "observed_evidence_ids": sorted(observed_ids),
             "retrieval_queries": [
-                {"tool": obs.plan.tool_name, "query": obs.plan.query, "top_k": obs.plan.top_k, "role": obs.plan.role}
+                {
+                    "tool": obs.plan.tool_name, "query": obs.plan.query,
+                    "top_k": obs.plan.top_k, "role": obs.plan.role,
+                    "required": obs.plan.required,
+                    "expected_empty": obs.plan.expected_empty,
+                    "is_fallback": obs.plan.is_fallback,
+                }
                 for obs in observations
             ],
             "observation_chars": observation_chars,
+            "trajectory_observation_chars": sum(observation_chars),
+            "trajectory_observation_char_budget": trajectory_observation_char_budget,
             "observation_result_counts": [len(obs.results) for obs in observations],
             "external_verification": any(name != "search_history" for name in used_tools),
             "requires_final_answer": True, "corpus_read_only": True,
@@ -678,9 +797,10 @@ def build_custom_trajectories(
     for task_type in TASK_TYPES:
         wanted = config.task_counts.get(task_type, 0)
         selected = 0
+        candidate_attempts = 0
         task_rows: list[dict[str, Any]] = []
         for primary_index, primary in enumerate(records):
-            if selected >= wanted:
+            if selected >= wanted or candidate_attempts >= config.max_candidate_attempts_per_task:
                 break
             if not task_eligible(primary, task_type):
                 continue
@@ -703,22 +823,46 @@ def build_custom_trajectories(
                 pair_key = "||".join(sorted((title_key, _match_norm(_title(secondary)))))
                 if pair_key in used_compare_pairs:
                     continue
+            candidate_attempts += 1
             plans = build_query_plans(
                 task_type, primary, secondary=secondary, question=question,
                 claim=claim, top_k=config.top_k,
             )
-            observations = _search_observations(plans, retriever, task_type=task_type, config=config)
+            has_external_slot = task_type == "verification" and external_retriever is not None
+            observation_slots = len(plans) + int(has_external_slot)
+            observations = _search_observations(
+                plans,
+                retriever,
+                task_type=task_type,
+                subject_title=_title(primary),
+                config=config,
+                observation_slots=observation_slots,
+            )
+            if not _required_observations_present(observations):
+                continue
             if task_type == "verification" and external_retriever is not None:
-                plan = QueryPlan("search_wikipedia", f"{_title(primary)} kiểm chứng mốc thời gian lịch sử", config.top_k, "external_corroboration")
+                plan = QueryPlan(
+                    "search_wikipedia",
+                    f"{_title(primary)} kiểm chứng mốc thời gian lịch sử",
+                    config.top_k,
+                    "external_corroboration",
+                    required=False,
+                    expected_empty=True,
+                )
+                slot_budget = min(
+                    config.observation_char_budget,
+                    config.trajectory_observation_char_budget // observation_slots,
+                )
                 observations.append(Observation(plan, compact_observation(
                     external_retriever.search(plan.tool_name, plan.query, top_k=plan.top_k),
                     plan, task_type=task_type,
-                    observation_char_budget=config.observation_char_budget,
+                    observation_char_budget=slot_budget,
                     max_result_text_chars=config.max_result_text_chars,
                 )))
             row = _trajectory(
                 task_type=task_type, question=question, claim=claim,
                 observations=observations, primary=primary, secondary=secondary,
+                trajectory_observation_char_budget=config.trajectory_observation_char_budget,
             )
             seen_questions.add(question_key)
             used_titles[task_type].add(title_key)
@@ -728,7 +872,10 @@ def build_custom_trajectories(
             if row["id"] not in completed:
                 task_rows.append(row)
         if selected < wanted:
-            raise ValueError(f"eligible unique corpus subjects could produce only {selected}/{wanted} {task_type} trajectories")
+            raise ValueError(
+                "eligible, retrievable unique corpus subjects could produce only "
+                f"{selected}/{wanted} {task_type} trajectories after {candidate_attempts} candidate attempts"
+            )
         if teacher is not None:
             task_rows = _apply_teacher_to_rows(task_rows, teacher, seed=config.seed + selected)
         yield from task_rows

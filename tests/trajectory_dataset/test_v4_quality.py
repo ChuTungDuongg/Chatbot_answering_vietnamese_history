@@ -145,8 +145,13 @@ def test_claims_queries_and_answers_obey_v4_semantics(tmp_path: Path):
     assert len(tool_arguments(next(row for row in built if row["task_type"] == "summary"))) == 2
 
 
-@pytest.mark.parametrize("returned", [[], [record("one", "Chiến dịch Một", "event")]])
-def test_requested_top_k_is_preserved_for_empty_and_short_results(tmp_path: Path, returned: list[dict]):
+@pytest.mark.parametrize(
+    ("returned", "task_type"),
+    [([], "insufficient_evidence"), ([record("one", "Chiến dịch Một", "event")], "factual")],
+)
+def test_requested_top_k_is_preserved_for_empty_and_short_results(
+    tmp_path: Path, returned: list[dict], task_type: str,
+):
     seeds = [record("seed", "Chiến dịch Gốc", "event")]
 
     class Retriever:
@@ -155,7 +160,7 @@ def test_requested_top_k_is_preserved_for_empty_and_short_results(tmp_path: Path
             return returned
 
     corpus = write_corpus(tmp_path / "corpus.jsonl", seeds)
-    row = list(build_custom_trajectories(corpus, Retriever(), config=config(factual=1)))[0]
+    row = list(build_custom_trajectories(corpus, Retriever(), config=config(**{task_type: 1})))[0]
     assert tool_arguments(row) == [{"query": tool_arguments(row)[0]["query"], "top_k": 7}]
 
 

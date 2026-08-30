@@ -71,15 +71,16 @@ The trainer calls `tokenizer.apply_chat_template(messages, tools=tools, ...)`. I
 
 ## Custom builder V4 contract
 
-V4 classifies each selected corpus subject deterministically as `person`, `event`, `organization`, `state`, `dynasty`, `document`, `location`, `date`, or `topic`. Enriched metadata is checked before title cues, and the result is stored in provenance. Task eligibility then excludes semantically invalid combinations: for example, plain people, locations, dates, and general topics cannot seed cause trajectories; analytical summaries avoid location/date/topic pages; compare pairs must be distinct subjects of the same type.
+V4 classifies each selected corpus subject deterministically as `person`, `event`, `organization`, `state`, `dynasty`, `document`, `location`, `date`, or `topic`. Enriched metadata is checked before title cues, and the result is stored in provenance. Capitalization alone is not person evidence: the conservative fallback also requires biographical language in the source text. Administrative suffixes, including parenthetical forms such as `(thị trấn)`, are classified as locations. Task eligibility then excludes semantically invalid combinations: for example, plain people, locations, dates, and general topics cannot seed cause trajectories; analytical summaries avoid location/date/topic pages; compare pairs must be distinct subjects of the same type. Summary questions and retrieval facets are subject-aware, so a person is described through biography, activity milestones, role, and contribution rather than an event-like "result".
 
 Seed selection streams the entire corpus read-only and retains a bounded deterministic top-hash sample. It is not a sample of only the first `--max-corpus-records` lines. Within a build, normalized questions, repeated article titles, and canonical unordered compare pairs are deduplicated before requested task counts are credited.
 
-Query plans are task-specific. Summary and multihop use separate context/cause and result/significance calls; compare searches each subject; verification searches a proposition derived from seed evidence plus a corroboration facet; hard negatives issue a wrong-facet call followed by a corrective call. Assistant tool calls preserve the requested `top_k` even when retrieval returns fewer rows.
+Query plans are task-specific. Summary and multihop use two required facets; compare requires evidence for each subject; verification requires direct-claim evidence while corroboration is optional; hard negatives allow an empty wrong facet but require corrective evidence; insufficient-evidence rows deliberately allow an empty search. A missing summary or multihop facet receives one deterministic `<title> lịch sử` fallback. Candidates that still lack required runtime evidence are skipped and do not count toward the requested task total. `--max-candidate-attempts-per-task` provides an explicit deterministic safety bound. Assistant tool calls preserve the requested `top_k` even when retrieval returns fewer rows.
 
-Tool observations use a compact training-only evidence contract. Each result retains its ID, title, task/query-relevant sentences, source identity, optional ranking score, and a small metadata allow-list. Configure the serialized per-observation and per-result limits with:
+Tool observations use a compact training-only evidence contract. Each result retains its ID, title, task/query-relevant sentences, source identity, optional ranking score, and a small metadata allow-list. The total trajectory budget is divided across every planned observation so multi-call rows cannot multiply the per-observation allowance. Configure the serialized trajectory, per-observation compatibility ceiling, and per-result limits with:
 
 ```text
+--trajectory-observation-char-budget 6000
 --observation-char-budget 12000
 --max-result-text-chars 1600
 ```
@@ -117,6 +118,7 @@ python -m training.trajectory_dataset.cli build-custom `
   --output-dir D:/vn-history/trajectory_dataset_v1 `
   --retrieval-backend project `
   --rerank-batch-size 4 `
+  --trajectory-observation-char-budget 6000 `
   --observation-char-budget 12000 `
   --max-result-text-chars 1600 `
   --num-factual 100 `
@@ -223,7 +225,7 @@ Do not combine outputs from different generation configurations under one resume
 
 ## Audit before training
 
-The tokenizer-free audit loads no model and checks semantic eligibility, concrete claims, pair consistency, multihop call counts, duplicate questions, grounding, empty observations, observation sizes, and tool-call counts:
+The tokenizer-free audit loads no model and checks semantic eligibility, concrete claims, pair consistency, multihop call counts, duplicate questions, grounding, observation sizes, and tool-call counts. Empty observations are reported as total, expected, or unexpected, with breakdowns by task and retrieval role. `--strict-custom` rejects unexpected empty required roles and trajectories over their configured total observation budget:
 
 ```powershell
 python -m training.trajectory_dataset.cli audit `
