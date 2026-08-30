@@ -13,6 +13,7 @@ from training.trajectory_dataset.builders.custom_history import (
     build_custom_trajectories,
     classify_subject,
     compact_observation,
+    is_custom_history_eligible,
     is_result_relevant_to_target,
     is_vietnam_history_relevant,
     load_seed_records,
@@ -115,7 +116,7 @@ def test_general_subject_typing_distinguishes_military_organization_dynasty_and_
     assert classify_subject(hoi_an) == "location"
 
 
-def test_vietnam_history_domain_eligibility_is_conservative():
+def test_custom_history_scope_accepts_vietnamese_language_history_from_any_country():
     nha_mac = {
         "title": "Nhà Mạc",
         "text": "Nhà Mạc là một triều đại trong lịch sử Việt Nam.",
@@ -133,13 +134,19 @@ def test_vietnam_history_domain_eligibility_is_conservative():
     )
     foreign_air_force = {
         "title": "Không quân Nhân dân Triều Tiên",
-        "text": "Lực lượng này phụ trách phòng không và không quân của Triều Tiên.",
+        "text": "Không quân Nhân dân Triều Tiên được thành lập vào tháng 1 năm 1951 tại Triều Tiên.",
         "metadata": {"subject_type": "organization", "countries": ["Triều Tiên"]},
     }
     assert is_vietnam_history_relevant(nha_mac)
     assert is_vietnam_history_relevant(nguyen_binh)
     assert is_vietnam_history_relevant(border_war)
-    assert not is_vietnam_history_relevant(foreign_air_force)
+    assert is_vietnam_history_relevant(foreign_air_force)
+    assert is_custom_history_eligible(foreign_air_force)
+    assert not is_custom_history_eligible({
+        "title": "Example Air Company",
+        "text": "This is a modern commercial aviation company.",
+        "metadata": {"subject_type": "organization"},
+    })
 
 
 @pytest.mark.parametrize(
@@ -155,11 +162,11 @@ def test_vietnam_history_domain_eligibility_is_conservative():
         {"title": "Pháp", "text": "Pháp thiết lập chế độ thuộc địa tại Việt Nam trong thế kỷ XIX.", "metadata": {"subject_type": "state"}},
     ],
 )
-def test_vietnam_history_domain_accepts_vietnamese_regional_and_direct_foreign_context(row: dict):
+def test_custom_history_scope_accepts_vietnamese_and_regionally_connected_history(row: dict):
     assert is_vietnam_history_relevant(row)
 
 
-def test_compare_requires_both_targets_to_pass_domain_gate(tmp_path: Path):
+def test_compare_allows_foreign_vietnamese_language_history_targets(tmp_path: Path):
     vietnamese_people = [
         person("nguyen-binh", "Nguyễn Bình", "Nguyễn Bình giữ vai trò chỉ huy và đóng góp tại Nam Bộ."),
         person("vo-tru", "Võ Trứ", "Võ Trứ lãnh đạo hoạt động và có đóng góp trong lịch sử Việt Nam."),
@@ -180,10 +187,12 @@ def test_compare_requires_both_targets_to_pass_domain_gate(tmp_path: Path):
         write_corpus(tmp_path, [foreign, *vietnamese_people]), Retriever(), config=config,
     ))
     assert len(built) == 1
-    assert {
+    pair = {
         built[0]["provenance"]["primary_title"],
         built[0]["provenance"]["secondary_title"],
-    } == {"Nguyễn Bình", "Võ Trứ"}
+    }
+    assert "Kim Mẫu" in pair
+    assert pair <= {"Kim Mẫu", "Nguyễn Bình", "Võ Trứ"}
 
 
 def test_entity_relevance_rejects_similar_name_and_accepts_explicit_broader_article():
@@ -404,7 +413,10 @@ def test_cause_facet_accepts_actual_cause_background_and_formation(text: str):
 @pytest.mark.parametrize(
     "text",
     [
-        "Không quân Nhân dân Triều Tiên duy trì năng lực quân sự tương đương bằng không quân như một lực lượng ngăn chặn.",
+        (
+            "Bằng cách này, Triều Tiên cố gắng để duy trì năng lực quân sự tương đương với Hàn Quốc "
+            "bằng cách sử dụng không quân như một lực lượng ngăn chặn, thay vì duy trì công nghệ tương đương."
+        ),
         "Không quân Nhân dân Triều Tiên trang bị hệ thống Pechora và máy bay chiến đấu mới.",
         "Không quân Nhân dân Triều Tiên kết thúc chiến dịch với hệ quả đáng kể cho khu vực.",
     ],
@@ -418,6 +430,45 @@ def test_cause_facet_rejects_later_capability_equipment_and_consequence(text: st
         target_title=title, target_subject_type="organization",
     )
     assert compact == []
+
+
+def test_full_builder_selects_formation_sentence_and_rejects_late_strategy(tmp_path: Path):
+    title = "Không quân Nhân dân Triều Tiên"
+    seed = {
+        "chunk_id": "korean-air-force-seed",
+        "title": title,
+        "text": f"Tháng 1 năm 1951, Bộ tư lệnh {title} được thành lập tại Triều Tiên.",
+        "metadata": {"subject_type": "organization"},
+    }
+    formation = {
+        **seed,
+        "chunk_id": "formation",
+        "text": f"Tháng 1 năm 1951, Bộ tư lệnh {title} được thành lập.",
+    }
+    late_strategy = {
+        **seed,
+        "chunk_id": "late-strategy",
+        "text": (
+            "Bằng cách này, Triều Tiên cố gắng để duy trì năng lực quân sự tương đương với Hàn Quốc "
+            "bằng cách sử dụng không quân như một lực lượng ngăn chặn, thay vì duy trì công nghệ tương đương."
+        ),
+    }
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [formation, late_strategy][:top_k]
+
+    config = CustomBuildConfig(task_counts={"cause": 1}, seed=17, max_corpus_records=1)
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, [seed]), Retriever(), config=config,
+    ))[0]
+    evidence = [
+        result
+        for message in row["messages"] if message["role"] == "tool"
+        for result in json.loads(message["content"])
+    ]
+    assert [result["chunk_id"] for result in evidence] == ["formation"]
+    assert "lực lượng ngăn chặn" not in row["messages"][-1]["content"]
 
 
 @pytest.mark.parametrize(
@@ -438,6 +489,21 @@ def test_significance_facet_accepts_role_contribution_impact_and_consequence(tex
     assert [result["chunk_id"] for result in compact] == ["impact"]
 
 
+def test_significance_filter_remains_moderate_for_historically_relevant_impact_context():
+    title = "Không quân Nhân dân Triều Tiên"
+    text = (
+        "Là một nhánh quân chủng kỹ thuật cao, lực lượng Phòng không Không quân Nhân dân "
+        "Triều Tiên chịu tác động nặng nề của sự suy giảm kinh tế."
+    )
+    plan = QueryPlan("search_history", f"{title} ý nghĩa tác động", 4, "result_significance")
+    compact = compact_observation(
+        [{"chunk_id": "impact-context", "title": title, "text": text, "metadata": {"subject_type": "organization"}}],
+        plan, task_type="significance", observation_char_budget=2_000, max_result_text_chars=500,
+        target_title=title, target_subject_type="organization",
+    )
+    assert [result["chunk_id"] for result in compact] == ["impact-context"]
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -455,6 +521,38 @@ def test_significance_facet_rejects_equipment_inventory_and_plain_biography(text
         target_title=title, target_subject_type="organization",
     )
     assert compact == []
+
+
+def test_significance_fallback_reapplies_filter_and_skips_only_inventory_candidate(tmp_path: Path):
+    title = "Không quân Nhân dân Triều Tiên"
+    seed = {
+        "chunk_id": "korean-air-force-seed",
+        "title": title,
+        "text": f"{title} được thành lập vào tháng 1 năm 1951 tại Triều Tiên.",
+        "metadata": {"subject_type": "organization"},
+    }
+    inventory = {
+        **seed,
+        "chunk_id": "mig-inventory",
+        "text": f"{title} cũng có một ít máy bay MiG-29 hiện đại hơn.",
+    }
+
+    class Retriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            self.queries.append(query)
+            return [inventory]
+
+    retriever = Retriever()
+    config = CustomBuildConfig(task_counts={"significance": 1}, seed=17, max_corpus_records=1)
+    with pytest.raises(ValueError, match="0/1 significance"):
+        list(build_custom_trajectories(
+            write_corpus(tmp_path, [seed]), retriever, config=config,
+        ))
+    assert len(retriever.queries) == 2
+    assert retriever.queries[-1] == f"{title} lịch sử"
 
 
 @pytest.mark.parametrize(
@@ -510,30 +608,28 @@ def test_required_facet_empty_after_filter_and_fallback_skips_candidate(tmp_path
         ))
 
 
-def test_unrelated_foreign_subject_is_skipped_before_quota_counting(tmp_path: Path):
+def test_foreign_vietnamese_language_history_subject_is_emitted_at_builder_level(tmp_path: Path):
     foreign = {
         "chunk_id": "foreign-air-force",
         "title": "Không quân Nhân dân Triều Tiên",
-        "text": "Không quân Nhân dân Triều Tiên là lực lượng quân sự của Triều Tiên.",
-        "metadata": {"subject_type": "dynasty", "countries": ["Triều Tiên"]},
-    }
-    vietnamese = {
-        "chunk_id": "nha-mac",
-        "title": "Nhà Mạc",
-        "text": "Nhà Mạc là một triều đại trong lịch sử Việt Nam và có nhiều dấu mốc lịch sử.",
-        "metadata": {"subject_type": "dynasty", "countries": ["Việt Nam"]},
+        "text": "Tháng 1 năm 1951, Bộ tư lệnh Không quân Nhân dân Triều Tiên được thành lập tại Triều Tiên.",
+        "metadata": {"subject_type": "organization", "countries": ["Triều Tiên"]},
     }
 
     class Retriever:
         def search(self, query: str, *, top_k: int) -> list[dict]:
-            return [foreign, vietnamese][:top_k]
+            return [foreign][:top_k]
 
-    config = CustomBuildConfig(task_counts={"factual": 1}, seed=13, max_corpus_records=2)
+    config = CustomBuildConfig(task_counts={"cause": 1}, seed=13, max_corpus_records=1)
     built = list(build_custom_trajectories(
-        write_corpus(tmp_path, [foreign, vietnamese]), Retriever(), config=config,
+        write_corpus(tmp_path, [foreign]), Retriever(), config=config,
     ))
     assert len(built) == 1
-    assert built[0]["provenance"]["primary_title"] == "Nhà Mạc"
+    assert built[0]["provenance"]["primary_title"] == "Không quân Nhân dân Triều Tiên"
+    assert built[0]["provenance"]["custom_history_eligible"] is True
+    report = audit_rows(built, strict_custom=True)
+    assert report["issues"].get("domain_mismatch", 0) == 0
+    assert report["valid"]
 
 
 def test_strict_audit_catches_organization_as_dynasty_and_foreign_domain():

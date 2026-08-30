@@ -6,9 +6,9 @@ from collections import Counter
 from typing import Any, Iterable
 
 from .builders.custom_history import (
+    is_custom_history_eligible,
     is_result_facet_relevant,
     is_result_relevant_to_target,
-    is_vietnam_history_relevant,
     result_text_mentions_target,
     title_implied_subject_type,
 )
@@ -93,25 +93,39 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             secondary_implied_type = title_implied_subject_type(secondary_title)
             if secondary_title and secondary_implied_type is not None and secondary_implied_type != secondary_type:
                 issue("subject_type_mismatch", row)
-            primary_signals = provenance.get("vietnam_history_relevance_signals") or []
+            primary_signals = (
+                provenance.get("custom_history_eligibility_signals")
+                or provenance.get("vietnam_history_relevance_signals")
+                or []
+            )
+            primary_flag = provenance.get("custom_history_eligible")
+            if primary_flag is None:
+                primary_flag = provenance.get("vietnam_history_relevant")
             primary_domain_ok = (
-                provenance.get("vietnam_history_relevant") is True
+                primary_flag is True
                 and isinstance(primary_signals, list)
                 and bool(primary_signals)
             )
-            if not primary_domain_ok and not is_vietnam_history_relevant({
+            if not primary_domain_ok and not is_custom_history_eligible({
                 "title": primary_title,
                 "metadata": {"subject_type": subject},
             }):
                 issue("domain_mismatch", row)
             if secondary_title:
-                secondary_signals = provenance.get("secondary_vietnam_history_relevance_signals") or []
+                secondary_signals = (
+                    provenance.get("secondary_custom_history_eligibility_signals")
+                    or provenance.get("secondary_vietnam_history_relevance_signals")
+                    or []
+                )
+                secondary_flag = provenance.get("secondary_custom_history_eligible")
+                if secondary_flag is None:
+                    secondary_flag = provenance.get("secondary_vietnam_history_relevant")
                 secondary_domain_ok = (
-                    provenance.get("secondary_vietnam_history_relevant") is True
+                    secondary_flag is True
                     and isinstance(secondary_signals, list)
                     and bool(secondary_signals)
                 )
-                if not secondary_domain_ok and not is_vietnam_history_relevant({
+                if not secondary_domain_ok and not is_custom_history_eligible({
                     "title": secondary_title,
                     "metadata": {"subject_type": secondary_type},
                 }):
