@@ -116,6 +116,147 @@ def test_general_subject_typing_distinguishes_military_organization_dynasty_and_
     assert classify_subject(hoi_an) == "location"
 
 
+@pytest.mark.parametrize(
+    ("title", "text", "declared", "expected"),
+    [
+        ("Asian Idol", "Asian Idol là một cuộc thi ca hát theo dạng Pop Idol.", "person", "topic"),
+        ("Srivijaya", "Srivijaya là một đế quốc hàng hải từng tồn tại ở Đông Nam Á.", "person", "state"),
+        (
+            "Giải bóng đá Vô địch U-21 Quốc gia 2015",
+            "Giải bóng đá Vô địch U-21 Quốc gia 2015 có vòng bảng và trận chung kết.",
+            "state", "event",
+        ),
+        (
+            "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007",
+            "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007 có bảng tổng sắp huy chương.",
+            "organization", "event",
+        ),
+        ("Nhã nhạc cung đình Huế", "Nhã nhạc cung đình Huế là một loại hình âm nhạc.", "dynasty", "topic"),
+        (
+            "Quân hàm Lực lượng vũ trang Cách mạng Cuba",
+            "Quân hàm Lực lượng vũ trang Cách mạng Cuba là hệ thống cấp bậc quân sự.",
+            "event", "topic",
+        ),
+        ("Tràn ngập (quân sự)", "Tràn ngập là một khái niệm quân sự.", "event", "topic"),
+        (
+            "Trụ sở Ủy ban nhân dân Thành phố Hồ Chí Minh",
+            "Trụ sở Ủy ban nhân dân Thành phố Hồ Chí Minh là một công trình kiến trúc.",
+            "organization", "location",
+        ),
+        (
+            "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ tại Hà Nội 2019",
+            "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ tại Hà Nội diễn ra năm 2019.",
+            "event", "event",
+        ),
+        (
+            "Hội nghị thành lập Đảng Cộng sản Việt Nam",
+            "Hội nghị thành lập Đảng Cộng sản Việt Nam diễn ra đầu năm 1930.",
+            "event", "event",
+        ),
+        ("Hội nghị Fontainebleau 1946", "Hội nghị Fontainebleau diễn ra năm 1946.", "event", "event"),
+        (
+            "Đảo chính Việt Nam Cộng hòa 1963",
+            "Đảo chính Việt Nam Cộng hòa diễn ra vào năm 1963.",
+            "event", "event",
+        ),
+    ],
+)
+def test_subject_classifier_uses_shared_semantic_contract(
+    title: str, text: str, declared: str, expected: str,
+):
+    assert classify_subject({
+        "title": title,
+        "text": text,
+        "metadata": {"subject_type": declared},
+    }) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "text", "declared", "eligible"),
+    [
+        ("Asian Idol", "Asian Idol là một cuộc thi ca hát tổ chức năm 2007.", "person", False),
+        (
+            "Giải bóng đá Vô địch U-21 Quốc gia 2015",
+            "Giải bóng đá Vô địch U-21 Quốc gia 2015 có vòng bảng và mỗi trận thắng được 3 điểm.",
+            "state", False,
+        ),
+        (
+            "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007",
+            "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007 có bảng tổng sắp huy chương.",
+            "organization", False,
+        ),
+        ("Hội nghị Fontainebleau 1946", "Hội nghị Fontainebleau diễn ra năm 1946.", "event", True),
+        (
+            "Hội nghị thành lập Đảng Cộng sản Việt Nam",
+            "Hội nghị thành lập Đảng Cộng sản Việt Nam diễn ra đầu năm 1930.",
+            "event", True,
+        ),
+        (
+            "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ tại Hà Nội 2019",
+            "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ diễn ra tại Hà Nội năm 2019.",
+            "event", True,
+        ),
+        ("Chiến tranh Triều Tiên", "Chiến tranh Triều Tiên diễn ra từ năm 1950.", "event", True),
+    ],
+)
+def test_history_eligibility_requires_strong_historical_semantics(
+    title: str, text: str, declared: str, eligible: bool,
+):
+    row = {"title": title, "text": text, "history_score": 99, "metadata": {
+        "subject_type": declared, "years": [2007], "events": [title],
+    }}
+    assert is_custom_history_eligible(row) is eligible
+
+
+@pytest.mark.parametrize(
+    "bad_seed",
+    [
+        {
+            "chunk_id": "asian-idol",
+            "title": "Asian Idol",
+            "text": "Asian Idol là một cuộc thi ca hát tổ chức năm 2007.",
+            "history_score": 99,
+            "metadata": {"subject_type": "person", "people": ["Asian Idol"], "years": [2007]},
+        },
+        {
+            "chunk_id": "sea-games",
+            "title": "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007",
+            "text": "Việt Nam tại Đại hội Thể thao Đông Nam Á 2007 có bảng tổng sắp huy chương.",
+            "history_score": 99,
+            "metadata": {"subject_type": "organization", "years": [2007]},
+        },
+    ],
+)
+def test_non_history_seed_is_skipped_before_quota_and_historical_event_is_emitted(
+    tmp_path: Path, bad_seed: dict,
+):
+    summit = event(
+        "summit",
+        "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ tại Hà Nội 2019",
+        "Hội nghị thượng đỉnh Triều Tiên–Hoa Kỳ tại Hà Nội diễn ra vào năm 2019.",
+    )
+
+    class Retriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            self.queries.append(query)
+            return [summit]
+
+    retriever = Retriever()
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, [bad_seed, summit]), retriever, config=factual_config(),
+    ))[0]
+    assert row["provenance"]["primary_title"] == summit["title"]
+    assert all(bad_seed["title"] not in query for query in retriever.queries)
+    assert "lịch sử Việt Nam" not in row["messages"][0]["content"]
+    assert "trả lời bằng tiếng Việt" in row["messages"][0]["content"]
+    report = audit_rows([row], strict_custom=True)
+    assert report["issues"].get("subject_type_mismatch", 0) == 0
+    assert report["issues"].get("domain_mismatch", 0) == 0
+
+
 def test_custom_history_scope_accepts_vietnamese_language_history_from_any_country():
     nha_mac = {
         "title": "Nhà Mạc",
@@ -153,8 +294,8 @@ def test_custom_history_scope_accepts_vietnamese_language_history_from_any_count
     "row",
     [
         {"title": "Võ Trứ", "text": "Võ Trứ lãnh đạo một cuộc khởi nghĩa.", "metadata": {"subject_type": "person"}},
-        {"title": "Dương Văn Hiếu", "text": "Dương Văn Hiếu hoạt động trong thế kỷ XX.", "metadata": {"subject_type": "person"}},
-        {"title": "Phaolô Nguyễn Văn Bình", "text": "Phaolô Nguyễn Văn Bình sinh năm 1910.", "metadata": {"subject_type": "person"}},
+        {"title": "Dương Văn Hiếu", "text": "Dương Văn Hiếu là sĩ quan tình báo hoạt động trong thế kỷ XX.", "metadata": {"subject_type": "person"}},
+        {"title": "Phaolô Nguyễn Văn Bình", "text": "Phaolô Nguyễn Văn Bình sinh năm 1910 và là tổng giám mục.", "metadata": {"subject_type": "person"}},
         {"title": "Po Saong Nyung Ceng", "text": "Po Saong Nyung Ceng lãnh đạo nhiều hoạt động trong lịch sử người Chăm.", "metadata": {"subject_type": "person"}},
         {"title": "Chiến tranh Đại Việt–Khmer", "text": "Chiến tranh Đại Việt–Khmer diễn ra trong thế kỷ XII.", "metadata": {"subject_type": "event"}},
         {"title": "Chiến tranh biên giới Việt Nam – Campuchia", "text": "Việt Nam là một chủ thể trực tiếp trong cuộc chiến.", "metadata": {"subject_type": "event"}},
@@ -212,6 +353,36 @@ def test_entity_relevance_rejects_similar_name_and_accepts_explicit_broader_arti
     assert is_result_relevant_to_target(exact, **kwargs)
     assert not is_result_relevant_to_target(similar, **kwargs)
     assert is_result_relevant_to_target(broader, **kwargs)
+
+
+def test_full_builder_rejects_surname_article_for_multi_token_person(tmp_path: Path):
+    target = person(
+        "ngo-nhi-khai-hy",
+        "Ngô Nhĩ Khai Hy",
+        "Ngô Nhĩ Khai Hy là nhà lãnh đạo phong trào dân chủ và hoạt động từ năm 1989.",
+    )
+    surname_article = {
+        "chunk_id": "ngo-surname",
+        "title": "Ngô (họ)",
+        "text": (
+            "Ngô Ngạn Tổ là diễn viên, Ngô Đôn Nghĩa là chính trị gia và Andrew Ng "
+            "là một nhà nghiên cứu khoa học máy tính."
+        ),
+        "metadata": {"people": ["Ngô Thái Bá", "Ngô Thanh Nguyên"]},
+    }
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [target, surname_article][:top_k]
+
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, [target]), Retriever(), config=factual_config(),
+    ))[0]
+    payload = json.loads(next(
+        message["content"] for message in row["messages"] if message["role"] == "tool"
+    ))
+    assert [result["chunk_id"] for result in payload] == ["ngo-nhi-khai-hy"]
+    assert "Ngô Ngạn Tổ" not in row["messages"][-1]["content"]
 
 
 def test_event_relevance_disambiguates_medieval_conflict_from_modern_cambodia():
@@ -432,6 +603,25 @@ def test_cause_facet_rejects_later_capability_equipment_and_consequence(text: st
     assert compact == []
 
 
+def test_cause_facet_rejects_decree_quote_and_authorship_as_background():
+    title = "Chiếu thoái vị của Bảo Đại"
+    plan = QueryPlan("search_history", f"{title} bối cảnh nguyên nhân", 4, "context_cause")
+    quotation = {
+        "chunk_id": "decree-quote",
+        "title": title,
+        "text": (
+            "Trong non bốn thế kỷ, Liệt Thánh đã trải qua gian lao nguy hiểm, vì nước vì dân. "
+            "Câu nói này ở trong Chiếu thoái vị của Bảo Đại và chiếu thư là do Phạm Khắc Hòe soạn."
+        ),
+        "metadata": {"subject_type": "document"},
+    }
+    compact = compact_observation(
+        [quotation], plan, task_type="cause", observation_char_budget=2_000,
+        max_result_text_chars=500, target_title=title, target_subject_type="document",
+    )
+    assert compact == []
+
+
 def test_full_builder_selects_formation_sentence_and_rejects_late_strategy(tmp_path: Path):
     title = "Không quân Nhân dân Triều Tiên"
     seed = {
@@ -521,6 +711,21 @@ def test_significance_facet_rejects_equipment_inventory_and_plain_biography(text
         target_title=title, target_subject_type="organization",
     )
     assert compact == []
+
+
+def test_significance_facet_rejects_plain_sports_scoring_rule():
+    title = "Giải bóng đá Vô địch U-21 Quốc gia 2015"
+    plan = QueryPlan("search_history", f"{title} ý nghĩa tác động", 4, "result_significance")
+    result = {
+        "chunk_id": "sports-rule",
+        "title": title,
+        "text": f"Tại {title}, mỗi trận thắng được 3 điểm, hòa 1 điểm và thua không có điểm.",
+        "metadata": {"subject_type": "event"},
+    }
+    assert compact_observation(
+        [result], plan, task_type="significance", observation_char_budget=2_000,
+        max_result_text_chars=500, target_title=title, target_subject_type="event",
+    ) == []
 
 
 def test_significance_fallback_reapplies_filter_and_skips_only_inventory_candidate(tmp_path: Path):
@@ -632,7 +837,7 @@ def test_foreign_vietnamese_language_history_subject_is_emitted_at_builder_level
     assert report["valid"]
 
 
-def test_strict_audit_catches_organization_as_dynasty_and_foreign_domain():
+def test_strict_audit_catches_organization_as_dynasty_and_missing_history_evidence():
     title = "Không quân Nhân dân Triều Tiên"
     row = make_trajectory(
         trajectory_id="bad-foreign-subject",
@@ -764,6 +969,57 @@ def test_compare_target_isolation_rejects_wrong_person_for_either_side():
     assert [result["chunk_id"] for result in right] == ["right-b"]
 
 
+def test_nested_state_and_institution_compare_is_valid_but_true_contamination_is_detected(tmp_path: Path):
+    state = {
+        "chunk_id": "vnch",
+        "title": "Việt Nam Cộng hòa",
+        "text": "Việt Nam Cộng hòa tồn tại từ năm 1955 đến năm 1975.",
+        "metadata": {"subject_type": "state", "states": ["Việt Nam Cộng hòa"]},
+    }
+    artillery = {
+        "chunk_id": "artillery",
+        "title": "Binh chủng Pháo binh Việt Nam Cộng hòa",
+        "text": (
+            "Binh chủng Pháo binh Việt Nam Cộng hòa được thành lập trong thập niên 1950 "
+            "và là lực lượng hỏa lực của quân đội."
+        ),
+        "metadata": {
+            "subject_type": "organization",
+            "organizations": ["Binh chủng Pháo binh Việt Nam Cộng hòa"],
+        },
+    }
+
+    class Retriever:
+        def search(self, query: str, *, top_k: int) -> list[dict]:
+            return [artillery] if artillery["title"] in query else [state]
+
+    config = CustomBuildConfig(task_counts={"compare": 1}, seed=23, max_corpus_records=2)
+    row = list(build_custom_trajectories(
+        write_corpus(tmp_path, [state, artillery]), Retriever(), config=config,
+    ))[0]
+    assert {
+        row["provenance"]["subject_type"],
+        row["provenance"]["secondary_subject_type"],
+    } == {"state", "organization"}
+    report = audit_rows([row], strict_custom=True)
+    assert report["issues"].get("compare_target_contamination", 0) == 0
+    assert report["issues"].get("compare_type_mismatch", 0) == 0
+
+    corrupted = copy.deepcopy(row)
+    role_index = next(
+        index
+        for index, query in enumerate(corrupted["provenance"]["retrieval_queries"])
+        if query["role"] == "target_b"
+    )
+    tool_messages = [message for message in corrupted["messages"] if message["role"] == "tool"]
+    assigned_title = corrupted["provenance"]["secondary_title"]
+    wrong = state if assigned_title == artillery["title"] else artillery
+    tool_messages[role_index]["content"] = json.dumps([wrong], ensure_ascii=False)
+    corrupted_report = audit_rows([corrupted], strict_custom=True)
+    assert corrupted_report["issues"]["compare_target_contamination"] == 1
+    assert not corrupted_report["valid"]
+
+
 def test_strict_semantic_audit_rejects_subject_and_observation_corruption(tmp_path: Path):
     subject_row = make_trajectory(
         trajectory_id="bad-subject",
@@ -809,8 +1065,8 @@ def test_strict_semantic_audit_rejects_subject_and_observation_corruption(tmp_pa
 
 def test_low_quality_candidates_do_not_count_and_build_remains_deterministic(tmp_path: Path):
     rows = [
-        person("a", "Nguyễn Bình", "Nguyễn Bình sinh năm 1908 và hoạt động tại Nam Bộ."),
-        person("b", "Phaolô Nguyễn Văn Bình", "Phaolô Nguyễn Văn Bình sinh năm 1910 và hoạt động mục vụ."),
+        person("a", "Nguyễn Bình", "Nguyễn Bình sinh năm 1908, là tướng lĩnh chỉ huy tại Nam Bộ."),
+        person("b", "Phaolô Nguyễn Văn Bình", "Phaolô Nguyễn Văn Bình sinh năm 1910 và là tổng giám mục."),
     ]
     corpus = write_corpus(tmp_path, rows)
     first_seed, second_seed = load_seed_records(corpus, limit=2, seed=31)

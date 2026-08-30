@@ -136,7 +136,11 @@ def test_summary_questions_are_subject_type_aware(
     required_fragments: tuple[str, ...],
     forbidden_fragment: str,
 ):
-    seed = record("seed", title, subject_type)
+    historical_text = {
+        "person": f"{title} là một danh tướng, từng lãnh đạo và chỉ huy trong lịch sử.",
+        "organization": f"{title} là một đảng được thành lập năm 1945 và có vai trò lịch sử.",
+    }.get(subject_type)
+    seed = record("seed", title, subject_type, historical_text)
     retriever = FakeRetriever(lambda query: [evidence(title=title)])
     row = list(build_custom_trajectories(corpus(tmp_path, [seed]), retriever, config=config("summary")))[0]
     question = user_question(row)

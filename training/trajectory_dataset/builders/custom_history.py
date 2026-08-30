@@ -14,7 +14,6 @@ from ..citations import extract_evidence_citations, format_evidence_citation
 from ..dedup import normalized_question
 from ..io_utils import iter_jsonl
 from ..schema import (
-    DEFAULT_SYSTEM_PROMPT,
     SEARCH_HISTORY_TOOL,
     SEARCH_WEB_TOOL,
     SEARCH_WIKIPEDIA_TOOL,
@@ -39,6 +38,10 @@ FACTUAL_SUBJECTS = set(MEANINGFUL_SUBJECTS)
 COMPARE_SUBJECTS = set(MEANINGFUL_SUBJECTS)
 SUMMARY_SUBJECTS = set(MEANINGFUL_SUBJECTS)
 SYNTHETIC_MARKER = "Z-1901"
+CUSTOM_HISTORY_SYSTEM_PROMPT = (
+    "Bạn là trợ lý trung tâm về lịch sử. Hãy trả lời bằng tiếng Việt, dùng công cụ khi cần, "
+    "chỉ kết luận từ bằng chứng quan sát được và trích dẫn ID nguồn."
+)
 
 TASK_TERMS: dict[str, tuple[str, ...]] = {
     "factual": ("lịch sử", "dấu mốc", "hoạt động", "đặc điểm", "năm", "thành lập"),
@@ -58,24 +61,28 @@ METADATA_FIELDS = {
 }
 TITLE_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("document", ("hiệp định", "hiệp ước", "hòa ước", "tuyên ngôn", "chiếu ", "sắc lệnh", "văn kiện")),
-    ("event", ("trận ", "chiến thắng", "chiến dịch", "khởi nghĩa", "cách mạng", "phong trào", "chiến tranh", "cuộc chiến", "tổng tiến công", "biến cố")),
+    ("event", (
+        "hội nghị", "đảo chính", "trận ", "chiến thắng", "chiến dịch", "khởi nghĩa",
+        "cách mạng", "phong trào", "chiến tranh", "cuộc chiến", "tổng tiến công",
+        "biến cố", "giải bóng đá", "đại hội thể thao",
+    )),
     ("organization", (
         "đảng ", "hội ", "mặt trận", "việt minh", "tổ chức", "quân đội",
-        "không quân", "hải quân", "lục quân", "quân chủng", "lực lượng",
-        "chính phủ", "ủy ban", "liên minh",
+        "không quân", "hải quân", "lục quân", "quân chủng", "binh chủng",
+        "lực lượng", "chính phủ", "ủy ban", "liên minh", "trường quân",
     )),
     ("state", ("việt nam dân chủ cộng hòa", "việt nam cộng hòa", "đại việt", "đại nam", "đại cồ việt", "vương quốc", "quốc gia", "chính quyền")),
     ("dynasty", ("triều đại", "vương triều", "triều ", "chúa nguyễn", "chúa trịnh")),
     ("location", (
         "thành phố", "tỉnh ", "huyện ", "quận ", "xã ", "phường ",
         "thị trấn", "thị xã", "làng ", "thôn ", "ấp ", "bản ", "buôn ",
-        "địa danh", "sông ", "núi ", "đảo ", "vịnh ",
+        "địa danh", "trụ sở", "sông ", "núi ", "đảo ", "vịnh ",
         "cần thơ", "hà nội", "sài gòn",
     )),
 )
 STRONG_LOCATION_LABELS = {
-    "thanh pho", "tinh", "huyen", "quan", "xa", "phuong", "thi tran",
-    "thi xa", "lang", "thon", "ap", "ban", "buon", "dia danh",
+    "thanh pho", "tinh", "huyen", "xa", "phuong", "thi tran",
+    "thi xa", "lang", "thon", "ap", "ban", "buon", "dia danh", "tru so",
 }
 PERSON_TEXT_CUES = (
     "sinh nam", "sinh ngay", "qua doi", "mat nam", "ten that", "ong la",
@@ -112,11 +119,11 @@ ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
 }
 NON_PERSON_TOPIC_PREFIXES = (
     "chu", "tieng", "van hoa", "ngon ngu", "chu viet", "van hoc",
-    "ly hoc", "nho giao", "phat giao", "chu nghia",
+    "ly hoc", "nho giao", "phat giao", "chu nghia", "quan ham",
 )
 CULTURAL_TOPIC_CUES = (
     "xẩm", "ca trù", "chèo", "tuồng", "quan họ", "dân ca", "nghệ thuật",
-    "âm nhạc", "tín ngưỡng", "tôn giáo", "triết học", "học thuyết",
+    "âm nhạc", "nhã nhạc", "tín ngưỡng", "tôn giáo", "triết học", "học thuyết",
 )
 DYNASTY_NON_CUES = {
     "hat", "nuoc", "van", "tho", "may", "hang", "bao", "xuat ban",
@@ -132,6 +139,29 @@ HISTORICAL_SCOPE_CUES = (
     "thuoc dia", "khang chien", "xung dot", "sinh nam", "qua doi", "tri vi",
     "lanh dao", "chi huy", "tuong linh", "nhan vat", "dong gop", "hoat dong",
     "chinh tri", "quan su",
+)
+HISTORICAL_EVENT_TITLE_CUES = (
+    "hoi nghi", "dao chinh", "chien tranh", "cuoc chien", "tran", "chien dich",
+    "chien thang", "khoi nghia", "cach mang", "phong trao", "tong tien cong",
+    "bien co",
+)
+HISTORICAL_ORGANIZATION_CUES = (
+    "dang", "mat tran", "quan doi", "khong quan", "hai quan", "luc quan",
+    "quan chung", "chinh phu", "chinh quyen", "giao hoi", "ton giao",
+)
+HISTORICAL_PERSON_ROLE_CUES = (
+    "vi vua", "hoang de", "danh tuong", "tuong linh", "nha cach mang",
+    "chinh tri gia", "anh hung dan toc", "lanh dao", "chi huy", "si quan",
+    "tinh bao", "giao si", "linh muc", "giam muc", "tong giam muc", "tri vi",
+)
+HISTORICAL_NARRATIVE_CUES = (
+    "boi canh", "nguyen nhan", "dien bien", "he qua", "hau qua", "thuoc dia",
+    "khang chien", "xung dot", "thanh lap", "hinh thanh", "ra doi", "suy vong",
+)
+NON_HISTORY_SUBJECT_CUES = (
+    "cuoc thi ca hat", "chuong trinh truyen hinh", "than tuong am nhac",
+    "giai bong da", "vo dich u 21", "dai hoi the thao", "sea games",
+    "bang tong sap huy chuong", "bang xep hang", "vong bang", "tran thang 3 diem",
 )
 ALIAS_METADATA_FIELDS = (
     "aliases", "alias", "alternative_names", "alternate_names", "other_names",
@@ -279,6 +309,8 @@ def title_implied_subject_type(title: str) -> str | None:
             cue_words = " ".join(re.findall(r"\w+", cue.casefold(), flags=re.UNICODE))
             if cue_words and f" {cue_words} " in title_words:
                 return subject_type
+    if "quan su" in parenthetical_labels:
+        return "topic"
     return None
 
 
@@ -329,12 +361,39 @@ def _has_dynasty_evidence(row: dict[str, Any], implied_type: str | None) -> bool
     return False
 
 
+def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
+    """Use only target-linked definitional language to correct noisy extracted labels."""
+    title = _title(row)
+    for sentence in _split_sentences(row.get("text")):
+        if not _contains_norm_phrase(sentence, title):
+            continue
+        sentence_norm = _match_norm(sentence)
+        if re.search(r"\bla (?:mot )?(?:vuong quoc|de quoc|quoc gia|nha nuoc|chinh the)\b", sentence_norm):
+            return "state"
+        if re.search(
+            r"\bla (?:mot )?(?:cuoc thi|chuong trinh truyen hinh|chuong trinh thuc te)\b",
+            sentence_norm,
+        ):
+            return "topic"
+        if re.search(r"\bla (?:mot )?(?:giai dau|su kien|cuoc hop|hoi nghi)\b", sentence_norm):
+            return "event"
+        if re.search(r"\bla (?:mot )?(?:loai hinh|the loai|khai niem|hoc thuyet|cap bac)\b", sentence_norm):
+            return "topic"
+    return None
+
+
 def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> bool:
     if implied_type is None or implied_type == declared_type:
         return False
     if declared_type in {"person", "dynasty"}:
         return True
-    if declared_type == "topic" and implied_type in {"organization", "dynasty"}:
+    if implied_type in {"topic", "location"}:
+        return True
+    if implied_type in {"event", "state"} and declared_type in {"organization", "state", "event"}:
+        return True
+    if implied_type == "organization" and declared_type in {"state", "event"}:
+        return True
+    if declared_type == "topic" and implied_type in {"organization", "dynasty", "event", "state"}:
         return True
     return {declared_type, implied_type} == {"organization", "dynasty"}
 
@@ -342,7 +401,7 @@ def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> b
 def classify_subject(row: dict[str, Any]) -> str:
     """Classify conservatively: strong evidence is required to emit ``person``."""
     title = _title(row)
-    implied_type = title_implied_subject_type(title)
+    implied_type = title_implied_subject_type(title) or _text_implied_subject_type(row)
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     explicit = _match_norm(
         metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
@@ -384,17 +443,41 @@ def custom_history_eligibility_signals(row: dict[str, Any]) -> tuple[str, ...]:
     if language_word_count >= 2:
         signals.append("language:vietnamese_words")
     if isinstance(row.get("history_score"), (int, float)) and row["history_score"] > 0:
-        signals.append("history:score")
-    if subject_type in {"event", "dynasty", "document"}:
-        signals.append(f"history:subject_type:{subject_type}")
+        signals.append("weak:history_score")
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     if any(metadata.get(field) for field in ("events", "dynasties", "years", "periods")):
-        signals.append("history:metadata")
+        signals.append("weak:history_metadata")
     if re.search(r"\b\d{3,4}\b", combined):
-        signals.append("history:year")
+        signals.append("weak:year")
     for cue in HISTORICAL_SCOPE_CUES:
         if f" {cue} " in combined_padded:
-            signals.append(f"history:{cue}")
+            signals.append(f"weak:{cue}")
+    title_norm = _match_norm(title)
+    title_padded = f" {title_norm} "
+    excluded_scope = any(f" {cue} " in combined_padded for cue in NON_HISTORY_SUBJECT_CUES)
+    if not excluded_scope:
+        if subject_type in {"state", "dynasty", "document"}:
+            signals.append(f"history:strong_subject:{subject_type}")
+        if subject_type == "event" and any(
+            f" {cue} " in title_padded for cue in HISTORICAL_EVENT_TITLE_CUES
+        ):
+            signals.append("history:strong_event")
+        if subject_type == "organization" and any(
+            f" {cue} " in combined_padded for cue in HISTORICAL_ORGANIZATION_CUES
+        ) and (
+            re.search(r"\b\d{3,4}\b", combined)
+            or any(f" {cue} " in combined_padded for cue in ("thanh lap", "hinh thanh", "ra doi", "lich su"))
+        ):
+            signals.append("history:strong_organization")
+        if subject_type == "person" and any(
+            f" {cue} " in combined_padded for cue in HISTORICAL_PERSON_ROLE_CUES
+        ):
+            signals.append("history:strong_person")
+        narrative_count = sum(
+            f" {cue} " in combined_padded for cue in HISTORICAL_NARRATIVE_CUES
+        )
+        if narrative_count >= 2:
+            signals.append("history:strong_narrative")
     return tuple(dict.fromkeys(signals))
 
 
@@ -404,7 +487,7 @@ def is_custom_history_eligible(row: dict[str, Any]) -> bool:
     return (
         classify_subject(row) in MEANINGFUL_SUBJECTS
         and any(signal.startswith("language:") for signal in signals)
-        and any(signal.startswith("history:") for signal in signals)
+        and any(signal.startswith("history:strong") for signal in signals)
     )
 
 
@@ -433,6 +516,25 @@ def task_eligible(row: dict[str, Any], task_type: str) -> bool:
     if task_type == "hard_negative":
         return subject_type in {"event", "organization", "state", "dynasty"}
     return False
+
+
+def compare_subjects_compatible(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    """Allow same-type pairs plus a narrowly nested state/institution relationship."""
+    first_type = classify_subject(first)
+    second_type = classify_subject(second)
+    if first_type == second_type:
+        return first_type in COMPARE_SUBJECTS
+    if {first_type, second_type} != {"state", "organization"}:
+        return False
+    first_title = _entity_norm(_title(first))
+    second_title = _entity_norm(_title(second))
+    return bool(
+        first_title and second_title
+        and (
+            f" {first_title} " in f" {second_title} "
+            or f" {second_title} " in f" {first_title} "
+        )
+    )
 
 
 def inspect_corpus(path: str | Path, *, max_records: int = 1000) -> dict[str, Any]:
@@ -515,6 +617,16 @@ def _entity_variants(target_title: str, target_aliases: Iterable[str] = ()) -> t
     return tuple(dict.fromkeys(value for value in (_entity_norm(item) for item in values) if value))
 
 
+def _subject_entity_variants(
+    target_title: str, target_subject_type: str, target_aliases: Iterable[str] = (),
+) -> tuple[str, ...]:
+    variants = _entity_variants(target_title, target_aliases)
+    if target_subject_type != "person" or len(_entity_norm(target_title).split()) < 2:
+        return variants
+    # A surname or other one-token alias cannot identify a multi-token person.
+    return tuple(variant for variant in variants if len(variant.split()) >= 2)
+
+
 def _contains_entity_variant(text: Any, variants: Iterable[str]) -> bool:
     text_norm = _entity_norm(text)
     padded = f" {text_norm} "
@@ -525,9 +637,10 @@ def result_text_mentions_target(
     result: dict[str, Any], *, target_title: str, target_aliases: Iterable[str] = (),
 ) -> bool:
     """Whether the actual evidence text explicitly names the target or a strong alias."""
-    return _contains_entity_variant(
-        result.get("text"), _entity_variants(target_title, target_aliases),
-    )
+    variants = _entity_variants(target_title, target_aliases)
+    if len(_entity_norm(target_title).split()) >= 2:
+        variants = tuple(variant for variant in variants if len(variant.split()) >= 2)
+    return _contains_entity_variant(result.get("text"), variants)
 
 
 def _metadata_mentions_target(metadata: Any, variants: tuple[str, ...]) -> bool:
@@ -546,8 +659,8 @@ def is_result_relevant_to_target(
     retrieval_role: str, target_aliases: Iterable[str] = (),
 ) -> bool:
     """Deterministically reject lexical hits that are not anchored to the target."""
-    del target_subject_type, retrieval_role
-    variants = _entity_variants(target_title, target_aliases)
+    del retrieval_role
+    variants = _subject_entity_variants(target_title, target_subject_type, target_aliases)
     if not variants:
         return False
     result_title_variants = _entity_variants(_title(result))
@@ -610,6 +723,23 @@ def _target_leading_cause_score(
     return 0
 
 
+def _causal_relation_score(sentence_norm: str) -> int:
+    """Recognize a cause attached to an event/origin predicate, not every lexical do/vì."""
+    event_predicate = (
+        r"(?:dien ra|xay ra|no ra|bung no|phat sinh|duoc ban hanh|duoc ky|duoc cong bo|"
+        r"duoc thanh lap|hinh thanh|ra doi|gianh thang loi|that bai)"
+    )
+    predicate_then_cause = re.search(
+        rf"\b{event_predicate}(?: [a-z0-9]+){{0,8}} (?:do|vi)\b",
+        sentence_norm,
+    )
+    cause_then_predicate = re.search(
+        rf"^(?:do|vi)(?: [a-z0-9]+){{2,18}} {event_predicate}\b",
+        sentence_norm,
+    )
+    return int(bool(predicate_then_cause or cause_then_predicate))
+
+
 def _facet_score(
     sentence: str, *, query: str, task_type: str, retrieval_role: str,
     target_subject_type: str, target_title: str, target_aliases: Iterable[str],
@@ -624,9 +754,7 @@ def _facet_score(
             for term in terms
             if _match_norm(term) and _match_norm(term) not in formation_terms
         )
-        entity_norm = _entity_norm(sentence)
-        score += int(bool(re.search(r"\bdo\b", entity_norm)))
-        score += int(bool(re.search(r"(?<!thay )\bvì\b", entity_norm)))
+        score += _causal_relation_score(sentence_norm)
         score += _target_formation_score(sentence_norm, target_title, target_aliases)
         score += _strong_formation_score(sentence_norm)
         score += _target_leading_cause_score(sentence_norm, target_title, target_aliases)
@@ -706,12 +834,15 @@ def _sentence_rank(
     sentence_norm = _match_norm(sentence)
     if any(f" {cue} " in f" {sentence_norm} " for cue in REFERENCE_NOISE_CUES):
         return None
-    target_variants = _entity_variants(target_title, target_aliases)
+    target_variants = _subject_entity_variants(
+        target_title, target_subject_type, target_aliases,
+    )
     excluded_variants = tuple(
         variant
         for excluded in excluded_titles
         for variant in _entity_variants(excluded)
         if variant not in target_variants
+        and not any(f" {variant} " in f" {target_variant} " for target_variant in target_variants)
     )
     if excluded_variants and _contains_entity_variant(sentence, excluded_variants):
         return None
@@ -1174,7 +1305,7 @@ def _trajectory(
     trajectory_observation_char_budget: int,
 ) -> dict[str, Any]:
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
+        {"role": "system", "content": CUSTOM_HISTORY_SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
     for index, obs in enumerate(observations, 1):
@@ -1272,7 +1403,6 @@ def _trajectory(
 def _find_compare_secondary(
     records: list[dict[str, Any]], primary_index: int, primary: dict[str, Any], used_pairs: set[str],
 ) -> dict[str, Any] | None:
-    primary_type = classify_subject(primary)
     primary_title = _match_norm(_title(primary))
     for offset in range(1, len(records)):
         candidate = records[(primary_index + offset) % len(records)]
@@ -1280,7 +1410,7 @@ def _find_compare_secondary(
         pair_key = "||".join(sorted((primary_title, candidate_title)))
         if (
             candidate_title and candidate_title != primary_title
-            and classify_subject(candidate) == primary_type
+            and compare_subjects_compatible(primary, candidate)
             and is_custom_history_eligible(candidate)
             and task_eligible(candidate, "compare") and pair_key not in used_pairs
         ):

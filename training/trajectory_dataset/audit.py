@@ -6,11 +6,12 @@ from collections import Counter
 from typing import Any, Iterable
 
 from .builders.custom_history import (
+    classify_subject,
+    compare_subjects_compatible,
     is_custom_history_eligible,
     is_result_facet_relevant,
     is_result_relevant_to_target,
     result_text_mentions_target,
-    title_implied_subject_type,
 )
 from .citations import extract_evidence_citations
 from .dedup import first_user_question, normalized_question
@@ -85,50 +86,58 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             primary_aliases = []
         if not isinstance(secondary_aliases, list):
             secondary_aliases = []
+        payloads = _tool_payloads(row)
+        retrieval_queries = provenance.get("retrieval_queries")
+        query_metadata = retrieval_queries if isinstance(retrieval_queries, list) else []
+        roles = [
+            str(query_metadata[index].get("role") or "unknown")
+            if index < len(query_metadata) and isinstance(query_metadata[index], dict)
+            else str(payload[0].get("retrieval_role") or "unknown")
+            if payload and isinstance(payload[0], dict)
+            else "unknown"
+            for index, payload in enumerate(payloads)
+        ]
+
+        def audit_subject_record(title: str, subject_type: str, *, secondary: bool) -> dict[str, Any]:
+            evidence = [
+                result
+                for role, payload in zip(roles, payloads)
+                if (role == "target_b") == secondary
+                for result in payload
+                if isinstance(result, dict)
+            ]
+            return {
+                "title": title,
+                "text": " ".join(str(result.get("text") or "") for result in evidence),
+                "history_score": max(
+                    (result.get("history_score") for result in evidence if isinstance(result.get("history_score"), (int, float))),
+                    default=None,
+                ),
+                "metadata": {"subject_type": subject_type},
+            }
+
+        def builder_confirmed_domain(*, secondary: bool) -> bool:
+            key = (
+                "secondary_custom_history_eligibility_signals"
+                if secondary else "custom_history_eligibility_signals"
+            )
+            signals = provenance.get(key)
+            return isinstance(signals, list) and any(
+                str(signal).startswith("language:") for signal in signals
+            ) and any(str(signal).startswith("history:strong") for signal in signals)
+
         if source_dataset.startswith("custom_history") and primary_title:
-            implied_type = title_implied_subject_type(primary_title)
-            if implied_type is not None and implied_type != subject:
+            primary_record = audit_subject_record(primary_title, subject, secondary=False)
+            if classify_subject(primary_record) != subject:
                 issue("subject_type_mismatch", row)
             secondary_type = str(provenance.get("secondary_subject_type") or "")
-            secondary_implied_type = title_implied_subject_type(secondary_title)
-            if secondary_title and secondary_implied_type is not None and secondary_implied_type != secondary_type:
+            secondary_record = audit_subject_record(secondary_title, secondary_type, secondary=True)
+            if secondary_title and classify_subject(secondary_record) != secondary_type:
                 issue("subject_type_mismatch", row)
-            primary_signals = (
-                provenance.get("custom_history_eligibility_signals")
-                or provenance.get("vietnam_history_relevance_signals")
-                or []
-            )
-            primary_flag = provenance.get("custom_history_eligible")
-            if primary_flag is None:
-                primary_flag = provenance.get("vietnam_history_relevant")
-            primary_domain_ok = (
-                primary_flag is True
-                and isinstance(primary_signals, list)
-                and bool(primary_signals)
-            )
-            if not primary_domain_ok and not is_custom_history_eligible({
-                "title": primary_title,
-                "metadata": {"subject_type": subject},
-            }):
+            if not is_custom_history_eligible(primary_record) and not builder_confirmed_domain(secondary=False):
                 issue("domain_mismatch", row)
             if secondary_title:
-                secondary_signals = (
-                    provenance.get("secondary_custom_history_eligibility_signals")
-                    or provenance.get("secondary_vietnam_history_relevance_signals")
-                    or []
-                )
-                secondary_flag = provenance.get("secondary_custom_history_eligible")
-                if secondary_flag is None:
-                    secondary_flag = provenance.get("secondary_vietnam_history_relevant")
-                secondary_domain_ok = (
-                    secondary_flag is True
-                    and isinstance(secondary_signals, list)
-                    and bool(secondary_signals)
-                )
-                if not secondary_domain_ok and not is_custom_history_eligible({
-                    "title": secondary_title,
-                    "metadata": {"subject_type": secondary_type},
-                }):
+                if not is_custom_history_eligible(secondary_record) and not builder_confirmed_domain(secondary=True):
                     issue("domain_mismatch", row)
         question_key = normalized_question(first_user_question(row))
         if question_key in seen_questions:
@@ -147,7 +156,10 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             issue("analytical_invalid_subject", row)
         if task == "compare":
             secondary_type = str(provenance.get("secondary_subject_type") or "")
-            if not secondary_type or secondary_type != subject:
+            if not secondary_type or not compare_subjects_compatible(
+                {"title": primary_title, "metadata": {"subject_type": subject}},
+                {"title": secondary_title, "metadata": {"subject_type": secondary_type}},
+            ):
                 issue("compare_type_mismatch", row)
             first = normalized_question(str(provenance.get("primary_title") or ""))
             second = normalized_question(str(provenance.get("secondary_title") or ""))
@@ -172,17 +184,6 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 issue("insufficient_invalid_subject", row)
 
         observed_ids: set[str] = set()
-        payloads = _tool_payloads(row)
-        retrieval_queries = provenance.get("retrieval_queries")
-        query_metadata = retrieval_queries if isinstance(retrieval_queries, list) else []
-        roles = [
-            str(query_metadata[index].get("role") or "unknown")
-            if index < len(query_metadata) and isinstance(query_metadata[index], dict)
-            else str(payload[0].get("retrieval_role") or "unknown")
-            if payload and isinstance(payload[0], dict)
-            else "unknown"
-            for index, payload in enumerate(payloads)
-        ]
         results_by_role = {role: payload for role, payload in zip(roles, payloads)}
         direct_verification_present = bool(results_by_role.get("claim_support"))
         trajectory_chars = 0
@@ -244,12 +245,31 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 observation_target_mismatch = observation_target_mismatch or not entity_relevant
                 observation_facet_mismatch = observation_facet_mismatch or not facet_relevant
                 if task == "compare" and other_title:
-                    contaminates = is_result_relevant_to_target(
-                        result,
+                    title_only = {"title": result.get("title"), "text": "", "metadata": {}}
+                    assigned_title_match = is_result_relevant_to_target(
+                        title_only,
+                        target_title=target_title,
+                        target_subject_type=target_type,
+                        retrieval_role=role,
+                        target_aliases=target_aliases,
+                    )
+                    other_title_match = is_result_relevant_to_target(
+                        title_only,
                         target_title=other_title,
                         target_subject_type=other_type,
                         retrieval_role=role,
                         target_aliases=other_aliases,
+                    )
+                    assigned_text_match = result_text_mentions_target(
+                        result, target_title=target_title, target_aliases=target_aliases,
+                    )
+                    other_text_match = result_text_mentions_target(
+                        result, target_title=other_title, target_aliases=other_aliases,
+                    )
+                    contaminates = (
+                        other_title_match and not assigned_title_match
+                    ) or (
+                        other_text_match and not assigned_text_match and not assigned_title_match
                     )
                     compare_target_contamination = compare_target_contamination or contaminates or not entity_relevant
             required = bool(metadata.get("required", False))
