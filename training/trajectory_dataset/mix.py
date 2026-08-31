@@ -54,3 +54,30 @@ def mix_sources(
 
 def source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     return dict(Counter(str(row.get("source_dataset") or "unknown") for row in rows))
+
+
+def mix_capacity_report(
+    sources: dict[str, list[dict[str, Any]]],
+    ratios: dict[str, float],
+    *,
+    requested_total: int | None,
+) -> dict[str, Any]:
+    weights = normalize_ratios(ratios)
+    required = {
+        name: int(requested_total * weight) if requested_total is not None else None
+        for name, weight in weights.items()
+    }
+    available = {name: len(sources.get(name) or []) for name in weights}
+    insufficient = [
+        name for name in weights
+        if required[name] is not None and available[name] < int(required[name] or 0)
+    ]
+    return {
+        "requested_total": requested_total,
+        "ratios": weights,
+        "required_rows": required,
+        "available_safe_rows": available,
+        "insufficient_sources": insufficient,
+        "agent_flan_safe_pool_insufficient": "agent_flan" in insufficient,
+        "duplicates_fabricated": False,
+    }

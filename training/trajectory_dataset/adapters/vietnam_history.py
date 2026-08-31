@@ -17,6 +17,52 @@ PREFERRED_PATTERNS = re.compile(
 SHORTNESS_PATTERNS = re.compile(r"thật ngắn gọn|rất ngắn|trả lời súc tích|trình bày nhanh", flags=re.IGNORECASE)
 
 
+def messages_without_assistant_analysis(row: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """Drop source-declared assistant analysis before canonical role conversion.
+
+    The channel is observable source metadata.  It must be handled here rather
+    than guessed later from Vietnamese wording, because every canonical
+    assistant message is a supervised target.
+    """
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for message in get_messages(row):
+        if not isinstance(message, dict):
+            kept.append(message)
+            continue
+        role = str(message.get("role") or message.get("from") or "").casefold()
+        channel = str(message.get("channel") or "").casefold()
+        if role in {"assistant", "gpt"} and channel == "analysis":
+            dropped += 1
+            continue
+        kept.append(message)
+    return kept, dropped
+
+
+def canonical_analysis_messages_remaining(row: dict[str, Any]) -> int:
+    """Count observable Vietnam-History analysis leakage in canonical rows.
+
+    Newly normalized rows retain the source-channel decision in provenance.
+    Legacy canonical rows lost ``channel`` entirely, but their invalid shape is
+    still observable as multiple supervised assistant text targets.
+    """
+    messages = row.get("messages") if isinstance(row.get("messages"), list) else []
+    explicit = sum(
+        isinstance(message, dict)
+        and message.get("role") == "assistant"
+        and str(message.get("channel") or "").casefold() == "analysis"
+        for message in messages
+    )
+    assistant_text_targets = sum(
+        isinstance(message, dict)
+        and message.get("role") == "assistant"
+        and not message.get("tool_calls")
+        and bool(str(message.get("content") or "").strip())
+        for message in messages
+    )
+    return max(explicit, max(0, assistant_text_targets - 1))
+
+
 def question_and_answer(messages: list[dict[str, Any]]) -> tuple[str, str]:
     question = next((str(message.get("content") or "").strip() for message in messages if message.get("role") == "user"), "")
     answer = next((str(message.get("content") or "").strip() for message in reversed(messages) if message.get("role") == "assistant"), "")
@@ -32,7 +78,8 @@ def quality_filter(
     max_answer_words: int = 800,
     preferred_only: bool = False,
 ) -> str | None:
-    messages = semantic_messages(get_messages(row), include_reasoning=False)
+    source_messages, _ = messages_without_assistant_analysis(row)
+    messages = semantic_messages(source_messages, include_reasoning=False)
     question, answer = question_and_answer(messages)
     words = len(answer.split())
     if words < min_answer_words:
@@ -60,9 +107,12 @@ def normalize_vietnam_history(
     quality_reason = quality_filter(row, preferred_only=preferred_only)
     if quality_reason:
         raise AdapterError(quality_reason)
-    original_messages = semantic_messages(get_messages(row), include_reasoning=False)
+    source_messages, dropped_analysis = messages_without_assistant_analysis(row)
+    original_messages = semantic_messages(source_messages, include_reasoning=False)
     question, answer = question_and_answer(original_messages)
     transformations = ["messages_to_canonical", f"mode:{mode}"]
+    if dropped_analysis:
+        transformations.append("dropped_assistant_analysis_channel")
     prov = provenance(
         dataset_id=DATASET_ID,
         split=split,
@@ -71,6 +121,7 @@ def normalize_vietnam_history(
         license_name="MIT",
         transformations=transformations,
     )
+    prov["dropped_assistant_analysis_messages"] = dropped_analysis
     if mode == "style_only":
         messages = original_messages
         tools: list[dict[str, Any]] = []

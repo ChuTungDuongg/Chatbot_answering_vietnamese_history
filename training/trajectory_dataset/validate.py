@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .adapters.agent_flan import contains_agent_flan_action_syntax, contains_agent_flan_thought_target
+from .adapters.vietnam_history import canonical_analysis_messages_remaining
 from .citations import extract_evidence_citations
 from .schema import SCHEMA_VERSION, tool_names
 
@@ -167,7 +169,25 @@ def validate_trajectory(row: dict[str, Any]) -> list[str]:
     if declared_uses_tools != actual_uses_tools:
         errors.append("uses_tools does not match messages")
 
-    if str(row.get("source_dataset", "")).startswith("custom_history") or (provenance or {}).get("grounded"):
+    source_dataset = str(row.get("source_dataset") or "")
+    if source_dataset == "vietnam_history_200k" and canonical_analysis_messages_remaining(row):
+        errors.append("Vietnam-History assistant analysis channel remains in canonical messages")
+    if source_dataset == "agent_flan":
+        assistant_targets = [
+            str(message.get("content") or "")
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "assistant" and not message.get("tool_calls")
+        ]
+        if any(contains_agent_flan_action_syntax(content) for content in assistant_targets):
+            errors.append("Agent-FLAN literal action remains as an assistant text target")
+        if any(contains_agent_flan_thought_target(content) for content in assistant_targets):
+            errors.append("Agent-FLAN Thought remains as an assistant text target")
+        if any(contains_agent_flan_action_syntax(content) for content in assistant_targets) and (
+            not tools or not actual_uses_tools
+        ):
+            errors.append("Agent-FLAN literal action has no canonical tools")
+
+    if source_dataset.startswith("custom_history") or (provenance or {}).get("grounded"):
         declared_ids = {str(value) for value in (provenance or {}).get("evidence_ids", [])}
         if declared_ids and not declared_ids.issubset(observed_evidence):
             errors.append("provenance evidence_ids are absent from tool observations")

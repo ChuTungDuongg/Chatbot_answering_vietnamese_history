@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
 from .dedup import first_user_question, normalized_question
+
+
+IMPORTANT_CUSTOM_TASK_TYPES = (
+    "factual", "cause", "significance", "compare", "summary", "multihop",
+    "verification", "hard_negative", "insufficient_evidence",
+)
 
 
 @dataclass(frozen=True)
@@ -116,14 +123,86 @@ def split_trajectories(
     if count >= 3 and all(ratio > 0 for ratio in (train_ratio, validation_ratio, test_ratio)):
         n_train = min(max(n_train, 1), count - 2)
         n_validation = min(max(n_validation, 1), count - n_train - 1)
-    for root in unassigned[:n_train]:
-        assigned[root] = "train"
-    for root in unassigned[n_train:n_train + n_validation]:
-        assigned[root] = "validation"
-    for root in unassigned[n_train + n_validation:]:
-        assigned[root] = "test"
+    capacities = {
+        "train": n_train,
+        "validation": n_validation,
+        "test": count - n_train - n_validation,
+    }
+
+    def component_features(root: int) -> tuple[set[str], set[str]]:
+        component = components[root]
+        tasks = {
+            str(row.get("task_type") or "")
+            for row in component
+            if str(row.get("source_dataset") or "").startswith("custom_history")
+        }
+        sources = {str(row.get("source_dataset") or "unknown") for row in component}
+        return tasks, sources
+
+    covered_tasks = {name: set() for name in capacities}
+    covered_sources = {name: set() for name in capacities}
+    for root, name in assigned.items():
+        tasks, sources = component_features(root)
+        covered_tasks[name].update(tasks)
+        covered_sources[name].update(sources)
+
+    # Deterministic group-aware stratification.  It never splits a connected
+    # source-group component; it only selects which whole component fills each
+    # split slot, preferring missing custom behaviors and then missing sources.
+    remaining = set(unassigned)
+    rank = {root: index for index, root in enumerate(unassigned)}
+    for name in ("validation", "test", "train"):
+        while capacities[name] > 0 and remaining:
+            root = max(
+                remaining,
+                key=lambda candidate: (
+                    len(component_features(candidate)[0] - covered_tasks[name]),
+                    len(component_features(candidate)[1] - covered_sources[name]),
+                    -rank[candidate],
+                ),
+            )
+            assigned[root] = name
+            tasks, sources = component_features(root)
+            covered_tasks[name].update(tasks)
+            covered_sources[name].update(sources)
+            capacities[name] -= 1
+            remaining.remove(root)
 
     result: dict[str, list[dict[str, Any]]] = {"train": [], "validation": [], "test": []}
     for root in component_ids:
         result[assigned[root]].extend(components[root])
     return TrajectorySplits(**result)
+
+
+def split_coverage_report(splits: TrajectorySplits) -> dict[str, Any]:
+    report: dict[str, Any] = {"splits": {}}
+    groups_by_split: dict[str, set[str]] = {}
+    for name in ("train", "validation", "test"):
+        rows = getattr(splits, name)
+        source_counts = Counter(str(row.get("source_dataset") or "unknown") for row in rows)
+        task_counts = Counter(str(row.get("task_type") or "unknown") for row in rows)
+        custom_counts = Counter(
+            str(row.get("task_type") or "unknown")
+            for row in rows
+            if str(row.get("source_dataset") or "").startswith("custom_history")
+        )
+        groups_by_split[name] = {group for row in rows for group in source_groups(row)}
+        report["splits"][name] = {
+            "rows": len(rows),
+            "source_dataset_counts": dict(sorted(source_counts.items())),
+            "task_type_counts": dict(sorted(task_counts.items())),
+            "custom_history_task_type_counts": dict(sorted(custom_counts.items())),
+            "missing_custom_task_types": [
+                task for task in IMPORTANT_CUSTOM_TASK_TYPES if custom_counts[task] == 0
+            ],
+        }
+    overlaps: dict[str, list[str]] = {}
+    names = ("train", "validation", "test")
+    for index, left in enumerate(names):
+        for right in names[index + 1:]:
+            shared = sorted(groups_by_split[left] & groups_by_split[right])
+            if shared:
+                overlaps[f"{left}__{right}"] = shared[:20]
+    report["source_group_leakage_count"] = sum(len(values) for values in overlaps.values())
+    report["source_group_leakage"] = overlaps
+    return report

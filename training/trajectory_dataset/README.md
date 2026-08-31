@@ -18,16 +18,16 @@ V1 supports three bounded public sources plus custom corpus-grounded rows:
 
 | Canonical source | Public dataset | Contribution |
 |---|---|---|
-| `agent_flan` | `internlm/Agent-FLAN` | Generic agent actions, tool selection, negative and no-tool behavior. Reasoning targets are removed by default. Original tools are retained when semantic tool definitions are available. |
+| `agent_flan` | `internlm/Agent-FLAN` | Generic agent actions and tool selection. Structured calls are retained; safely parseable `Action: tool(...)` / `search[...]` traces become canonical calls, and ambiguous action traces are rejected. Thought targets are always removed. |
 | `multi_hop_function_calling` | `khaimaitien/multi-hop-qa-function-calling-format-V1.0` | `retrieve → observation → retrieve again → answer` behavior. Its documented generic `retrieve` function is never renamed to `search_history`. |
 | `vietnam_history_200k` | `minhxthanh/Vietnam-History-200K-Vi` | Vietnamese historical answer style in bounded `style_only` mode, or actual/precomputed retrieval observations in `rag_grounded` mode. |
 | `custom_history` | Local enriched corpus | Project-specific `search_history` trajectories with real chunk IDs, observations, citations, and source-group metadata. |
 
 These datasets do not share one raw schema. Each has a separate adapter in `adapters/`; incompatible rows become rejected records with a reason. Original split, source metadata, row identity, transformations, and known license are preserved under `provenance`. Missing licenses stay `null`; the pipeline does not invent them.
 
-Agent-FLAN has heterogeneous subsets. The adapter accepts `messages`, `conversations`, and `conversation`; those raw conversation fields are excluded from `source_metadata` to avoid duplicating the transcript. Its default compatible split is `agent_instruct_react` (override with `--split`). Rows that contain semantic calls but omit matching tool definitions are rejected. Text-only action examples remain text-only instead of receiving invented tools. Use `--include-reasoning` only when deliberately evaluating a subset whose reasoning text is suitable as a public training target; the default is `--no-include-reasoning`.
+Agent-FLAN has heterogeneous subsets. The adapter accepts `messages`, `conversations`, and `conversation`; those raw conversation fields are excluded from `source_metadata` to avoid duplicating the transcript. Its default compatible split is `agent_instruct_react` (override with `--split`). Rows that contain structured calls but omit matching definitions are rejected. Textual ReAct traces are converted only when every action, observation, argument list, and terminal `Final Answer` can be paired deterministically. Environment commands or ambiguous syntax are rejected rather than emitted as `generic_no_tool_behavior`. `Thought:` text is never an Agent-FLAN assistant target, even if the legacy `--include-reasoning` flag is supplied.
 
-Vietnam-History filtering utilities favor causes, context, significance, comparison, summary, and multi-part explanation and can reject malformed or extreme-length answers. Do not normalize all 200K rows by default. `rag_grounded` is preferred when a compatible retriever or precomputed observation file is available; `style_only` is deliberately bounded in the final mix.
+Vietnam-History filtering utilities favor causes, context, significance, comparison, summary, and multi-part explanation and can reject malformed or extreme-length answers. Source messages declared as `role=assistant, channel=analysis` are removed before canonical role conversion; `channel=final` remains the exact supervised answer and the drop is recorded in provenance. Do not normalize all 200K rows by default. `rag_grounded` is preferred when a compatible retriever or precomputed observation file is available; `style_only` is deliberately bounded in the final mix.
 
 ## Canonical format
 
@@ -213,7 +213,7 @@ python -m training.trajectory_dataset.cli split `
   --seed 42
 ```
 
-Mixing uses deterministic sampling without duplicating rows. Exact normalized user questions and trajectory IDs are deduplicated. Custom provenance retains legacy `source_group` and also records every contributing stable group in `source_groups`. Splitting connects rows that share any group, then assigns the whole connected component to one split. This prevents a compare row using A+B from leaking apart from another row based on B, while preserving legacy single-group behavior and unambiguous official public validation/test splits.
+Mixing uses deterministic sampling without duplicating rows. Its capacity report explicitly identifies a safe-source shortfall (including `agent_flan_safe_pool_insufficient`) instead of duplicating rejected rows. Exact normalized user questions and trajectory IDs are deduplicated. Custom provenance retains legacy `source_group` and also records every contributing stable group in `source_groups`. Splitting connects rows that share any group, then assigns the whole connected component to one split. Whole-component assignment is deterministically stratified toward missing custom task types and source datasets; group isolation and official public validation/test splits remain absolute. `manifest.json` reports per-split source/task counts, missing custom behaviors, and any group overlap.
 
 Validation checks roles, final answers, tool definitions, call/result ID consistency, non-empty search queries, unique IDs, provenance, and internal evidence/citation IDs. Every rejected row contains a reason.
 
@@ -242,6 +242,20 @@ python -m training.trajectory_dataset.cli audit `
   --tokenizer-model-id YOUR_TOKENIZER_ID_OR_PATH `
   --max-seq-length 4096
 ```
+
+The all-split GO-TRAIN gate combines canonical validation, public-source leakage checks, custom subject/compare audit, tool linkage, citations, expected-empty semantics, source-group isolation, coverage, and exact tokenizer supervision safety:
+
+```powershell
+python -m training.trajectory_dataset.cli gate-final `
+  --train-file D:/vn-history/trajectory_dataset_v1/final/train.jsonl `
+  --validation-file D:/vn-history/trajectory_dataset_v1/final/validation.jsonl `
+  --test-file D:/vn-history/trajectory_dataset_v1/final/test.jsonl `
+  --tokenizer Qwen/Qwen3-8B `
+  --max-seq-length 4096 `
+  --output D:/vn-history/trajectory_dataset_v1/final/go_train_gate.json
+```
+
+The gate is not fully valid without a tokenizer evaluation; it never guesses token safety from character counts.
 
 Preprocessing no longer silently left-truncates a row when doing so would damage the initial user question or any assistant action target; compact observations or increase the sequence length instead.
 

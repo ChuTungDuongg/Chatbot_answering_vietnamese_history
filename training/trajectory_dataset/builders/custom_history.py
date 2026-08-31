@@ -87,6 +87,22 @@ STRONG_LOCATION_LABELS = {
     "thanh pho", "tinh", "huyen", "xa", "phuong", "thi tran",
     "thi xa", "lang", "thon", "ap", "ban", "buon", "dia danh", "tru so",
 }
+PERSON_DISAMBIGUATOR_LABELS = {
+    "nhac si", "ca si", "nghe si", "dien vien", "dao dien", "nha van",
+    "nha tho", "su gia", "chinh tri gia", "tuong linh", "cau thu",
+}
+BUILDING_LOCATION_PREFIXES = (
+    "nhà nguyện", "nhà thờ", "nhà lớn", "nhà hát", "nhà ga", "nhà tù",
+    "nhà máy", "nhà kho", "nhà khách", "nhà sàn", "nhà bia",
+)
+GENERIC_NHA_TOPIC_PREFIXES = (
+    "nhà diện", "nhà ở", "nhà mẫu",
+)
+KNOWN_DYNASTY_TITLES = {
+    "nha ngo", "nha dinh", "nha tien le", "nha ly", "nha tran", "nha ho",
+    "nha hau tran", "nha le so", "nha mac", "nha hau le", "nha le trung hung",
+    "nha tay son", "nha nguyen", "nha trieu",
+}
 ORGANIZATION_TITLE_PREFIXES = (
     "cơ quan", "bộ tư lệnh", "bộ quốc phòng", "trung tâm", "trường",
     "học viện", "viện nghiên cứu", "viện hàn lâm", "viện kiểm sát", "văn phòng",
@@ -139,10 +155,6 @@ CULTURAL_TOPIC_CUES = (
     "xẩm", "ca trù", "chèo", "tuồng", "quan họ", "dân ca", "nghệ thuật",
     "âm nhạc", "nhã nhạc", "tín ngưỡng", "tôn giáo", "triết học", "học thuyết",
 )
-DYNASTY_NON_CUES = {
-    "hat", "nuoc", "van", "tho", "may", "hang", "bao", "xuat ban",
-    "nghien cuu", "truong", "ga", "khach", "rong",
-}
 VIETNAMESE_LANGUAGE_WORDS = (
     "la", "cua", "va", "duoc", "trong", "nhung", "mot", "nam", "tai",
     "voi", "da", "co", "tu", "den", "sau", "truoc",
@@ -162,11 +174,13 @@ HISTORICAL_EVENT_TITLE_CUES = (
 HISTORICAL_ORGANIZATION_CUES = (
     "dang", "mat tran", "quan doi", "khong quan", "hai quan", "luc quan",
     "quan chung", "chinh phu", "chinh quyen", "giao hoi", "ton giao",
+    "ban nhac", "nhom nhac",
 )
 HISTORICAL_PERSON_ROLE_CUES = (
     "vi vua", "hoang de", "danh tuong", "tuong linh", "nha cach mang",
     "chinh tri gia", "anh hung dan toc", "lanh dao", "chi huy", "si quan",
     "tinh bao", "giao si", "linh muc", "giam muc", "tong giam muc", "tri vi",
+    "nhac si", "nghe si", "nha van", "nha tho", "hoc gia", "su gia",
 )
 HISTORICAL_NARRATIVE_CUES = (
     "boi canh", "nguyen nhan", "dien bien", "he qua", "hau qua", "thuoc dia",
@@ -297,6 +311,8 @@ def title_implied_subject_type(title: str) -> str | None:
         _match_norm(value)
         for value in re.findall(r"\(([^()]*)\)", title, flags=re.UNICODE)
     }
+    if parenthetical_labels & PERSON_DISAMBIGUATOR_LABELS:
+        return "person"
     if any(
         value == label or value.startswith(f"{label} ")
         for value in parenthetical_labels
@@ -337,12 +353,21 @@ def title_implied_subject_type(title: str) -> str | None:
     title_entity = _entity_norm(title)
     if any(
         title_entity == prefix or title_entity.startswith(f"{prefix} ")
+        for prefix in BUILDING_LOCATION_PREFIXES
+    ):
+        return "location"
+    if any(
+        title_entity == prefix or title_entity.startswith(f"{prefix} ")
+        for prefix in GENERIC_NHA_TOPIC_PREFIXES
+    ):
+        return "topic"
+    if title_norm in KNOWN_DYNASTY_TITLES:
+        return "dynasty"
+    if any(
+        title_entity == prefix or title_entity.startswith(f"{prefix} ")
         for prefix in ORGANIZATION_TITLE_PREFIXES
     ):
         return "organization"
-    title_tokens = title_norm.split()
-    if len(title_tokens) >= 2 and title_tokens[0] == "nha" and title_tokens[1] not in DYNASTY_NON_CUES:
-        return "dynasty"
     title_words = " ".join(re.findall(r"\w+", title.casefold(), flags=re.UNICODE))
     for subject_type, cues in TITLE_CUES:
         for cue in cues:
@@ -448,7 +473,11 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
     def defines(sentence_norm: str, predicate: str) -> bool:
         return any(
             re.search(
-                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,6}} la (?:mot )?{predicate}\b",
+                # Wikipedia leads often place script names, dates, or a short
+                # parenthetical gloss between the exact title and "là ...".
+                # The exact-title anchor keeps this identity evidence local;
+                # the wider window avoids discarding real dynasty/state leads.
+                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,24}} la (?:mot )?{predicate}\b",
                 sentence_norm,
             )
             for variant in title_variants
@@ -462,6 +491,15 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
         ):
             continue
         sentence_norm = _match_norm(sentence)
+        if any(
+            re.search(
+                rf"^(?:ban nhac|nhom nhac|tap doan|to chuc) {re.escape(variant)}"
+                rf"(?: [a-z0-9]+){{0,4}} la (?:mot )?(?:ban nhac|nhom nhac|to chuc|tap doan)\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        ):
+            return "organization"
         if defines(
             sentence_norm,
             r"(?:vuong quoc|de quoc|quoc gia|nha nuoc|chinh the|dat nuoc|cong hoa|dao quoc)",
@@ -472,7 +510,7 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
         if defines(
             sentence_norm,
             r"(?:co quan|to chuc|giao hoi|uy ban|bo tu lenh|binh chung|"
-            r"quan chung|truong|hoc vien|vien nghien cuu)",
+            r"quan chung|truong|hoc vien|vien nghien cuu|ban nhac|nhom nhac|tap doan)",
         ):
             return "organization"
         if defines(
@@ -495,6 +533,8 @@ def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> b
     if implied_type is None or implied_type == declared_type:
         return False
     if declared_type in {"person", "dynasty"}:
+        return True
+    if implied_type == "person":
         return True
     if implied_type in {"topic", "location"}:
         return True
@@ -520,14 +560,14 @@ def classify_subject(row: dict[str, Any]) -> str:
         metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
     )
     if explicit in SUBJECT_TYPES:
+        if _semantic_title_overrides(explicit, implied_type):
+            return str(implied_type)
         if (
             explicit == "person"
             and title_implied_type is None
             and _biographical_person_evidence(title, row.get("text"))
         ):
             return "person"
-        if _semantic_title_overrides(explicit, implied_type):
-            return str(implied_type)
         if explicit == "dynasty" and not _has_dynasty_evidence(row, implied_type):
             return "topic"
         return explicit
@@ -773,6 +813,43 @@ def _metadata_mentions_target(metadata: Any, variants: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_short_ambiguous_target(target_title: str) -> bool:
+    normalized = _entity_norm(_title_without_parenthetical(target_title))
+    return bool(normalized and len(normalized.split()) == 1 and len(normalized) <= 5)
+
+
+def _metadata_identifies_short_subject(metadata: Any, variants: tuple[str, ...]) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    for field in ("article_title", "canonical_title", "page_title", "subject", "primary_subject"):
+        for value in _text_values(metadata.get(field)):
+            if _entity_norm(value) in variants:
+                return True
+    return False
+
+
+def _short_target_has_local_identity(
+    text: Any, variants: tuple[str, ...], target_subject_type: str,
+) -> bool:
+    descriptors = {
+        "organization": r"(?:ban nhac|nhom nhac|to chuc|don vi|co quan|cong ty|tap doan)",
+        "person": r"(?:nhac si|ca si|nghe si|dien vien|dao dien|ong|ba)",
+        "state": r"(?:quoc gia|nha nuoc|vuong quoc|de quoc)",
+        "event": r"(?:su kien|chien dich|tran danh|cuoc chien)",
+    }.get(target_subject_type, r"(?:doi tuong|chu the)")
+    for sentence in _split_sentences(text):
+        sentence_norm = _match_norm(sentence)
+        for variant in variants:
+            target = re.escape(_match_norm(variant))
+            if target and re.search(
+                rf"^(?:(?:{descriptors}) )?{target}"
+                rf"(?: [a-z0-9]+){{0,5}} (?:la|duoc biet den la|tro thanh)(?: |$)",
+                sentence_norm,
+            ):
+                return True
+    return False
+
+
 def is_result_relevant_to_target(
     result: dict[str, Any], *, target_title: str, target_subject_type: str,
     retrieval_role: str, target_aliases: Iterable[str] = (),
@@ -787,6 +864,12 @@ def is_result_relevant_to_target(
         return _contains_entity_variant(result.get("text"), variants)
     result_title_variants = _entity_variants(_title(result))
     title_match = bool(set(variants) & set(result_title_variants))
+    if _is_short_ambiguous_target(target_title):
+        return (
+            title_match
+            or _metadata_identifies_short_subject(result.get("metadata"), variants)
+            or _short_target_has_local_identity(result.get("text"), variants, target_subject_type)
+        )
     return (
         title_match
         or _contains_entity_variant(result.get("text"), variants)
@@ -1494,6 +1577,27 @@ def _stable_source_group(row: dict[str, Any]) -> str:
     return str(row.get("url") or row.get("source_sha1") or row.get("title") or row.get("chunk_id"))
 
 
+def _subject_identity_snapshot(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Persist the bounded seed evidence needed to reproduce subject identity."""
+    if not isinstance(row, dict):
+        return None
+    raw_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    identity_fields = {
+        "subject_type", "entity_type", *METADATA_FIELDS,
+        "aliases", "alternative_names", "other_names",
+    }
+    metadata = {
+        key: raw_metadata[key]
+        for key in identity_fields
+        if key in raw_metadata
+    }
+    return {
+        "title": _title(row),
+        "text": str(row.get("text") or "")[:1600],
+        "metadata": metadata,
+    }
+
+
 def _trajectory(
     *, task_type: str, question: str, claim: str | None,
     observations: list[Observation], primary: dict[str, Any], secondary: dict[str, Any] | None,
@@ -1547,6 +1651,7 @@ def _trajectory(
             "primary_aliases": list(_target_aliases(primary)),
             "secondary_aliases": list(_target_aliases(secondary)) if secondary is not None else [],
             "subject_type": classify_subject(primary),
+            "primary_subject_identity": _subject_identity_snapshot(primary),
             "custom_history_eligible": is_custom_history_eligible(primary),
             "custom_history_eligibility_signals": list(custom_history_eligibility_signals(primary)),
             "vietnam_history_relevant": is_custom_history_eligible(primary),
@@ -1557,6 +1662,7 @@ def _trajectory(
                 if isinstance(primary.get("metadata"), dict) else []
             ),
             "secondary_subject_type": classify_subject(secondary) if secondary is not None else None,
+            "secondary_subject_identity": _subject_identity_snapshot(secondary),
             "secondary_custom_history_eligible": (
                 is_custom_history_eligible(secondary) if secondary is not None else None
             ),

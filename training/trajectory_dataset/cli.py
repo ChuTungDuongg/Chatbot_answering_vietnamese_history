@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -17,10 +18,11 @@ from .builders.custom_history import (
 )
 from .dedup import deduplicate, first_user_question, normalized_question
 from .drive import resolve_corpus_path
+from .final_gate import final_dataset_gate
 from .io_utils import IncrementalJsonlWriter, atomic_write_json, atomic_write_jsonl, iter_jsonl, read_jsonl
-from .mix import DEFAULT_MIX_RATIOS, mix_sources
+from .mix import DEFAULT_MIX_RATIOS, mix_capacity_report, mix_sources
 from .retrieval import FixtureRetriever, PrecomputedRetriever, PrecomputedToolRetriever, ProjectRetriever
-from .split import source_groups, split_trajectories
+from .split import TrajectorySplits, source_groups, split_coverage_report, split_trajectories
 from .stats import dataset_stats
 from .teacher.enhance import DEFAULT_TEACHER_TASKS, enhance_rows
 from .teacher.local_hf import LocalHFTeacher
@@ -205,6 +207,7 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
         "written": writer.written,
         "resume_skipped": writer.skipped,
         "rejected": len(rejected),
+        "rejected_by_reason": dict(sorted(Counter(str(item.get("reason") or "unknown") for item in rejected).items())),
         "split": resolved_split,
         "max_attempts": max_attempts,
         "hit_max_attempts": hit_max_attempts,
@@ -368,6 +371,23 @@ def _audit_command(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def _final_gate_command(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("transformers is required for the final tokenizer safety gate") from exc
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=args.trust_remote_code)
+    splits = TrajectorySplits(
+        train=read_jsonl(args.train_file),
+        validation=read_jsonl(args.validation_file),
+        test=read_jsonl(args.test_file),
+    )
+    report = final_dataset_gate(splits, tokenizer=tokenizer, max_seq_length=args.max_seq_length)
+    if args.output:
+        atomic_write_json(args.output, report)
+    return report
+
+
 def _validate_command(args: argparse.Namespace) -> dict[str, Any]:
     result = validate_rows(iter_jsonl(args.input))
     if args.output:
@@ -381,6 +401,7 @@ def _mix_command(args: argparse.Namespace) -> dict[str, Any]:
     paths = _key_value(args.input)
     ratios = _key_value(args.ratio, value_type=float) if args.ratio else DEFAULT_MIX_RATIOS
     sources = {name: read_jsonl(path) for name, path in paths.items()}
+    capacity = mix_capacity_report(sources, ratios, requested_total=args.max_samples)
     mixed = mix_sources(sources, ratios, seed=args.seed, max_total=args.max_samples)
     deduped = deduplicate(mixed)
     validation = validate_rows(deduped.rows)
@@ -389,7 +410,10 @@ def _mix_command(args: argparse.Namespace) -> dict[str, Any]:
         atomic_write_jsonl(args.output, validation.valid)
         atomic_write_jsonl(args.rejected_output or str(Path(args.output).with_name("rejected.jsonl")), rejected)
         atomic_write_json(str(Path(args.output).with_suffix(".stats.json")), dataset_stats(validation.valid))
-    return {"mixed": len(mixed), "valid": len(validation.valid), "rejected": len(rejected), "dry_run": args.dry_run}
+    return {
+        "mixed": len(mixed), "valid": len(validation.valid), "rejected": len(rejected),
+        "source_capacity": capacity, "dry_run": args.dry_run,
+    }
 
 
 def _split_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -411,6 +435,7 @@ def _split_command(args: argparse.Namespace) -> dict[str, Any]:
             name: sorted({group for row in getattr(splits, name) for group in source_groups(row)})
             for name in ("train", "validation", "test")
         },
+        "coverage": split_coverage_report(splits),
     }
     if not args.dry_run:
         atomic_write_jsonl(output_dir / "train.jsonl", splits.train)
@@ -418,7 +443,10 @@ def _split_command(args: argparse.Namespace) -> dict[str, Any]:
         atomic_write_jsonl(output_dir / "test.jsonl", splits.test)
         atomic_write_json(output_dir / "dataset_stats.json", stats)
         atomic_write_json(output_dir / "manifest.json", manifest)
-    return {**manifest["rows"], "output_dir": str(output_dir), "dry_run": args.dry_run}
+    return {
+        **manifest["rows"], "coverage": manifest["coverage"],
+        "output_dir": str(output_dir), "dry_run": args.dry_run,
+    }
 
 
 def _build_all(args: argparse.Namespace) -> dict[str, Any]:
@@ -434,6 +462,7 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
         }
     intermediate = output_dir / "intermediate"
     normalized_paths: dict[str, Path] = {}
+    normalization_reports: dict[str, dict[str, Any]] = {}
     for source in PUBLIC_SOURCES:
         namespace = argparse.Namespace(**vars(args))
         namespace.source = source
@@ -447,18 +476,20 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
         namespace.include_reasoning = args.include_reasoning
         namespace.history_mode = args.history_mode
         namespace.history_preferred_only = args.history_preferred_only
-        _normalize_public(namespace)
+        normalization_report = _normalize_public(namespace)
         canonical_source = {
             "agent_flan": "agent_flan",
             "multihop": "multi_hop_function_calling",
             "vietnam_history": "vietnam_history_200k",
         }[source]
         normalized_paths[canonical_source] = Path(namespace.output)
+        normalization_reports[canonical_source] = normalization_report
     custom_args = argparse.Namespace(**vars(args))
     _build_custom(custom_args)
     normalized_paths["custom_history"] = output_dir / "custom_history.jsonl"
     ratios = json.loads(Path(args.mix_config).read_text(encoding="utf-8"))
     sources = {name: read_jsonl(path) for name, path in normalized_paths.items()}
+    capacity = mix_capacity_report(sources, ratios, requested_total=args.max_samples)
     mixed = mix_sources(sources, ratios, seed=args.seed, max_total=args.max_samples)
     deduped = deduplicate(mixed)
     validated = validate_rows(deduped.rows)
@@ -476,7 +507,11 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
         dry_run=False,
     )
     split_result = _split_command(split_args)
-    return {"normalized": {key: str(value) for key, value in normalized_paths.items()}, "rejected": len(rejected), **split_result}
+    return {
+        "normalized": {key: str(value) for key, value in normalized_paths.items()},
+        "public_normalization": normalization_reports,
+        "rejected": len(rejected), "source_capacity": capacity, **split_result,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -594,6 +629,15 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--max-seq-length", type=_positive, default=8192)
     audit.add_argument("--trust-remote-code", action=argparse.BooleanOptionalAction, default=True)
 
+    gate = subparsers.add_parser("gate-final", help="Run all deterministic all-split GO-TRAIN gates.")
+    gate.add_argument("--train-file", required=True)
+    gate.add_argument("--validation-file", required=True)
+    gate.add_argument("--test-file", required=True)
+    gate.add_argument("--tokenizer", required=True)
+    gate.add_argument("--max-seq-length", type=_positive, default=4096)
+    gate.add_argument("--trust-remote-code", action=argparse.BooleanOptionalAction, default=True)
+    gate.add_argument("--output", default=None)
+
     all_parser = subparsers.add_parser("build-all", help="Normalize, build, mix, validate, deduplicate, and split.")
     _add_corpus_arguments(all_parser)
     all_parser.add_argument("--output-dir", required=True)
@@ -654,12 +698,14 @@ def main(argv: list[str] | None = None) -> int:
         result = _enhance_teacher(args)
     elif args.command == "audit":
         result = _audit_command(args)
+    elif args.command == "gate-final":
+        result = _final_gate_command(args)
     elif args.command == "build-all":
         result = _build_all(args)
     else:
         raise AssertionError(args.command)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if not (args.command == "audit" and not result.get("valid", True)) else 2
+    return 0 if not (args.command in {"audit", "gate-final"} and not result.get("valid", True)) else 2
 
 
 if __name__ == "__main__":

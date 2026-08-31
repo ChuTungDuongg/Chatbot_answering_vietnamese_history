@@ -5,6 +5,8 @@ import math
 from collections import Counter
 from typing import Any, Iterable
 
+from .adapters.agent_flan import contains_agent_flan_action_syntax, contains_agent_flan_thought_target
+from .adapters.vietnam_history import canonical_analysis_messages_remaining
 from .builders.custom_history import (
     classify_subject,
     compare_subjects_compatible,
@@ -15,7 +17,7 @@ from .builders.custom_history import (
 )
 from .citations import extract_evidence_citations
 from .dedup import first_user_question, normalized_question
-from .preprocess import analyze_truncation
+from .preprocess import IGNORE_INDEX, analyze_truncation, build_canonical_sft_example
 
 
 def _describe(values: list[int]) -> dict[str, float | int]:
@@ -37,8 +39,12 @@ def _tool_payloads(row: dict[str, Any]) -> list[list[dict[str, Any]]]:
         try:
             payload = json.loads(str(message.get("content") or ""))
         except json.JSONDecodeError:
-            payload = []
-        payloads.append(payload if isinstance(payload, list) else [])
+            continue
+        # Expected-empty semantics belong to the compact retrieval contract.
+        # Other canonical tools legitimately return plain text or JSON objects;
+        # treating those as an empty retrieval result creates false failures.
+        if isinstance(payload, list):
+            payloads.append(payload)
     return payloads
 
 
@@ -97,8 +103,31 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             else "unknown"
             for index, payload in enumerate(payloads)
         ]
+        if source_dataset == "vietnam_history_200k" and canonical_analysis_messages_remaining(row):
+            issue("vietnam_history_analysis_message_remaining", row)
+        if source_dataset == "agent_flan":
+            assistant_targets = [
+                str(message.get("content") or "")
+                for message in row.get("messages") or []
+                if isinstance(message, dict)
+                and message.get("role") == "assistant"
+                and not message.get("tool_calls")
+            ]
+            if any(contains_agent_flan_action_syntax(content) for content in assistant_targets):
+                issue("agent_flan_literal_action_without_tools", row)
+            if any(contains_agent_flan_thought_target(content) for content in assistant_targets):
+                issue("agent_flan_thought_target", row)
 
         def audit_subject_record(title: str, subject_type: str, *, secondary: bool) -> dict[str, Any]:
+            identity_key = "secondary_subject_identity" if secondary else "primary_subject_identity"
+            identity = provenance.get(identity_key)
+            if isinstance(identity, dict):
+                identity_metadata = identity.get("metadata")
+                return {
+                    "title": str(identity.get("title") or title),
+                    "text": str(identity.get("text") or ""),
+                    "metadata": identity_metadata if isinstance(identity_metadata, dict) else {},
+                }
             evidence = [
                 result
                 for role, payload in zip(roles, payloads)
@@ -106,6 +135,24 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 for result in payload
                 if isinstance(result, dict)
             ]
+            metadata: dict[str, Any] = {"subject_type": subject_type}
+            for field in (
+                "people", "events", "documents", "organizations", "states",
+                "dynasties", "locations", "dates", "topics", "aliases",
+                "alternative_names", "other_names",
+            ):
+                values: list[Any] = []
+                for result in evidence:
+                    result_metadata = result.get("metadata")
+                    if not isinstance(result_metadata, dict):
+                        continue
+                    value = result_metadata.get(field)
+                    if isinstance(value, list):
+                        values.extend(value)
+                    elif value not in (None, ""):
+                        values.append(value)
+                if values:
+                    metadata[field] = list(dict.fromkeys(str(value) for value in values))
             return {
                 "title": title,
                 "text": " ".join(str(result.get("text") or "") for result in evidence),
@@ -113,7 +160,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                     (result.get("history_score") for result in evidence if isinstance(result.get("history_score"), (int, float))),
                     default=None,
                 ),
-                "metadata": {"subject_type": subject_type},
+                "metadata": metadata,
             }
 
         def builder_confirmed_domain(*, secondary: bool) -> bool:
@@ -359,6 +406,8 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
         "final_answer_target_mismatch", "compare_target_contamination",
         "observation_facet_mismatch", "final_answer_facet_mismatch",
         "domain_mismatch",
+        "vietnam_history_analysis_message_remaining",
+        "agent_flan_literal_action_without_tools", "agent_flan_thought_target",
     }
     strict_violations = sum(issue_counts[name] for name in strict_issue_names)
     return {
@@ -390,8 +439,13 @@ def tokenizer_audit(
 ) -> dict[str, Any]:
     token_counts: list[int] = []
     too_long = user_lost = tool_calls_lost = assistant_lost = final_lost = all_lost = 0
+    zero_supervised = preprocessing_errors = 0
     for row in rows:
-        report = analyze_truncation(tokenizer, row, max_length=max_seq_length)
+        try:
+            report = analyze_truncation(tokenizer, row, max_length=max_seq_length)
+        except Exception:
+            preprocessing_errors += 1
+            continue
         token_counts.append(int(report["total_tokens"]))
         too_long += int(report["truncated"])
         user_lost += int(report["initial_user_lost"])
@@ -399,6 +453,12 @@ def tokenizer_audit(
         assistant_lost += int(report["lost_assistant_targets"] > 0)
         final_lost += int(report["final_assistant_lost"])
         all_lost += int(report["all_assistant_supervision_lost"])
+        try:
+            feature = build_canonical_sft_example(tokenizer, row, max_length=max_seq_length)
+        except Exception:
+            preprocessing_errors += 1
+        else:
+            zero_supervised += int(not any(label != IGNORE_INDEX for label in feature["labels"]))
     return {
         "rendered_tokens": _describe(token_counts),
         "rows_over_max_seq_length": too_long,
@@ -407,5 +467,7 @@ def tokenizer_audit(
         "rows_any_assistant_supervision_lost": assistant_lost,
         "rows_final_assistant_supervision_lost": final_lost,
         "rows_all_assistant_supervision_lost": all_lost,
+        "rows_zero_supervised_tokens": zero_supervised,
+        "preprocessing_errors": preprocessing_errors,
         "max_seq_length": max_seq_length,
     }
