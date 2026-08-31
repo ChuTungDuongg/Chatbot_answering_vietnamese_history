@@ -235,7 +235,7 @@ def test_agent_flan_singular_conversation_and_provenance_bloat_fix():
     assert cli.PUBLIC_SOURCE_DEFAULT_SPLITS["agent_flan"] == "agent_instruct_react"
 
 
-def test_build_all_resolves_source_specific_default_splits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_build_all_uses_agent_pool_and_other_source_default_splits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     corpus = write_corpus(tmp_path / "corpus.jsonl", [record("seed", "Chiến dịch Seed", "event")])
     seen: dict[str, str] = {}
 
@@ -264,7 +264,7 @@ def test_build_all_resolves_source_specific_default_splits(monkeypatch: pytest.M
     ])
     cli._build_all(args)
     assert seen == {
-        "agent_flan": "agent_instruct_react",
+        "agent_flan": "auto",
         "multihop": "train",
         "vietnam_history": "train",
     }

@@ -20,7 +20,7 @@ from .dedup import deduplicate, first_user_question, normalized_question
 from .drive import resolve_corpus_path
 from .final_gate import final_dataset_gate
 from .io_utils import IncrementalJsonlWriter, atomic_write_json, atomic_write_jsonl, iter_jsonl, read_jsonl
-from .mix import DEFAULT_MIX_RATIOS, mix_capacity_report, mix_sources
+from .mix import DEFAULT_MIX_RATIOS, agent_flan_pool_gate, mix_capacity_report, mix_sources
 from .retrieval import FixtureRetriever, PrecomputedRetriever, PrecomputedToolRetriever, ProjectRetriever
 from .split import TrajectorySplits, source_groups, split_coverage_report, split_trajectories
 from .stats import dataset_stats
@@ -39,6 +39,11 @@ PUBLIC_SOURCE_DEFAULT_SPLITS = {
     "multihop": "train",
     "vietnam_history": "train",
 }
+AGENT_FLAN_COMPATIBLE_SPLITS = (
+    "agent_instruct_react",
+    "toolbench_react_10p",
+)
+PUBLIC_POOL_STATE_VERSION = 1
 
 
 def _positive(value: str) -> int:
@@ -84,7 +89,18 @@ def _corpus(args: argparse.Namespace, *, must_exist: bool = True) -> Path:
     )
 
 
-def _public_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
+def _resolved_public_splits(args: argparse.Namespace) -> tuple[str, ...]:
+    selected = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
+    if selected != "auto":
+        return (selected,)
+    if args.source != "agent_flan":
+        raise ValueError("--split auto is currently supported only for Agent-FLAN")
+    if args.input_jsonl:
+        raise ValueError("--split auto cannot use one --input-jsonl; use mocked split loaders in tests")
+    return AGENT_FLAN_COMPATIBLE_SPLITS
+
+
+def _public_rows(args: argparse.Namespace, *, split: str) -> Iterable[dict[str, Any]]:
     if args.input_jsonl:
         yield from iter_jsonl(args.input_jsonl)
         return
@@ -93,7 +109,6 @@ def _public_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
         from datasets import load_dataset
     except ImportError as exc:
         raise RuntimeError("Install requirements-training.txt to load public Hugging Face datasets") from exc
-    split = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
     kwargs: dict[str, Any] = {
         "path": dataset_id,
         "split": split,
@@ -105,6 +120,37 @@ def _public_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
         kwargs["cache_dir"] = args.cache_dir
     dataset = load_dataset(**kwargs)
     yield from dataset
+
+
+def _public_pool_state(args: argparse.Namespace, splits: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "version": PUBLIC_POOL_STATE_VERSION,
+        "source": args.source,
+        "dataset_id": args.dataset_id or PUBLIC_SOURCES[args.source][0],
+        "dataset_config": args.dataset_config,
+        "splits": list(splits),
+    }
+
+
+def _prepare_public_pool_state(
+    args: argparse.Namespace, *, output: Path, rejected_path: Path, splits: tuple[str, ...],
+) -> Path:
+    state_path = output.with_name(f"{output.stem}.state.json")
+    expected = _public_pool_state(args, splits)
+    if args.resume and output.exists() and len(splits) > 1:
+        if not state_path.exists():
+            raise RuntimeError(
+                "Agent-FLAN pooled resume cannot verify the previous source definition. "
+                f"Regenerate only {output}, {rejected_path}, and {state_path}."
+            )
+        existing = json.loads(state_path.read_text(encoding="utf-8"))
+        if existing != expected:
+            raise RuntimeError(
+                "Agent-FLAN pooled resume source definition changed. "
+                f"Regenerate only {output}, {rejected_path}, and {state_path}."
+            )
+    atomic_write_json(state_path, expected)
+    return state_path
 
 
 def _make_retriever(args: argparse.Namespace, corpus: Path | None = None):
@@ -130,6 +176,7 @@ def _make_retriever(args: argparse.Namespace, corpus: Path | None = None):
 def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
     _, adapter = PUBLIC_SOURCES[args.source]
     resolved_split = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
+    resolved_splits = _resolved_public_splits(args)
     output = Path(args.output)
     rejected_path = Path(args.rejected_output or output.with_name(f"{output.stem}.rejected.jsonl"))
     if args.dry_run:
@@ -140,79 +187,147 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
             "max_samples": args.max_samples,
             "max_attempts": getattr(args, "max_attempts", None),
             "split": resolved_split,
+            "source_splits": list(resolved_splits),
             "output": str(output),
             "no_model_or_dataset_loaded": True,
         }
+    state_path = _prepare_public_pool_state(
+        args, output=output, rejected_path=rejected_path, splits=resolved_splits,
+    )
     retriever = None
     rejected: list[dict[str, Any]] = []
     attempted = 0
     seen_questions: set[str] = set()
+    existing_rows = 0
     if args.resume and output.exists():
+        existing = list(iter_jsonl(output))
+        existing_rows = len(existing)
         seen_questions = {
-            normalized_question(first_user_question(row)) for row in iter_jsonl(output)
+            key for row in existing
+            if (key := normalized_question(first_user_question(row)))
         }
     max_attempts = getattr(args, "max_attempts", None) or max(args.max_samples * 10, args.max_samples + 100)
-    hit_max_attempts = False
+    source_breakdown: dict[str, dict[str, Any]] = {
+        split: {
+            "attempted": 0, "written": 0, "rejected": 0,
+            "resume_skipped": 0, "scanned": False, "source_exhausted": False,
+            "rejected_by_reason": {},
+        }
+        for split in resolved_splits
+    }
+    stop_reason: str | None = None
+    writer: IncrementalJsonlWriter
     try:
         if args.source == "vietnam_history" and args.history_mode == "rag_grounded":
             retriever = _make_retriever(args, _corpus(args))
         with IncrementalJsonlWriter(output, resume=args.resume, checkpoint_every=args.checkpoint_every) as writer:
-            existing = len(writer.completed_ids)
-            target_new = max(0, args.max_samples - existing)
-            raw_rows = _public_rows(args) if target_new else ()
-            for index, raw_row in enumerate(raw_rows):
-                if writer.written >= target_new or attempted >= max_attempts:
+            if existing_rows + writer.written >= args.max_samples:
+                stop_reason = "target_reached"
+            for source_split in resolved_splits:
+                if stop_reason:
                     break
-                attempted += 1
-                try:
-                    if args.source == "agent_flan":
-                        row = adapter(raw_row, index=index, split=resolved_split, include_reasoning=args.include_reasoning)
-                    elif args.source == "multihop":
-                        row = adapter(raw_row, index=index, split=resolved_split, include_reasoning=args.include_reasoning)
-                    else:
-                        retrieval_results = None
-                        if retriever is not None:
-                            raw_messages = semantic_messages(get_messages(raw_row), include_reasoning=False)
-                            question = next(str(item["content"]) for item in raw_messages if item["role"] == "user")
-                            retrieval_results = retriever.search(question, top_k=args.top_k)
-                        row = adapter(
-                            raw_row,
-                            index=index,
-                            split=resolved_split,
-                            mode=args.history_mode,
-                            retrieval_results=retrieval_results,
-                            preferred_only=args.history_preferred_only,
-                        )
-                    if str(row.get("id", "")) in writer.completed_ids:
-                        writer.write(row)
-                        continue
-                    question_key = normalized_question(first_user_question(row))
-                    if question_key and question_key in seen_questions:
-                        raise AdapterError("duplicate normalized user question")
-                    validation = validate_rows([row])
-                    if validation.rejected:
-                        raise AdapterError(validation.rejected[0]["reason"])
-                    writer.write(row)
-                    if question_key:
-                        seen_questions.add(question_key)
-                except (AdapterError, ValueError, KeyError, TypeError) as exc:
-                    rejected.append({"id": raw_row.get("id"), "reason": str(exc), "source_index": index})
-            hit_max_attempts = attempted >= max_attempts and writer.written < target_new
+                breakdown = source_breakdown[source_split]
+                breakdown["scanned"] = True
+                source_reasons: Counter[str] = Counter()
+                exhausted = True
+                for index, raw_row in enumerate(_public_rows(args, split=source_split)):
+                    if existing_rows + writer.written >= args.max_samples:
+                        stop_reason = "target_reached"
+                        exhausted = False
+                        break
+                    if attempted >= max_attempts:
+                        stop_reason = "max_attempts"
+                        exhausted = False
+                        break
+                    attempted += 1
+                    breakdown["attempted"] += 1
+                    try:
+                        if args.source == "agent_flan":
+                            row = adapter(
+                                raw_row, index=index, split=source_split,
+                                include_reasoning=args.include_reasoning,
+                            )
+                        elif args.source == "multihop":
+                            row = adapter(
+                                raw_row, index=index, split=source_split,
+                                include_reasoning=args.include_reasoning,
+                            )
+                        else:
+                            retrieval_results = None
+                            if retriever is not None:
+                                raw_messages = semantic_messages(get_messages(raw_row), include_reasoning=False)
+                                question = next(str(item["content"]) for item in raw_messages if item["role"] == "user")
+                                retrieval_results = retriever.search(question, top_k=args.top_k)
+                            row = adapter(
+                                raw_row,
+                                index=index,
+                                split=source_split,
+                                mode=args.history_mode,
+                                retrieval_results=retrieval_results,
+                                preferred_only=args.history_preferred_only,
+                            )
+                        if str(row.get("id", "")) in writer.completed_ids:
+                            writer.write(row)
+                            breakdown["resume_skipped"] += 1
+                            continue
+                        question_key = normalized_question(first_user_question(row))
+                        if question_key and question_key in seen_questions:
+                            raise AdapterError("duplicate normalized user question")
+                        validation = validate_rows([row])
+                        if validation.rejected:
+                            raise AdapterError(validation.rejected[0]["reason"])
+                        if writer.write(row):
+                            breakdown["written"] += 1
+                        if question_key:
+                            seen_questions.add(question_key)
+                    except (AdapterError, ValueError, KeyError, TypeError) as exc:
+                        reason = str(exc)
+                        rejected.append({
+                            "id": raw_row.get("id"), "reason": reason,
+                            "source_index": index, "source_split": source_split,
+                        })
+                        breakdown["rejected"] += 1
+                        source_reasons[reason] += 1
+                breakdown["source_exhausted"] = exhausted
+                breakdown["rejected_by_reason"] = dict(sorted(source_reasons.items()))
     finally:
         if hasattr(retriever, "close"):
             retriever.close()
     atomic_write_jsonl(rejected_path, rejected)
+    pool_rows = existing_rows + writer.written
+    target_reached = pool_rows >= args.max_samples
+    hit_max_attempts = stop_reason == "max_attempts" and not target_reached
+    source_exhausted = stop_reason is None and all(
+        value["scanned"] and value["source_exhausted"] for value in source_breakdown.values()
+    )
+    final_max_samples = getattr(args, "final_max_samples", None)
+    final_mix_gate = (
+        agent_flan_pool_gate(
+            pool_rows, final_max_samples=final_max_samples, pool_target=args.max_samples,
+        )
+        if args.source == "agent_flan" and final_max_samples is not None else None
+    )
     return {
         "attempted": attempted,
-        "written": writer.written,
+        "written": pool_rows,
+        "written_this_run": writer.written,
+        "existing_rows": existing_rows,
         "resume_skipped": writer.skipped,
         "rejected": len(rejected),
         "rejected_by_reason": dict(sorted(Counter(str(item.get("reason") or "unknown") for item in rejected).items())),
         "split": resolved_split,
+        "source_splits": list(resolved_splits),
+        "source_breakdown": source_breakdown,
+        "pool_target": args.max_samples,
         "max_attempts": max_attempts,
         "hit_max_attempts": hit_max_attempts,
+        "source_exhausted": source_exhausted,
+        "target_reached": target_reached,
+        "stop_reason": stop_reason or ("source_exhausted" if source_exhausted else None),
+        "final_mix_gate": final_mix_gate,
         "output": str(output),
         "rejected_output": str(rejected_path),
+        "state_output": str(state_path),
     }
 
 
@@ -472,7 +587,8 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
         namespace.input_jsonl = None
         namespace.dataset_id = None
         namespace.dataset_config = None
-        namespace.split = None
+        namespace.split = "auto" if source == "agent_flan" else None
+        namespace.final_max_samples = args.max_samples
         namespace.include_reasoning = args.include_reasoning
         namespace.history_mode = args.history_mode
         namespace.history_preferred_only = args.history_preferred_only
@@ -537,6 +653,10 @@ def build_parser() -> argparse.ArgumentParser:
     public.add_argument("--cache-dir", default=None)
     public.add_argument("--max-samples", type=_positive, default=1000)
     public.add_argument("--max-attempts", type=_positive, default=None)
+    public.add_argument(
+        "--final-max-samples", type=_positive, default=None,
+        help="Optional final mix size; Agent-FLAN then hard-gates its required ratio capacity.",
+    )
     public.add_argument("--include-reasoning", action=argparse.BooleanOptionalAction, default=False)
     public.add_argument("--history-mode", choices=("style_only", "rag_grounded"), default="style_only")
     public.add_argument("--history-preferred-only", action=argparse.BooleanOptionalAction, default=False)
@@ -705,7 +825,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         raise AssertionError(args.command)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if not (args.command in {"audit", "gate-final"} and not result.get("valid", True)) else 2
+    invalid_report = args.command in {"audit", "gate-final"} and not result.get("valid", True)
+    final_mix_gate = result.get("final_mix_gate")
+    invalid_public_capacity = (
+        args.command == "normalize-public"
+        and isinstance(final_mix_gate, dict)
+        and not final_mix_gate.get("valid", False)
+    )
+    return 2 if invalid_report or invalid_public_capacity else 0
 
 
 if __name__ == "__main__":

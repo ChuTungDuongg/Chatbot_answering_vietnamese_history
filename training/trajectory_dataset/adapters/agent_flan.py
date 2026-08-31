@@ -16,6 +16,12 @@ from .common import (
 
 
 DATASET_ID = "internlm/Agent-FLAN"
+DEFAULT_REACT_SPLIT = "agent_instruct_react"
+TOOLBENCH_REACT_SPLIT = "toolbench_react_10p"
+TOOLBENCH_SYSTEM_PROMPT = (
+    "You are a tool-using assistant. Use the canonical tools when needed and "
+    "provide a direct final answer after observing their results."
+)
 
 ACTION_HEADER = re.compile(r"(?im)^\s*action\s*:\s*\S+")
 KNOWN_ACTION_CALL = re.compile(
@@ -133,6 +139,123 @@ def _tool_definition(name: str, argument_names: list[str]) -> dict[str, Any]:
     }
 
 
+def _normalized_field_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
+def _toolbench_field(payload: dict[str, Any], names: set[str]) -> Any:
+    for key, value in payload.items():
+        if _normalized_field_name(key) in names:
+            return value
+    return None
+
+
+def _canonical_tool_name(raw_name: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_name).strip("_")
+    if not name:
+        raise AdapterError("Agent-FLAN ToolBench action has no canonical-safe tool name")
+    return name
+
+
+def _toolbench_json_transcript(
+    raw_messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
+    """Convert the explicit JSON action protocol in ToolBench ReAct rows.
+
+    Only strict JSON objects with one action, object arguments, an immediately
+    paired user observation, and an explicit final-answer action are accepted.
+    Reasoning fields (``cot``, ``InnerThought`` and variants) are ignored.
+    """
+    messages: list[dict[str, Any]] = [{"role": "system", "content": TOOLBENCH_SYSTEM_PROMPT}]
+    tool_arguments: dict[str, list[str]] = {}
+    raw_names_by_canonical: dict[str, str] = {}
+    pending: tuple[str, str] | None = None
+    initial_user_seen = False
+    final_seen = False
+    call_number = 0
+
+    for index, raw in enumerate(raw_messages):
+        if not isinstance(raw, dict):
+            raise AdapterError(f"message {index} is not an object")
+        role = str(raw.get("role") or raw.get("from") or "").casefold()
+        role = {"human": "user", "gpt": "assistant"}.get(role, role)
+        content = str(raw.get("content", raw.get("value")) or "").strip()
+        if role == "system":
+            if initial_user_seen or pending is not None or final_seen:
+                raise AdapterError("Agent-FLAN ToolBench transcript contains a late system turn")
+            continue
+        if role == "user":
+            if not initial_user_seen:
+                if not content:
+                    raise AdapterError("Agent-FLAN ToolBench transcript has an empty initial user message")
+                messages.append({"role": "user", "content": content})
+                initial_user_seen = True
+                continue
+            if pending is None or final_seen:
+                raise AdapterError("Agent-FLAN ToolBench observation has no safely paired action")
+            if not content:
+                raise AdapterError("Agent-FLAN ToolBench observation is empty")
+            call_id, tool_name = pending
+            messages.append({
+                "role": "tool", "name": tool_name,
+                "tool_call_id": call_id, "content": content,
+            })
+            pending = None
+            continue
+        if role != "assistant":
+            raise AdapterError(f"message {index} has unsupported ToolBench role {role!r}")
+        if not initial_user_seen:
+            raise AdapterError("Agent-FLAN ToolBench transcript has no leading user message")
+        if pending is not None or final_seen:
+            raise AdapterError("Agent-FLAN ToolBench actions/observations are not safely paired")
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AdapterError("Agent-FLAN ToolBench assistant action is not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise AdapterError("Agent-FLAN ToolBench assistant action must be a JSON object")
+        raw_action = _toolbench_field(payload, {"action", "command"})
+        if not isinstance(raw_action, str) or not raw_action.strip():
+            raise AdapterError("Agent-FLAN ToolBench assistant action is missing an action name")
+        arguments = _toolbench_field(payload, {"arguments", "parameters", "actioninput"})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise AdapterError("Agent-FLAN ToolBench action arguments must be an object")
+        action_key = _normalized_field_name(raw_action)
+        if action_key in {"finalaction", "finalanswer", "finish", "finishaction"}:
+            return_type = _toolbench_field(arguments, {"returntype"})
+            if return_type is not None and _normalized_field_name(return_type) != "giveanswer":
+                raise AdapterError("Agent-FLAN ToolBench final action does not provide an answer")
+            answer = _toolbench_field(arguments, {"finalanswer", "answer"})
+            if not isinstance(answer, str) or not answer.strip():
+                raise AdapterError("Agent-FLAN ToolBench final action has no final answer")
+            messages.append({"role": "assistant", "content": answer.strip()})
+            final_seen = True
+            continue
+
+        tool_name = _canonical_tool_name(raw_action)
+        previous_raw_name = raw_names_by_canonical.setdefault(tool_name, raw_action)
+        if previous_raw_name != raw_action:
+            raise AdapterError(
+                f"Agent-FLAN ToolBench tool-name collision: {previous_raw_name!r} and {raw_action!r}"
+            )
+        call_number += 1
+        call_id = f"call_agent_flan_toolbench_{call_number:04d}"
+        messages.append({
+            "role": "assistant", "content": None,
+            "tool_calls": [tool_call(call_id, tool_name, arguments)],
+        })
+        pending = (call_id, tool_name)
+        names = tool_arguments.setdefault(tool_name, [])
+        names.extend(key for key in arguments if key not in names)
+
+    if pending is not None or not final_seen:
+        raise AdapterError("Agent-FLAN ToolBench transcript lacks a paired observation or Final Answer")
+    tools = [_tool_definition(name, arguments) for name, arguments in tool_arguments.items()]
+    return messages, tools, {raw: canonical for canonical, raw in raw_names_by_canonical.items()}
+
+
 def _final_answer_only(content: Any) -> str:
     value = str(content or "").strip()
     matches = list(FINAL_ANSWER_HEADER.finditer(value))
@@ -232,17 +355,23 @@ def normalize_agent_flan(
     if raw_tools and not isinstance(raw_tools, list):
         raise AdapterError("Agent-FLAN tools/functions must be a list")
     raw_messages = get_messages(row)
+    converted_toolbench = split == TOOLBENCH_REACT_SPLIT
     has_literal_actions = any(
         isinstance(message, dict)
         and str(message.get("role") or message.get("from") or "").casefold() in {"assistant", "gpt"}
         and contains_agent_flan_action_syntax(message.get("content", message.get("value")))
         for message in raw_messages
     )
-    converted_react = has_literal_actions and not any(
+    converted_react = not converted_toolbench and has_literal_actions and not any(
         isinstance(message, dict) and (message.get("tool_calls") or message.get("function_call"))
         for message in raw_messages
     )
-    if converted_react:
+    tool_name_map: dict[str, str] = {}
+    if converted_toolbench:
+        if raw_tools:
+            raise AdapterError("ToolBench JSON actions with separate tool definitions are ambiguous")
+        messages, tools, tool_name_map = _toolbench_json_transcript(raw_messages)
+    elif converted_react:
         if raw_tools:
             raise AdapterError("textual Agent-FLAN actions with separate tool definitions are ambiguous")
         messages, tools = _react_transcript(raw_messages)
@@ -266,8 +395,11 @@ def normalize_agent_flan(
             "Agent-FLAN row contains semantic tool calls but no matching tool definitions: "
             f"{sorted(called_names - defined_names)}"
         )
-    return make_trajectory(
-        trajectory_id=trajectory_id(DATASET_ID, row, index),
+    # Keep legacy IDs stable for the original default split while namespacing
+    # additional pool splits so source-local IDs/indices cannot collide.
+    identity_dataset = DATASET_ID if split == DEFAULT_REACT_SPLIT else f"{DATASET_ID}:{split}"
+    trajectory = make_trajectory(
+        trajectory_id=trajectory_id(identity_dataset, row, index),
         source_dataset="agent_flan",
         task_type="generic_agent_tool_behavior" if called_names else "generic_no_tool_behavior",
         messages=messages,
@@ -281,8 +413,15 @@ def normalize_agent_flan(
             license_name="Apache-2.0",
             transformations=[
                 "roles_to_canonical",
-                "text_actions_to_canonical_tools" if converted_react else "structured_tools_preserved",
+                (
+                    "toolbench_json_actions_to_canonical_tools" if converted_toolbench
+                    else "text_actions_to_canonical_tools" if converted_react
+                    else "structured_tools_preserved"
+                ),
                 "reasoning_removed",
             ],
         ),
     )
+    if tool_name_map:
+        trajectory["provenance"]["tool_name_map"] = tool_name_map
+    return trajectory

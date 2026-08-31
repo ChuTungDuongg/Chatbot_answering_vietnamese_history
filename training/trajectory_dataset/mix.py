@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from collections import Counter
 from typing import Any
@@ -11,6 +12,7 @@ DEFAULT_MIX_RATIOS = {
     "agent_flan": 0.12,
     "vietnam_history_200k": 0.16,
 }
+AGENT_FLAN_POOL_TARGET = 700
 
 
 def normalize_ratios(ratios: dict[str, float]) -> dict[str, float]:
@@ -33,7 +35,12 @@ def mix_sources(
     missing = [name for name in weights if not sources.get(name)]
     if missing:
         raise ValueError(f"mix sources have no rows: {missing}")
-    feasible_total = min(int(len(sources[name]) / weight) for name, weight in weights.items())
+    # Avoid losing an exactly feasible row to binary floating-point underflow
+    # (for example, 2200 / 0.55 can evaluate just below 4000).
+    feasible_total = min(
+        math.floor((len(sources[name]) / weight) + 1e-9)
+        for name, weight in weights.items()
+    )
     target_total = feasible_total if max_total is None else min(feasible_total, max(max_total, 0))
     if target_total <= 0:
         return []
@@ -54,6 +61,47 @@ def mix_sources(
 
 def source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     return dict(Counter(str(row.get("source_dataset") or "unknown") for row in rows))
+
+
+def required_source_rows(
+    source: str, *, final_max_samples: int, ratios: dict[str, float] = DEFAULT_MIX_RATIOS,
+) -> int:
+    """Return a conservative source capacity gate for a requested final mix."""
+    if final_max_samples < 0:
+        raise ValueError("final_max_samples must be non-negative")
+    weights = normalize_ratios(ratios)
+    if source not in weights:
+        raise ValueError(f"source {source!r} is absent from mix ratios")
+    return math.ceil(final_max_samples * weights[source])
+
+
+def agent_flan_pool_gate(
+    available_rows: int,
+    *,
+    final_max_samples: int,
+    pool_target: int = AGENT_FLAN_POOL_TARGET,
+    ratios: dict[str, float] = DEFAULT_MIX_RATIOS,
+) -> dict[str, Any]:
+    required = required_source_rows(
+        "agent_flan", final_max_samples=final_max_samples, ratios=ratios,
+    )
+    preferred_reached = available_rows >= pool_target
+    quota_satisfied = available_rows >= required
+    dedup_margin = max(20, math.ceil(required * 0.10)) if required else 0
+    degraded_minimum = required + dedup_margin
+    degraded_ready = available_rows >= degraded_minimum
+    return {
+        "valid": preferred_reached or degraded_ready,
+        "available_rows": available_rows,
+        "pool_target": pool_target,
+        "preferred_target_reached": preferred_reached,
+        "degraded_pool": degraded_ready and not preferred_reached,
+        "final_max_samples": final_max_samples,
+        "final_required_rows": required,
+        "final_mix_quota_satisfied": quota_satisfied,
+        "dedup_margin_rows": dedup_margin,
+        "degraded_minimum_rows": degraded_minimum,
+    }
 
 
 def mix_capacity_report(

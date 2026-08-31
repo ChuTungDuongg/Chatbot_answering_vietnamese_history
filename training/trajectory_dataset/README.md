@@ -25,7 +25,7 @@ V1 supports three bounded public sources plus custom corpus-grounded rows:
 
 These datasets do not share one raw schema. Each has a separate adapter in `adapters/`; incompatible rows become rejected records with a reason. Original split, source metadata, row identity, transformations, and known license are preserved under `provenance`. Missing licenses stay `null`; the pipeline does not invent them.
 
-Agent-FLAN has heterogeneous subsets. The adapter accepts `messages`, `conversations`, and `conversation`; those raw conversation fields are excluded from `source_metadata` to avoid duplicating the transcript. Its default compatible split is `agent_instruct_react` (override with `--split`). Rows that contain structured calls but omit matching definitions are rejected. Textual ReAct traces are converted only when every action, observation, argument list, and terminal `Final Answer` can be paired deterministically. Environment commands or ambiguous syntax are rejected rather than emitted as `generic_no_tool_behavior`. `Thought:` text is never an Agent-FLAN assistant target, even if the legacy `--include-reasoning` flag is supplied.
+Agent-FLAN has heterogeneous subsets. The adapter accepts `messages`, `conversations`, and `conversation`; those raw conversation fields are excluded from `source_metadata` to avoid duplicating the transcript. The backward-compatible default is still `agent_instruct_react`. `--split auto` deterministically pools the two compatible ReAct sources, `agent_instruct_react` then `toolbench_react_10p`, with global ID/question deduplication. ToolBench's explicit JSON action/arguments, immediately following JSON observation, and explicit final-answer action are converted to canonical tools; its reasoning fields are discarded. TFLAN decomposition, negative, and instruction-only splits are not silently treated as equivalent tool trajectories. Textual ReAct traces are converted only when every action, observation, argument list, and terminal `Final Answer` can be paired deterministically. Environment commands, malformed SQL, or ambiguous syntax are rejected rather than emitted as `generic_no_tool_behavior`. `Thought:` text is never an Agent-FLAN assistant target, even if the legacy `--include-reasoning` flag is supplied.
 
 Vietnam-History filtering utilities favor causes, context, significance, comparison, summary, and multi-part explanation and can reject malformed or extreme-length answers. Source messages declared as `role=assistant, channel=analysis` are removed before canonical role conversion; `channel=final` remains the exact supervised answer and the drop is recorded in provenance. Do not normalize all 200K rows by default. `rag_grounded` is preferred when a compatible retriever or precomputed observation file is available; `style_only` is deliberately bounded in the final mix.
 
@@ -153,14 +153,15 @@ Disputed-claim trajectories can optionally include a project-named external step
 
 ## Build public sources separately
 
-Commands are bounded by `--max-samples`; they never request all rows by default. `--max-samples N` means up to N successfully written canonical rows, while `--max-attempts` bounds raw rows scanned (default `max(N*10, N+100)`). Reports distinguish attempted, written, rejected, resume-skipped, and whether the attempt limit was hit.
+Commands are bounded by `--max-samples`; they never request all rows by default. `--max-samples N` means up to N successfully written canonical rows, while `--max-attempts` bounds raw rows scanned (default `max(N*10, N+100)`). Reports separately expose `target_reached`, `source_exhausted`, `hit_max_attempts`, per-split attempts/writes/rejections, and rejection reasons. For Agent-FLAN, `--final-max-samples 4000` also calculates the 12% final requirement (480 rows). A documented degraded pool must additionally retain a 10%/minimum-20-row dedup margin (528 rows for this mix); reaching the preferred 700-row pool remains separately visible.
 
 ```powershell
 python -m training.trajectory_dataset.cli normalize-public `
   --source agent_flan `
-  --split agent_instruct_react `
-  --max-samples 2000 `
-  --max-attempts 20000 `
+  --split auto `
+  --max-samples 700 `
+  --max-attempts 10500 `
+  --final-max-samples 4000 `
   --cache-dir D:/hf-cache `
   --output D:/vn-history/trajectory_dataset_v1/intermediate/agent_flan.jsonl `
   --no-include-reasoning `
@@ -219,7 +220,9 @@ Validation checks roles, final answers, tool definitions, call/result ID consist
 
 ## Resume and checkpoints
 
-Public normalization and custom generation append incrementally. `--checkpoint-every N` flushes and fsyncs progress; `--resume` reads completed deterministic IDs and skips them. A stopped process therefore keeps all checkpointed rows and does not regenerate completed records.
+Public normalization and custom generation append incrementally. `--checkpoint-every N` flushes and fsyncs progress; `--resume` reads completed deterministic IDs and skips them. A stopped process therefore keeps all checkpointed rows and does not regenerate completed records. Pooled Agent-FLAN runs also store `agent_flan.state.json` with the exact ordered split definition and refuse a resume if it differs.
+
+An `agent_instruct_react`-only file produced before pooled-state tracking cannot be safely resumed as `--split auto`. Regenerate only `intermediate/agent_flan.jsonl`, `intermediate/agent_flan.rejected.jsonl`, and `intermediate/agent_flan.state.json`; keep custom-history and every other public intermediate file.
 
 Do not combine outputs from different generation configurations under one resumed file. Use a new output directory when changing task counts, seed, source revision, teacher, or retrieval backend.
 
