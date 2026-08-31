@@ -1177,55 +1177,6 @@ summary:focus-visible {
   overflow-x: auto;
 }
 
-.mode-selector {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.mode-selector button {
-  min-width: 0;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: var(--text-soft);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 720;
-}
-
-.mode-selector button:hover:not(:disabled),
-.mode-selector button.is-active {
-  border-color: var(--teal);
-  background: var(--teal-soft);
-  color: var(--teal);
-}
-
-.mode-selector button:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-.mode-selector svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-}
-
-.mode-selector span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .attachment-item {
   position: relative;
   width: 238px;
@@ -1345,7 +1296,7 @@ summary:focus-visible {
   position: relative;
   min-height: 60px;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  grid-template-columns: auto minmax(0, 1fr) 40px;
   align-items: end;
   gap: 5px;
   padding: 9px;
@@ -1354,6 +1305,119 @@ summary:focus-visible {
   background: var(--surface-raised);
   box-shadow: var(--shadow-md);
   transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.composer-leading-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.composer-mode-selector {
+  position: relative;
+}
+
+.composer-mode-trigger {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 7px 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10.5px;
+  font-weight: 750;
+}
+
+.composer-mode-trigger:hover:not(:disabled),
+.composer-mode-trigger[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text-soft);
+}
+
+.composer-mode-trigger:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.composer-mode-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.composer-mode-trigger svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 150ms ease;
+}
+
+.composer-mode-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.composer-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 0;
+  z-index: 25;
+  width: min(290px, calc(100vw - 34px));
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.composer-mode-menu button {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer-mode-menu button:hover,
+.composer-mode-menu button:focus-visible,
+.composer-mode-menu button.is-selected {
+  outline: 0;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.mode-option-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.mode-option-copy strong {
+  font-size: 11.5px;
+  font-weight: 760;
+}
+
+.mode-option-copy small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.composer-mode-menu > button > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--teal);
 }
 
 .chat-composer:focus-within {
@@ -2017,12 +2081,8 @@ summary:focus-visible {
     padding: 7px 8px 9px;
   }
 
-  .mode-selector {
-    grid-template-columns: 1fr;
-  }
-
   .chat-composer {
-    grid-template-columns: 38px minmax(0, 1fr) 38px;
+    grid-template-columns: auto minmax(0, 1fr) 38px;
     padding: 7px;
     border-radius: 14px;
   }
@@ -2031,6 +2091,23 @@ summary:focus-visible {
   .composer-submit {
     width: 38px;
     height: 38px;
+  }
+
+  .composer-mode-trigger {
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .composer-mode-trigger span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .chat-composer textarea {

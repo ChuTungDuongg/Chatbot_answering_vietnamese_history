@@ -10,6 +10,7 @@
 app/
 ├── main.py                 # lifespan, service/model/tool/orchestrator cache
 ├── config.py               # Pydantic environment settings + artifact paths
+├── chat_modes.py           # Fast/Hybrid/Agent enum + legacy API aliases
 ├── agents/                 # Research, Evidence, History, shared Qwen3 runtime
 ├── tools/                  # typed registry, request context và 6 tools
 ├── rag/
@@ -23,7 +24,10 @@ app/
 ├── chat/
 │   ├── store.py            # SQLite persistence
 │   └── attachments.py      # PDF/OCR/chunk/embed temporary corpus
-└── services/rag_service.py # artifact validation và cached model/index loading
+└── services/
+    ├── chat_mode_router.py # one app-level dispatch point
+    ├── fast_service.py     # bounded low-latency direct-RAG facade
+    └── rag_service.py      # artifact validation và cached model/index loading
 ```
 
 ## 🔁 Request flow
@@ -43,6 +47,16 @@ app/
 ```
 
 `/api/v1/chat/stream` là validated SSE: backend hoàn tất generation/guards trước, sau đó stream answer đã được chấp nhận. Đây không phải raw token stream.
+
+## 💬 User-facing chat modes
+
+| Mode | App path |
+|---|---|
+| `fast` | `FastChatService` → direct Hybrid retrieval/History answer path với tối đa 3 contexts. |
+| `hybrid` | Existing three-role pipeline: Hybrid retrieval → Research → Evidence → History. |
+| `agent` | `CentralAgent` chọn Fast cho câu hỏi đơn giản hoặc bounded three-role/tool path khi cần. |
+
+API cũ gửi `hybrid_rag` hoặc `agentic_rag` vẫn giữ đúng execution behavior cũ và được map lần lượt về `fast` và `hybrid`. `CentralAgent` là orchestration facade ở app layer, không phải model thứ tư.
 
 ## 🎚️ Runtime modes
 

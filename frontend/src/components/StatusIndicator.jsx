@@ -13,6 +13,8 @@ const STATUS_LABELS = {
   agentic_answering: "Đang soạn câu trả lời...",
   hybrid_retrieval: "Đang truy xuất kho sử liệu...",
   hybrid_answering: "Đang soạn câu trả lời...",
+  fast_retrieval: "Đang tìm nhanh trong kho sử liệu...",
+  fast_answering: "Đang chuẩn bị câu trả lời...",
   validated: "Đã kiểm tra câu trả lời",
   streaming: "Đang trả lời",
   cancelled: "Đã dừng tạo câu trả lời",

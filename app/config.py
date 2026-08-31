@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.chat_modes import ChatMode, normalize_chat_mode
 
 
 class Settings(BaseSettings):
@@ -41,7 +42,13 @@ class Settings(BaseSettings):
     max_page_fetches: int = 5
     web_search_provider: str = "local-only"
     web_search_api_key: str | None = None
-    default_inference_mode: Literal["hybrid_rag", "agentic_rag"] = "agentic_rag"
+    default_inference_mode: ChatMode = ChatMode.HYBRID
+    agent_max_tool_results: int = 10
+    agent_observation_char_budget: int = 24_000
+    agent_timeout_seconds: float = 120.0
+    agent_enable_web: bool = True
+    agent_enable_wikipedia: bool = True
+    agent_enable_document_search: bool = True
 
     # ========================================================
     # Conversation storage
@@ -80,6 +87,11 @@ class Settings(BaseSettings):
     @classmethod
     def empty_path_is_none(cls, value):
         return None if value in {None, ""} else value
+
+    @field_validator("default_inference_mode", mode="before")
+    @classmethod
+    def normalize_default_inference_mode(cls, value):
+        return normalize_chat_mode(value, default=ChatMode.HYBRID)
 
     # ========================================================
     # Parsed configuration

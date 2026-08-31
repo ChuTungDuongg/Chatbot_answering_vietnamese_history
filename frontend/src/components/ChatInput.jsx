@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Paperclip, Square } from "lucide-react";
+import ModeSelector from "./ModeSelector";
 
 const ACCEPTED_FILES = ".pdf,image/png,image/jpeg,image/webp";
 
@@ -9,6 +10,8 @@ function ChatInput({
   onSubmit,
   onStop,
   onFilesSelected,
+  mode,
+  onModeChange,
   isRunning,
   isUploading,
 }) {
@@ -71,16 +74,19 @@ function ChatInput({
         onChange={handleFileInput}
       />
 
-      <button
-        type="button"
-        className="icon-button composer-attach"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={isRunning || isUploading}
-        aria-label="Tải PDF hoặc hình ảnh"
-        title="Tải PDF hoặc hình ảnh"
-      >
-        {isUploading ? <LoaderCircle className="spin" /> : <Paperclip />}
-      </button>
+      <div className="composer-leading-actions">
+        <ModeSelector mode={mode} onModeChange={onModeChange} disabled={isRunning} />
+        <button
+          type="button"
+          className="icon-button composer-attach"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isRunning || isUploading}
+          aria-label="Tải PDF hoặc hình ảnh"
+          title="Tải PDF hoặc hình ảnh"
+        >
+          {isUploading ? <LoaderCircle className="spin" /> : <Paperclip />}
+        </button>
+      </div>
 
       <textarea
         ref={textareaRef}

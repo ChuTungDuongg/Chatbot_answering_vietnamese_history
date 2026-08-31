@@ -4,9 +4,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.chat_modes import ChatMode, normalize_chat_mode
+
 
 MessageRole = Literal["user", "assistant"]
-InferenceMode = Literal["hybrid_rag", "agentic_rag"]
+InferenceMode = ChatMode
 AttachmentStatus = Literal[
     "processing",
     "ready",
@@ -248,6 +250,11 @@ class ChatRequest(BaseModel):
     mode: InferenceMode | None = None
 
     debug: bool = False
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def normalize_mode(cls, value: Any) -> ChatMode | None:
+        return None if value is None else normalize_chat_mode(value)
 
 
 class ChatResponse(BaseModel):

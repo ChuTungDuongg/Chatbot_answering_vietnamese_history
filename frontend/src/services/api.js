@@ -1,3 +1,5 @@
+import { ChatMode } from "../config/chatModes";
+
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const CLIENT_ID_STORAGE_KEY = "vn-history-client-id";
 export const EVIDENCE_CONTRACT_FAILURE_MESSAGE = "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.";
@@ -142,7 +144,7 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
 export async function streamChat({
   conversationId,
   question,
-  mode = "agentic_rag",
+  mode = ChatMode.FAST,
   finalK = 6,
   debug = false,
   onEvent,

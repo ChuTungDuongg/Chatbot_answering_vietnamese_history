@@ -155,6 +155,8 @@ Disputed-claim trajectories can optionally include a project-named external step
 
 Commands are bounded by `--max-samples`; they never request all rows by default. `--max-samples N` means up to N successfully written canonical rows, while `--max-attempts` bounds raw rows scanned (default `max(N*10, N+100)`). Reports separately expose `target_reached`, `source_exhausted`, `hit_max_attempts`, per-split attempts/writes/rejections, and rejection reasons. For Agent-FLAN, `--final-max-samples 4000` also calculates the 12% final requirement (480 rows). A documented degraded pool must additionally retain a 10%/minimum-20-row dedup margin (528 rows for this mix); reaching the preferred 700-row pool remains separately visible.
 
+The tracked Colab source of truth is `notebooks/build_trajectory_dataset_colab_v4_4_fast_gpu.ipynb`. Its Cell 22 uses the pooled Agent-FLAN command and the shared `notebook_integration.py` helpers for targeted stale-state cleanup and the preferred/degraded capacity gate. The public smoke intentionally keeps an explicit single split so backward-compatible CLI usage remains exercised.
+
 ```powershell
 python -m training.trajectory_dataset.cli normalize-public `
   --source agent_flan `

@@ -4,16 +4,18 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LogoMark from "./LogoMark";
 import DeveloperTrace from "./DeveloperTrace";
+import { CHAT_MODES } from "../config/chatModes";
 
 function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugTrace = false }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const sourceCount = message.sources?.length ?? 0;
-  const modeLabel = message.mode === "hybrid_rag"
-    ? "Hybrid RAG — Fast"
+  const canonicalMode = message.mode === "hybrid_rag"
+    ? "fast"
     : message.mode === "agentic_rag"
-      ? "Agentic RAG — Deep Research"
-      : "";
+      ? "hybrid"
+      : message.mode;
+  const modeLabel = CHAT_MODES.find((item) => item.value === canonicalMode)?.label ?? "";
 
   const copyMessage = async () => {
     if (!message.content) return;

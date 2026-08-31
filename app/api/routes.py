@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.agents.evidence_agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
+from app.chat_modes import ChatMode, normalize_chat_mode
 from app.config import settings
 from app.telemetry import RequestTelemetry, log_event, reset_request_telemetry, set_request_telemetry
 from app.schemas import (
@@ -155,7 +156,10 @@ def _answer_chunks(text: str, words_per_chunk: int = 1) -> Iterator[str]:
 
 
 def _resolve_inference_mode(payload: ChatRequest) -> InferenceMode:
-    return payload.mode or settings.default_inference_mode
+    return normalize_chat_mode(
+        payload.mode,
+        default=normalize_chat_mode(settings.default_inference_mode, default=ChatMode.HYBRID),
+    )
 
 
 def _get_generation_runtime(
@@ -164,10 +168,26 @@ def _get_generation_runtime(
 ) -> tuple[Any, Any] | tuple[Any, Any, InferenceMode]:
     service = request.app.state.rag_service
     selected_mode = _resolve_inference_mode(payload) if payload is not None else settings.default_inference_mode
-    if selected_mode == "hybrid_rag":
-        runtime = getattr(request.app.state, "hybrid_orchestrator", None)
+    selected_mode = normalize_chat_mode(selected_mode, default=ChatMode.HYBRID)
+    mode_router = getattr(request.app.state, "chat_mode_router", None)
+    if mode_router is not None:
+        runtime = mode_router.runtime_for(selected_mode)
+    elif selected_mode == ChatMode.FAST:
+        runtime = (
+            getattr(request.app.state, "fast_service", None)
+            or getattr(request.app.state, "hybrid_orchestrator", None)
+        )
+    elif selected_mode == ChatMode.HYBRID:
+        runtime = (
+            getattr(request.app.state, "agentic_orchestrator", None)
+            or getattr(request.app.state, "orchestrator", None)
+        )
     else:
-        runtime = getattr(request.app.state, "agentic_orchestrator", None) or getattr(request.app.state, "orchestrator", None)
+        runtime = (
+            getattr(request.app.state, "central_agent", None)
+            or getattr(request.app.state, "agentic_orchestrator", None)
+            or getattr(request.app.state, "orchestrator", None)
+        )
     generator = getattr(request.app.state, "generator", None)
     runtime = runtime or generator
 
@@ -355,8 +375,8 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             "is_ood": retrieval.get("is_ood", False),
             "max_dense": retrieval.get("max_dense"),
         },
-        "research": research if result.get("inference_mode") == "agentic_rag" else {},
-        "evidence": evidence if result.get("inference_mode") == "agentic_rag" else {},
+        "research": research if result.get("inference_mode") in {ChatMode.HYBRID, ChatMode.AGENT, "agentic_rag"} else {},
+        "evidence": evidence if result.get("inference_mode") in {ChatMode.HYBRID, ChatMode.AGENT, "agentic_rag"} else {},
         "history": {
             **history,
             "invalid_source_ids": result.get("invalid_source_ids", []),
@@ -437,6 +457,7 @@ def _execute_chat(
     request_id: str,
     selected_mode: InferenceMode,
 ) -> dict[str, Any]:
+    selected_mode = normalize_chat_mode(selected_mode)
     telemetry = RequestTelemetry(
         request_id=request_id,
         inference_mode=selected_mode,
@@ -473,7 +494,7 @@ def _execute_chat(
             conversation_id=conversation_id,
             request_id=request_id,
         )
-        result.setdefault("inference_mode", selected_mode)
+        result["inference_mode"] = selected_mode
         result.setdefault("answer_provenance", {})["mode"] = selected_mode
 
         sources = _result_sources(service, result)
@@ -675,20 +696,24 @@ async def chat_stream(
         stream_started = time.perf_counter()
         task: asyncio.Task | None = None
 
-        status_messages = (
-            [
+        if selected_mode == ChatMode.AGENT:
+            status_messages = [
                 ("agentic_analyzing", "Đang phân tích câu hỏi..."),
                 ("agentic_local_search", "Đang tìm trong kho sử liệu..."),
                 ("agentic_external_check", "Đang kiểm tra thêm nguồn ngoài..."),
                 ("agentic_evidence_check", "Đang đối chiếu bằng chứng..."),
                 ("agentic_answering", "Đang soạn câu trả lời..."),
             ]
-            if selected_mode == "agentic_rag"
-            else [
+        elif selected_mode == ChatMode.HYBRID:
+            status_messages = [
                 ("hybrid_retrieval", "Đang truy xuất kho sử liệu..."),
                 ("hybrid_answering", "Đang soạn câu trả lời..."),
             ]
-        )
+        else:
+            status_messages = [
+                ("fast_retrieval", "Đang tìm nhanh trong kho sử liệu..."),
+                ("fast_answering", "Đang chuẩn bị câu trả lời..."),
+            ]
         yield _sse("status", {"stage": status_messages[0][0], "message": status_messages[0][1], "mode": selected_mode})
 
         task = asyncio.create_task(

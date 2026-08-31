@@ -48,7 +48,9 @@ production build, vì vậy phải restart Vite sau khi thay `.env`.
 | [`src/App.jsx`](src/App.jsx) | Bootstrap, active conversation, message/upload/SSE state, theme | Thay workflow chính |
 | [`src/services/api.js`](src/services/api.js) | Base URL, client header, REST calls, SSE parser | Backend contract thay đổi |
 | [`src/components/ChatSidebar.jsx`](src/components/ChatSidebar.jsx) | List/search/create/rename/delete và mobile navigation | Thay quản lý cửa sổ chat |
-| [`src/components/ChatInput.jsx`](src/components/ChatInput.jsx) | Composer, submit/stop, picker, drag/drop | Thay input/upload interaction |
+| [`src/components/ChatInput.jsx`](src/components/ChatInput.jsx) | Composer, mode selector, submit/stop, picker, drag/drop | Thay input/upload interaction |
+| [`src/components/ModeSelector.jsx`](src/components/ModeSelector.jsx) | Compact Fast/Hybrid/Agent dropdown ở trái composer | Thay mode interaction |
+| [`src/config/chatModes.js`](src/config/chatModes.js) | Canonical mode values, labels và localStorage helper | Thay mode contract |
 | [`src/components/AttachmentTray.jsx`](src/components/AttachmentTray.jsx) | Attachment queue/status/delete | Thay document status UI |
 | [`src/components/ChatMessage.jsx`](src/components/ChatMessage.jsx) | Markdown message, copy và source action | Thay answer rendering |
 | [`src/components/RetrievedChunks.jsx`](src/components/RetrievedChunks.jsx) | Drawer hiển thị global/temp evidence | Thay source inspection |
@@ -60,12 +62,13 @@ production build, vì vậy phải restart Vite sau khi thay `.env`.
 
 ## Identity và state
 
-Frontend lưu đúng hai giá trị vào `localStorage`:
+Frontend lưu ba giá trị vào `localStorage`:
 
 | Key | Giá trị |
 |---|---|
 | `vn-history-client-id` | UUID gửi bằng header `X-Client-ID` |
 | `vn-history-theme` | `light` hoặc `dark` |
+| `vn-history-chat-mode` | `fast`, `hybrid` hoặc `agent` |
 
 Messages, sources, attachments và temporary chunks nằm trong backend SQLite; frontend không
 lưu lịch sử chat trong trình duyệt. Khi xóa browser storage, client nhận UUID mới và không còn
@@ -150,7 +153,14 @@ npm run frontend:lint
 npm run frontend:build
 ```
 
-Repository hiện chưa có frontend automated test suite. Sau thay đổi workflow, cần smoke test:
+Chạy automated contract tests cho mode selector và API payload:
+
+```powershell
+cd frontend
+npm test
+```
+
+Ngoài automated tests, sau thay đổi workflow cần smoke test:
 
 - create/select/search/rename/delete conversation;
 - refresh trang và xác nhận memory còn trong SQLite;

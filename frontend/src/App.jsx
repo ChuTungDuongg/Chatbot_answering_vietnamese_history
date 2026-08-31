@@ -2,9 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BookOpenText,
-  Gauge,
   Landmark,
-  Microscope,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -34,20 +32,20 @@ import {
   uploadAttachment,
 } from "./services/api";
 import { shouldShowDebugTrace } from "./services/debugTrace";
+import { persistChatMode, readStoredChatMode } from "./config/chatModes";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "vn-history-theme";
-const ACTIVE_STATUSES = new Set(["processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming"]);
+const ACTIVE_STATUSES = new Set([
+  "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
+  "fast_retrieval", "fast_answering", "hybrid_retrieval", "hybrid_answering",
+  "agentic_analyzing", "agentic_local_search", "agentic_external_check", "agentic_evidence_check", "agentic_answering",
+]);
 const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_FILES_PER_UPLOAD = 5;
 const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
-const INFERENCE_MODES = [
-  { value: "hybrid_rag", label: "Hybrid RAG — Fast", icon: Gauge },
-  { value: "agentic_rag", label: "Agentic RAG — Deep Research", icon: Microscope },
-];
-
 const SUGGESTIONS = [
   {
     icon: Landmark,
@@ -125,7 +123,7 @@ function App() {
   const [pendingUploads, setPendingUploads] = useState([]);
   const [sources, setSources] = useState([]);
   const [question, setQuestion] = useState("");
-  const [inferenceMode, setInferenceMode] = useState("agentic_rag");
+  const [inferenceMode, setInferenceMode] = useState(readStoredChatMode);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
@@ -147,6 +145,10 @@ function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    persistChatMode(inferenceMode);
+  }, [inferenceMode]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: status === "streaming" ? "auto" : "smooth" });
@@ -639,27 +641,14 @@ function App() {
               onDelete={handleDeleteAttachment}
               disabled={isRunning}
             />
-            <div className="mode-selector" aria-label="Chọn chế độ trả lời">
-              {INFERENCE_MODES.map(({ value, label, icon: Icon }) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={inferenceMode === value ? "is-active" : ""}
-                  onClick={() => setInferenceMode(value)}
-                  disabled={isRunning}
-                  title={label}
-                >
-                  <Icon />
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
             <ChatInput
               question={question}
               onQuestionChange={setQuestion}
               onSubmit={handleSubmit}
               onStop={() => abortControllerRef.current?.abort()}
               onFilesSelected={handleFilesSelected}
+              mode={inferenceMode}
+              onModeChange={setInferenceMode}
               isRunning={isRunning}
               isUploading={isUploading}
             />

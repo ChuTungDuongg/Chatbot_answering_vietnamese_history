@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.agents.evidence_agent import EvidenceCriticAgent
+from app.agents.central_agent import CentralAgent
+from app.agents.config import AgentConfig
 from app.agents.history_answerer import HistoryAnswererAgent
 from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
 from app.agents.model_registry import SHARED_BASE_MODEL_ID
@@ -18,6 +20,8 @@ from app.telemetry import log_event
 from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
+from app.services.chat_mode_router import ChatModeRouter
+from app.services.fast_service import FastChatService
 from app.services.rag_service import RAGService
 from app.tools.attachment_search import SearchUploadedDocumentsTool
 from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore
@@ -45,6 +49,9 @@ async def lifespan(app: FastAPI):
     attachment_service = None
     temporary_retriever = None
     research_runtime = None
+    central_agent = None
+    fast_service = None
+    chat_mode_router = None
 
     try:
         service.load()
@@ -112,24 +119,36 @@ async def lifespan(app: FastAPI):
                 raise RuntimeError("Shared backend did not initialize the role model runtime.")
             answerer = HistoryAnswererAgent(model_runtime=agent_model_runtime)
 
+            agent_config = AgentConfig(
+                max_steps=settings.max_agent_steps,
+                max_tool_results=settings.agent_max_tool_results,
+                observation_char_budget=settings.agent_observation_char_budget,
+                timeout_seconds=settings.agent_timeout_seconds,
+                enable_web=settings.agent_enable_web,
+                enable_wikipedia=settings.agent_enable_wikipedia,
+                enable_document_search=settings.agent_enable_document_search,
+            )
+
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
             tool_registry.register(SearchHistoryTool(retriever))
-            if temporary_retriever is not None:
+            if agent_config.enable_document_search and temporary_retriever is not None:
                 tool_registry.register(SearchUploadedDocumentsTool(temporary_retriever))
             tool_registry.register(RetrieveEvidenceTool(evidence_store))
             tool_registry.register(InspectEvidenceTool(evidence_store))
-            tool_registry.register(SearchWikipediaTool())
-            tool_registry.register(FetchWikipediaPageTool())
-            tool_registry.register(
-                SearchWebTool(
-                    build_web_search_provider(
-                        settings.web_search_provider,
-                        settings.web_search_api_key,
+            if agent_config.enable_wikipedia:
+                tool_registry.register(SearchWikipediaTool())
+                tool_registry.register(FetchWikipediaPageTool())
+            if agent_config.enable_web:
+                tool_registry.register(
+                    SearchWebTool(
+                        build_web_search_provider(
+                            settings.web_search_provider,
+                            settings.web_search_api_key,
+                        )
                     )
                 )
-            )
-            tool_registry.register(FetchPageTool())
+                tool_registry.register(FetchPageTool())
 
             orchestrator = AgentOrchestrator(
                 research_agent=ResearchAgent(
@@ -137,7 +156,7 @@ async def lifespan(app: FastAPI):
                     evidence_store=evidence_store,
                     retrieval_runtime=research_runtime,
                     model_runtime=agent_model_runtime,
-                    max_steps=settings.max_agent_steps,
+                    max_steps=agent_config.max_steps,
                     max_wikipedia_searches=settings.max_wikipedia_searches,
                     max_web_searches=settings.max_web_searches,
                     max_page_fetches=settings.max_page_fetches,
@@ -150,6 +169,17 @@ async def lifespan(app: FastAPI):
                 retrieval_runtime=research_runtime,
                 answerer=answerer,
             )
+            fast_service = FastChatService(hybrid_orchestrator)
+            central_agent = CentralAgent(
+                orchestrator,
+                fast_service=fast_service,
+                config=agent_config,
+            )
+            chat_mode_router = ChatModeRouter(
+                fast=fast_service,
+                hybrid=orchestrator,
+                agent=central_agent,
+            )
 
         app.state.rag_service = service
         app.state.retriever = retriever
@@ -157,6 +187,9 @@ async def lifespan(app: FastAPI):
         app.state.agentic_orchestrator = orchestrator
         app.state.hybrid_orchestrator = hybrid_orchestrator
         app.state.orchestrator = orchestrator
+        app.state.central_agent = central_agent
+        app.state.fast_service = fast_service
+        app.state.chat_mode_router = chat_mode_router
         app.state.agent_model_runtime = agent_model_runtime
         app.state.chat_store = chat_store
         app.state.attachment_service = attachment_service
@@ -205,9 +238,13 @@ async def root():
         "mode": settings.app_mode,
         "docs": "/docs",
         "features": {
+            "chat_modes": ["fast", "hybrid", "agent"],
             "conversations": True,
             "conversation_memory": settings.should_load_model,
             "attachment_retrieval": settings.should_load_retrieval,
+            "central_agent": bool(getattr(app.state, "central_agent", None)),
+            "fast": bool(getattr(app.state, "fast_service", None)),
+            "hybrid": bool(getattr(app.state, "orchestrator", None)),
             "agentic_rag": bool(getattr(app.state, "orchestrator", None)),
             "hybrid_rag": bool(getattr(app.state, "hybrid_orchestrator", None)),
         },

@@ -8,6 +8,7 @@ import pytest
 from app.agents.orchestrator import HybridRAGOrchestrator
 from app.api import routes
 from app.api.routes import _execute_chat, _resolve_inference_mode
+from app.chat_modes import ChatMode
 from app.chat.store import ConversationStore
 from app.schemas import ChatRequest
 
@@ -96,11 +97,13 @@ def test_hybrid_rag_calls_retriever_and_history_without_research_or_evidence():
     assert "agent:evidence_critic" not in result["tool_trace"]
 
 
-def test_chat_request_accepts_two_modes_and_rejects_legacy_names():
+def test_chat_request_accepts_three_modes_and_normalizes_legacy_names():
     conversation_id = uuid4()
 
-    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="hybrid_rag").mode == "hybrid_rag"
-    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="agentic_rag").mode == "agentic_rag"
+    for mode in ChatMode:
+        assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode=mode.value).mode == mode
+    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="hybrid_rag").mode == ChatMode.FAST
+    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="agentic_rag").mode == ChatMode.HYBRID
     with pytest.raises(ValueError):
         ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="deterministic")
 
@@ -108,7 +111,7 @@ def test_chat_request_accepts_two_modes_and_rejects_legacy_names():
 def test_omitted_mode_uses_configured_default(monkeypatch):
     monkeypatch.setattr(routes.settings, "default_inference_mode", "hybrid_rag")
 
-    assert _resolve_inference_mode(SimpleNamespace(mode=None)) == "hybrid_rag"
+    assert _resolve_inference_mode(SimpleNamespace(mode=None)) == ChatMode.FAST
 
 
 def test_request_summary_records_selected_mode(caplog, tmp_path):
@@ -141,6 +144,6 @@ def test_request_summary_records_selected_mode(caplog, tmp_path):
     with caplog.at_level("INFO"):
         result = _execute_chat(store, generator, service, owner_id, payload, "req-mode", "hybrid_rag")
 
-    assert result["inference_mode"] == "hybrid_rag"
+    assert result["inference_mode"] == ChatMode.FAST
     summaries = [record for record in caplog.records if record.message == "REQUEST_SUMMARY"]
-    assert getattr(summaries[0], "inference_mode") == "hybrid_rag"
+    assert getattr(summaries[0], "inference_mode") == ChatMode.FAST
