@@ -222,7 +222,7 @@ Validation checks roles, final answers, tool definitions, call/result ID consist
 
 ## Resume and checkpoints
 
-Public normalization and custom generation append incrementally. `--checkpoint-every N` flushes and fsyncs progress; `--resume` reads completed deterministic IDs and skips them. A stopped process therefore keeps all checkpointed rows and does not regenerate completed records. Pooled Agent-FLAN runs also store `agent_flan.state.json` with the exact ordered split definition and refuse a resume if it differs.
+Public normalization and custom generation append incrementally. `--checkpoint-every N` flushes and fsyncs progress; `--resume` reads completed deterministic IDs and skips them. A stopped process therefore keeps all checkpointed rows and does not regenerate completed records. For live notebook visibility, `build-custom --progress-every N` prints flushed `CUSTOM_PROGRESS` JSON lines after every N newly validated/written quota rows and once at completion. Its total and per-task counters include resumed custom rows; it is log-only and does not alter checkpoint frequency. Pooled Agent-FLAN runs also store `agent_flan.state.json` with the exact ordered split definition and refuse a resume if it differs.
 
 An `agent_instruct_react`-only file produced before pooled-state tracking cannot be safely resumed as `--split auto`. Regenerate only `intermediate/agent_flan.jsonl`, `intermediate/agent_flan.rejected.jsonl`, and `intermediate/agent_flan.state.json`; keep custom-history and every other public intermediate file.
 

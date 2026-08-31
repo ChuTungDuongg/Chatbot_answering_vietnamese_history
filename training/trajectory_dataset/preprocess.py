@@ -32,6 +32,24 @@ def _common_prefix(left: list[int], right: list[int]) -> int:
     return count
 
 
+def _message_span(
+    tokenizer: Any,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    full_ids: list[int],
+    index: int,
+) -> tuple[int, int]:
+    """Locate one rendered message without assuming a generation-prompt shape.
+
+    Qwen3's generation prompt is not necessarily a literal prefix of a fully
+    rendered assistant tool-call turn. Both training and truncation auditing
+    therefore derive boundaries from the same official, non-generation render.
+    """
+    before_ids = _ids(tokenizer, _render(tokenizer, messages[:index], tools, generation=False))
+    through_ids = _ids(tokenizer, _render(tokenizer, messages[: index + 1], tools, generation=False))
+    return _common_prefix(before_ids, full_ids), _common_prefix(through_ids, full_ids)
+
+
 def analyze_truncation(
     tokenizer: Any,
     row: dict[str, Any],
@@ -48,14 +66,10 @@ def analyze_truncation(
     for index, message in enumerate(messages):
         role = message.get("role")
         if role == "user" and initial_user_span is None:
-            before = _ids(tokenizer, _render(tokenizer, messages[:index], tools, generation=False))
-            through = _ids(tokenizer, _render(tokenizer, messages[:index + 1], tools, generation=False))
-            initial_user_span = (_common_prefix(before, full_ids), _common_prefix(through, full_ids))
+            initial_user_span = _message_span(tokenizer, messages, tools, full_ids, index)
         if role != "assistant":
             continue
-        before = _ids(tokenizer, _render(tokenizer, messages[:index], tools, generation=True))
-        through = _ids(tokenizer, _render(tokenizer, messages[:index + 1], tools, generation=False))
-        start, end = _common_prefix(before, full_ids), _common_prefix(through, full_ids)
+        start, end = _message_span(tokenizer, messages, tools, full_ids, index)
         assistant_spans.append({
             "message_index": index,
             "start": start,
@@ -102,10 +116,7 @@ def build_canonical_sft_example(
     for index, message in enumerate(messages):
         if message.get("role") != "assistant":
             continue
-        before_ids = _ids(tokenizer, _render(tokenizer, messages[:index], tools, generation=True))
-        through_ids = _ids(tokenizer, _render(tokenizer, messages[: index + 1], tools, generation=False))
-        start = _common_prefix(before_ids, full_ids)
-        end = _common_prefix(through_ids, full_ids)
+        start, end = _message_span(tokenizer, messages, tools, full_ids, index)
         if end <= start:
             raise ValueError(f"chat template exposed no assistant target at message {index}")
         labels[start:end] = full_ids[start:end]

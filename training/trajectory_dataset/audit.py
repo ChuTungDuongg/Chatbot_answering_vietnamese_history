@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from .adapters.agent_flan import contains_agent_flan_action_syntax, contains_agent_flan_thought_target
 from .adapters.vietnam_history import canonical_analysis_messages_remaining
 from .builders.custom_history import (
+    canonical_subject_identity,
     classify_subject,
     compare_subjects_compatible,
     is_custom_history_eligible,
@@ -122,12 +123,9 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
             identity_key = "secondary_subject_identity" if secondary else "primary_subject_identity"
             identity = provenance.get(identity_key)
             if isinstance(identity, dict):
-                identity_metadata = identity.get("metadata")
-                return {
-                    "title": str(identity.get("title") or title),
-                    "text": str(identity.get("text") or ""),
-                    "metadata": identity_metadata if isinstance(identity_metadata, dict) else {},
-                }
+                canonical = canonical_subject_identity(identity)
+                if canonical is not None:
+                    return canonical
             evidence = [
                 result
                 for role, payload in zip(roles, payloads)
@@ -153,7 +151,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                         values.append(value)
                 if values:
                     metadata[field] = list(dict.fromkeys(str(value) for value in values))
-            return {
+            reconstructed = {
                 "title": title,
                 "text": " ".join(str(result.get("text") or "") for result in evidence),
                 "history_score": max(
@@ -162,6 +160,7 @@ def audit_rows(rows: Iterable[dict[str, Any]], *, strict_custom: bool = False) -
                 ),
                 "metadata": metadata,
             }
+            return canonical_subject_identity(reconstructed) or reconstructed
 
         def builder_confirmed_domain(*, secondary: bool) -> bool:
             key = (
@@ -440,11 +439,26 @@ def tokenizer_audit(
     token_counts: list[int] = []
     too_long = user_lost = tool_calls_lost = assistant_lost = final_lost = all_lost = 0
     zero_supervised = preprocessing_errors = 0
+    preprocessing_error_counts: Counter[str] = Counter()
+    preprocessing_error_row_ids: list[str] = []
+    preprocessing_error_examples: list[dict[str, str]] = []
+
+    def record_preprocessing_error(row: dict[str, Any], stage: str, error: Exception) -> None:
+        nonlocal preprocessing_errors
+        preprocessing_errors += 1
+        reason = f"{type(error).__name__}: {error}"
+        preprocessing_error_counts[reason] += 1
+        row_id = str(row.get("id") or "<missing>")
+        if len(preprocessing_error_row_ids) < 50:
+            preprocessing_error_row_ids.append(row_id)
+        if len(preprocessing_error_examples) < 10:
+            preprocessing_error_examples.append({"row_id": row_id, "stage": stage, "error": reason})
+
     for row in rows:
         try:
             report = analyze_truncation(tokenizer, row, max_length=max_seq_length)
-        except Exception:
-            preprocessing_errors += 1
+        except Exception as exc:
+            record_preprocessing_error(row, "analyze_truncation", exc)
             continue
         token_counts.append(int(report["total_tokens"]))
         too_long += int(report["truncated"])
@@ -455,8 +469,8 @@ def tokenizer_audit(
         all_lost += int(report["all_assistant_supervision_lost"])
         try:
             feature = build_canonical_sft_example(tokenizer, row, max_length=max_seq_length)
-        except Exception:
-            preprocessing_errors += 1
+        except Exception as exc:
+            record_preprocessing_error(row, "build_canonical_sft_example", exc)
         else:
             zero_supervised += int(not any(label != IGNORE_INDEX for label in feature["labels"]))
     return {
@@ -469,5 +483,8 @@ def tokenizer_audit(
         "rows_all_assistant_supervision_lost": all_lost,
         "rows_zero_supervised_tokens": zero_supervised,
         "preprocessing_errors": preprocessing_errors,
+        "preprocessing_error_counts": dict(sorted(preprocessing_error_counts.items())),
+        "preprocessing_error_row_ids": preprocessing_error_row_ids,
+        "preprocessing_error_examples": preprocessing_error_examples,
         "max_seq_length": max_seq_length,
     }

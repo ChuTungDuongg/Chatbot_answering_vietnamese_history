@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -51,6 +52,13 @@ def _positive(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
+def _nonnegative(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
     return parsed
 
 
@@ -416,6 +424,41 @@ def _build_custom(args: argparse.Namespace) -> dict[str, Any]:
         if args.teacher_backend == "local_hf"
         else output
     )
+    progress_every = int(getattr(args, "progress_every", 0) or 0)
+    progress_target = sum(config.task_counts.values())
+    resumed_task_counts: Counter[str] = Counter()
+    if args.resume and deterministic_output.exists():
+        resumed_task_counts.update(
+            str(row.get("task_type") or "")
+            for row in iter_jsonl(deterministic_output)
+            if str(row.get("task_type") or "") in config.task_counts
+        )
+    progress_task_counts: Counter[str] = Counter(resumed_task_counts)
+    progress_started = time.monotonic()
+    progress_new_written = 0
+    last_progress_task = next(
+        (task for task, target in reversed(tuple(config.task_counts.items())) if target > 0),
+        "unknown",
+    )
+
+    def emit_custom_progress(task_type: str) -> None:
+        elapsed = max(0.0, time.monotonic() - progress_started)
+        written = sum(progress_task_counts[task] for task in config.task_counts)
+        rate = progress_new_written * 60.0 / elapsed if elapsed > 0 and progress_new_written else 0.0
+        payload: dict[str, Any] = {
+            "written": written,
+            "target": progress_target,
+            "percent": round(written * 100.0 / progress_target, 3) if progress_target else 100.0,
+            "task_type": task_type,
+            "task_written": progress_task_counts[task_type],
+            "task_target": config.task_counts.get(task_type, 0),
+            "elapsed_seconds": round(elapsed, 1),
+            "rows_per_minute": round(rate, 2),
+        }
+        if rate > 0:
+            payload["eta_seconds"] = round(max(0, progress_target - written) * 60.0 / rate, 1)
+        print("CUSTOM_PROGRESS " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+
     external_retriever = PrecomputedToolRetriever(args.external_results) if args.external_results else None
     rejected: list[dict[str, Any]] = []
     retriever = None
@@ -437,10 +480,19 @@ def _build_custom(args: argparse.Namespace) -> dict[str, Any]:
                 if validation.rejected:
                     rejected.extend(validation.rejected)
                 else:
-                    writer.write(row)
+                    accepted = writer.write(row)
+                    if accepted:
+                        task_type = str(row.get("task_type") or "unknown")
+                        progress_task_counts[task_type] += 1
+                        progress_new_written += 1
+                        last_progress_task = task_type
+                        if progress_every and progress_new_written % progress_every == 0:
+                            emit_custom_progress(task_type)
             if args.include_no_tool:
                 for row in build_no_tool_trajectories():
                     writer.write(row)
+            if progress_every:
+                emit_custom_progress(last_progress_task)
     finally:
         if hasattr(retriever, "close"):
             retriever.close()
@@ -744,6 +796,10 @@ def build_parser() -> argparse.ArgumentParser:
     custom.add_argument("--seed", type=int, default=42)
     custom.add_argument("--resume", action="store_true")
     custom.add_argument("--checkpoint-every", type=_positive, default=25)
+    custom.add_argument(
+        "--progress-every", type=_nonnegative, default=0, metavar="N",
+        help="Print a flushed CUSTOM_PROGRESS JSON line after every N newly accepted custom rows (0 disables).",
+    )
     custom.add_argument("--dry-run", action="store_true")
 
     validate = subparsers.add_parser("validate", help="Validate canonical JSONL and emit rejected rows with reasons.")

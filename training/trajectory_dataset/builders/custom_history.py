@@ -104,7 +104,7 @@ KNOWN_DYNASTY_TITLES = {
     "nha tay son", "nha nguyen", "nha trieu",
 }
 ORGANIZATION_TITLE_PREFIXES = (
-    "cơ quan", "bộ tư lệnh", "bộ quốc phòng", "trung tâm", "trường",
+    "cơ quan", "cục", "tổng cục", "bộ tư lệnh", "bộ quốc phòng", "trung tâm", "trường",
     "học viện", "viện nghiên cứu", "viện hàn lâm", "viện kiểm sát", "văn phòng",
 )
 DOCUMENT_TITLE_PREFIXES = (
@@ -149,7 +149,7 @@ ROLE_FACET_TERMS: dict[str, tuple[str, ...]] = {
 }
 NON_PERSON_TOPIC_PREFIXES = (
     "chu", "tieng", "van hoa", "ngon ngu", "chu viet", "van hoc",
-    "ly hoc", "nho giao", "phat giao", "chu nghia", "quan ham",
+    "ly hoc", "nho giao", "phat giao", "chu nghia", "chuyen chinh", "quan ham",
 )
 CULTURAL_TOPIC_CUES = (
     "xẩm", "ca trù", "chèo", "tuồng", "quan họ", "dân ca", "nghệ thuật",
@@ -199,6 +199,14 @@ REFERENCE_NOISE_CUES = (
     "xem them", "tham khao", "chu thich", "lien ket ngoai", "muc luc",
     "the loai", "danh sach bai", "trang dinh huong", "nguon tham khao",
 )
+SUBJECT_IDENTITY_VERSION = 2
+SUBJECT_IDENTITY_TEXT_BUDGET = 3_200
+GENERIC_ROLE_TOPIC_CUES = (
+    "thong doc", "tinh truong", "chuc danh", "chuc vu", "quan ham",
+)
+TOPIC_PARENTHETICAL_LABELS = {
+    "ho", "khai niem", "hoc thuyet", "tu tuong", "bai hat", "ca khuc",
+}
 
 
 @dataclass(frozen=True)
@@ -299,6 +307,76 @@ def _title_without_parenthetical(title: str) -> str:
     return _plain(re.sub(r"\s*\([^()]*\)\s*$", "", title)).strip()
 
 
+def _bounded_identity_text(title: str, text: Any) -> str:
+    """Keep bounded, target-linked identity evidence instead of an arbitrary prefix."""
+    raw = str(text or "").strip()
+    if len(raw) <= SUBJECT_IDENTITY_TEXT_BUDGET:
+        return raw
+    title_variants = {
+        _entity_norm(value)
+        for value in (title, _title_without_parenthetical(title))
+        if _entity_norm(value)
+    }
+    sentences = _split_sentences(raw)
+    identity_cues = (
+        " sinh ", " la ", " tiểu sử ", " sự nghiệp ", " thân thế ",
+        " quá trình công tác ", " tổng thống ", " thủ tướng ", " giáo sư ",
+        " vận động viên ", " diễn viên ", " điệp viên ", " quốc gia ",
+        " nhà nước ", " chính phủ ", " quốc hội ", " huyện ", " tỉnh ",
+        " thành phố ", " quần đảo ", " khu vực ", " địa lý ", " ca khúc ",
+        " khái niệm ", " triều đại ", " tổ chức ", " trường ",
+    )
+    ranked: list[tuple[int, int, str]] = []
+    for index, sentence in enumerate(sentences):
+        normalized = f" {_entity_norm(sentence)} "
+        target_linked = any(f" {variant} " in normalized for variant in title_variants)
+        score = (100 if target_linked else 0) + sum(cue in normalized for cue in identity_cues) * 5
+        if index < 2:
+            score += 10 - index
+        if score:
+            ranked.append((-score, index, sentence))
+    chosen_indexes: set[int] = set()
+    used = 0
+    for _score, index, sentence in sorted(ranked):
+        addition = len(sentence) + (1 if used else 0)
+        if addition > SUBJECT_IDENTITY_TEXT_BUDGET - used:
+            continue
+        chosen_indexes.add(index)
+        used += addition
+        if used >= SUBJECT_IDENTITY_TEXT_BUDGET:
+            break
+    if not chosen_indexes:
+        return raw[:SUBJECT_IDENTITY_TEXT_BUDGET]
+    bounded = " ".join(sentences[index] for index in sorted(chosen_indexes))
+    return bounded[:SUBJECT_IDENTITY_TEXT_BUDGET]
+
+
+def canonical_subject_identity(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the sole bounded subject-identity record used by builder and audit."""
+    if not isinstance(row, dict):
+        return None
+    raw_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    identity_fields = {
+        "subject_type", "entity_type", *METADATA_FIELDS,
+        "aliases", "alias", "alternative_names", "alternate_names",
+        "other_names", "also_known_as", "names",
+    }
+    metadata = {key: raw_metadata[key] for key in identity_fields if key in raw_metadata}
+    # Some corpus versions place a declared type at the record root. Retain it as
+    # supporting evidence, but semantic target-linked evidence has precedence.
+    if "subject_type" not in metadata and row.get("subject_type") is not None:
+        metadata["subject_type"] = row.get("subject_type")
+    if "entity_type" not in metadata and row.get("entity_type") is not None:
+        metadata["entity_type"] = row.get("entity_type")
+    title = _title(row)
+    return {
+        "identity_version": SUBJECT_IDENTITY_VERSION,
+        "title": title,
+        "text": _bounded_identity_text(title, row.get("text")),
+        "metadata": metadata,
+    }
+
+
 def title_implied_subject_type(title: str) -> str | None:
     """Return only strong non-person title evidence; otherwise remain uncertain."""
     title = _plain(title)
@@ -311,6 +389,8 @@ def title_implied_subject_type(title: str) -> str | None:
         _match_norm(value)
         for value in re.findall(r"\(([^()]*)\)", title, flags=re.UNICODE)
     }
+    if parenthetical_labels & TOPIC_PARENTHETICAL_LABELS:
+        return "topic"
     if parenthetical_labels & PERSON_DISAMBIGUATOR_LABELS:
         return "person"
     if any(
@@ -325,6 +405,11 @@ def title_implied_subject_type(title: str) -> str | None:
     if any(
         title_norm == prefix or title_norm.startswith(f"{prefix} ")
         for prefix in NON_PERSON_TOPIC_PREFIXES
+    ):
+        return "topic"
+    if any(
+        title_norm == cue or title_norm.startswith(f"{cue} ")
+        for cue in GENERIC_ROLE_TOPIC_CUES
     ):
         return "topic"
     cultural_title = _entity_norm(_title_without_parenthetical(title))
@@ -401,7 +486,12 @@ def _biographical_person_evidence(title: str, text: Any) -> bool:
     for sentence in sentences:
         sentence_norm = _match_norm(sentence)
         sentence_entity = _entity_norm(sentence)
-        if any(
+        embedded_role_target = any(
+            f" {role} {variant} " in f" {sentence_norm} "
+            for role in ("tong thong", "thu tuong", "chinh phu", "quoc hoi", "quan doi")
+            for variant in title_variants
+        )
+        if not embedded_role_target and any(
             re.search(
                 rf"^{re.escape(variant)}(?: \w+){{0,7}} mất(?: |$)",
                 sentence_entity,
@@ -413,19 +503,70 @@ def _biographical_person_evidence(title: str, text: Any) -> bool:
             )
         ):
             return True
+        if not embedded_role_target and any(
+            re.search(
+                rf"\b{re.escape(variant)}\b(?: [a-z0-9]+){{0,3}} "
+                rf"(?:tro thanh|dong(?: vai| phim)?|nhan giai|duoc biet den|duoc bau|duoc bo nhiem)\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        ) and any(
+            f" {role} " in f" {sentence_norm} "
+            for role in ("dien vien", "vai dien", "bo phim", "nhac si", "giao su", "van dong vien", "tong thong", "si quan")
+        ):
+            return True
         if any(
             re.search(
-                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,7}} "
-                rf"(?:la (?:mot )?(?:nguoi|nhan vat|vua|hoang de|danh tuong|tuong linh|"
-                rf"si quan|chinh tri gia|dai bieu|doanh nhan|quan lai|can bo|giao su|hoc gia|"
-                rf"su gia|tac gia|dao dien|giao si|linh muc|giam muc|nha [a-z0-9]+)|"
-                rf"sinh (?:nam|ngay|tai|o|[0-9])|qua doi|giu chuc|dam nhiem|lanh dao|chi huy|"
-                rf"tham gia|hoat dong|duoc bo nhiem|duoc phong|sang lap|dung dau|phuc vu)\b",
+                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,4}} lanh dao nhieu hoat dong\b",
                 sentence_norm,
             )
             for variant in title_variants
         ):
             return True
+        if any(
+            re.search(
+                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,24}} "
+                rf"(?:la (?:mot )?(?:nguoi|nhan vat|vua|hoang de|tong thong|thu tuong|"
+                rf"danh tuong|tuong linh|si quan|chinh tri gia|dai bieu|doanh nhan|quan lai|"
+                rf"tuong|quan nhan|can bo|giao su|vien si|hoc gia|su gia|tac gia|dao dien|dien vien|nhac si|"
+                rf"ca si|van dong vien|huan luyen vien|dich gia|giao si|linh muc|giam muc|"
+                rf"nha [a-z0-9]+)|"
+                rf"sinh (?:nam|ngay|tai|o|[0-9])|qua doi|giu chuc|dam nhiem|"
+                rf"duoc bo nhiem|duoc phong|dong hon)\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        ):
+            return True
+        if any(
+            re.search(
+                rf"\b(?:la (?:mot )?(?:dien vien|nhac si|ca si|giao su|vien si|"
+                rf"van dong vien|tong thong|thu tuong|chinh tri gia|danh tuong|"
+                rf"tuong linh|si quan|diep vien|nha [a-z0-9]+))[, ]+{re.escape(variant)}\b",
+                sentence_norm,
+            )
+            for variant in title_variants
+        ):
+            return True
+    combined_norm = _match_norm(text)
+    if any(
+        re.search(
+            rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,32}} la (?:mot )?"
+            rf"(?:nguoi|nhan vat|vua|hoang de|tong thong|thu tuong|danh tuong|"
+            rf"tuong|tuong linh|quan nhan|si quan|chinh tri gia|giao su|vien si|"
+            rf"hoc gia|su gia|tac gia|dao dien|dien vien|nhac si|ca si|van dong vien|"
+            rf"giao si|linh muc|giam muc|nha [a-z0-9]+)\b",
+            combined_norm,
+        )
+        for variant in title_variants
+    ):
+        return True
+    if " ong sinh " in f" {combined_norm} " and any(
+        re.search(rf"\b(?:cha|me) cua {re.escape(variant)}\b", combined_norm)
+        and re.search(rf"\b{re.escape(variant)} la nguoi\b", combined_norm)
+        for variant in title_variants
+    ):
+        return True
     if sentences:
         first_norm = _match_norm(sentences[0])
         return any(first_norm.startswith(cue) for cue in PERSON_TEXT_CUES)
@@ -452,6 +593,13 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
             if _match_norm(variant)
         )
     )
+    title_variants = tuple(dict.fromkeys(
+        (*title_variants, *(variant.replace(" ", "") for variant in title_variants if " " in variant))
+    ))
+    def mentions_target(sentence: Any) -> bool:
+        sentence_norm = _match_norm(sentence)
+        return any(re.search(rf"\b{re.escape(variant)}\b", sentence_norm) for variant in title_variants)
+
     combined_norm = _match_norm(row.get("text"))
     if _match_norm(title).startswith("ky ") and any(
         f" {cue} " in f" {combined_norm} "
@@ -477,18 +625,28 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
                 # parenthetical gloss between the exact title and "là ...".
                 # The exact-title anchor keeps this identity evidence local;
                 # the wider window avoids discarding real dynasty/state leads.
-                rf"^{re.escape(variant)}(?: [a-z0-9]+){{0,24}} la (?:mot )?{predicate}\b",
+                rf"(?:^{re.escape(variant)}(?: [a-z0-9]+){{0,32}}|"
+                rf"\b{re.escape(variant)}(?: [a-z0-9]+){{0,4}}) "
+                rf"la (?:mot )?{predicate}\b",
                 sentence_norm,
             )
             for variant in title_variants
         )
 
+    target_sentence_norms = [
+        _match_norm(sentence)
+        for sentence in _split_sentences(row.get("text"))
+        if mentions_target(sentence)
+    ]
+    # Prefer a direct state definition wherever it appears over an earlier,
+    # looser geographic description such as "vùng đất".
+    if any(defines(sentence, r"(?:vuong quoc|de quoc|quoc gia|nha nuoc|chinh the|dat nuoc|cong hoa|dao quoc)") for sentence in target_sentence_norms):
+        return "state"
+    if any(defines(sentence, r"(?:trieu dai|vuong trieu|hoang trieu)") for sentence in target_sentence_norms):
+        return "dynasty"
+
     for sentence in _split_sentences(row.get("text")):
-        if not any(
-            _contains_norm_phrase(sentence, variant)
-            for variant in (title, _title_without_parenthetical(title))
-            if variant
-        ):
+        if not mentions_target(sentence):
             continue
         sentence_norm = _match_norm(sentence)
         if any(
@@ -523,9 +681,42 @@ def _text_implied_subject_type(row: dict[str, Any]) -> str | None:
         if defines(
             sentence_norm,
             r"(?:loai hinh|the loai|khai niem|hoc thuyet|cap bac|ky dia chat|"
-            r"ky trong (?:nien dai|thang dia tang) dia chat|thoi ky dia chat)",
+            r"ky trong (?:nien dai|thang dia tang) dia chat|thoi ky dia chat|"
+            r"ca khuc|bai hat|chuc danh|chuc vu|ho|tu tuong|quan niem|che do|qua trinh)",
         ):
             return "topic"
+        if defines(
+            sentence_norm,
+            r"(?:khu vuc|vung|mien|lanh tho|huyen|tinh|thanh pho|thi xa|"
+            r"thi tran|xa|phuong|dia danh|dao|quan dao|ban dao|chau luc)",
+        ):
+            return "location"
+    padded = f" {combined_norm} "
+    target_mentions = max(
+        (len(re.findall(rf"\b{re.escape(variant)}\b", combined_norm)) for variant in title_variants),
+        default=0,
+    )
+    state_context = sum(
+        f" {cue} " in padded
+        for cue in (
+            "tong thong", "thu tuong", "quoc hoi", "chinh phu", "hien phap",
+            "doi ngoai", "ca nuoc", "quoc ky", "quoc ca", "dao chinh",
+        )
+    )
+    strong_title_type = title_implied_subject_type(title)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    exact_person_metadata = _entity_matches_title(title, metadata.get("people"))
+    if strong_title_type is None and not exact_person_metadata and target_mentions >= 2 and state_context >= 3:
+        return "state"
+    location_context = sum(
+        f" {cue} " in padded
+        for cue in (
+            "dia ly", "khu vuc", "ranh gioi", "khi hau", "dien tich", "quan dao",
+            "lanh tho", "nam o", "tiep giap", "phia bac", "phia nam",
+        )
+    )
+    if strong_title_type is None and not exact_person_metadata and target_mentions >= 1 and location_context >= 3:
+        return "location"
     return None
 
 
@@ -550,11 +741,23 @@ def _semantic_title_overrides(declared_type: str, implied_type: str | None) -> b
 
 
 def classify_subject(row: dict[str, Any]) -> str:
-    """Classify conservatively: strong evidence is required to emit ``person``."""
+    """Classify the canonical article subject, not entities mentioned in its chunk."""
+    identity = canonical_subject_identity(row)
+    if identity is None:
+        return "topic"
+    row = identity
     title = _title(row)
     title_implied_type = title_implied_subject_type(title)
     text_implied_type = _text_implied_subject_type(row)
-    implied_type = title_implied_type or text_implied_type
+    person_implied = _biographical_person_evidence(title, row.get("text"))
+    if title_implied_type is not None:
+        implied_type = title_implied_type
+    elif person_implied:
+        implied_type = "person"
+    elif text_implied_type is not None:
+        implied_type = text_implied_type
+    else:
+        implied_type = None
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     explicit = _match_norm(
         metadata.get("subject_type") or metadata.get("entity_type") or row.get("subject_type")
@@ -562,11 +765,7 @@ def classify_subject(row: dict[str, Any]) -> str:
     if explicit in SUBJECT_TYPES:
         if _semantic_title_overrides(explicit, implied_type):
             return str(implied_type)
-        if (
-            explicit == "person"
-            and title_implied_type is None
-            and _biographical_person_evidence(title, row.get("text"))
-        ):
+        if explicit == "person" and person_implied:
             return "person"
         if explicit == "dynasty" and not _has_dynasty_evidence(row, implied_type):
             return "topic"
@@ -580,7 +779,7 @@ def classify_subject(row: dict[str, Any]) -> str:
             return subject_type
     if implied_type is not None:
         return implied_type
-    if _biographical_person_evidence(title, row.get("text")):
+    if person_implied:
         return "person"
     return "topic"
 
@@ -1577,32 +1776,27 @@ def _stable_source_group(row: dict[str, Any]) -> str:
     return str(row.get("url") or row.get("source_sha1") or row.get("title") or row.get("chunk_id"))
 
 
-def _subject_identity_snapshot(row: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Persist the bounded seed evidence needed to reproduce subject identity."""
-    if not isinstance(row, dict):
-        return None
-    raw_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-    identity_fields = {
-        "subject_type", "entity_type", *METADATA_FIELDS,
-        "aliases", "alternative_names", "other_names",
-    }
-    metadata = {
-        key: raw_metadata[key]
-        for key in identity_fields
-        if key in raw_metadata
-    }
-    return {
-        "title": _title(row),
-        "text": str(row.get("text") or "")[:1600],
-        "metadata": metadata,
-    }
-
-
 def _trajectory(
     *, task_type: str, question: str, claim: str | None,
     observations: list[Observation], primary: dict[str, Any], secondary: dict[str, Any] | None,
     trajectory_observation_char_budget: int,
 ) -> dict[str, Any]:
+    primary_identity = canonical_subject_identity(primary)
+    secondary_identity = canonical_subject_identity(secondary)
+    if primary_identity is None:
+        raise ValueError("primary subject requires a canonical identity")
+    primary_type = classify_subject(primary_identity)
+    if primary_type != classify_subject(primary):
+        raise ValueError("original and canonical primary subject identity disagree")
+    secondary_type = None
+    if secondary is not None:
+        if secondary_identity is None:
+            raise ValueError("secondary subject requires a canonical identity")
+        secondary_type = classify_subject(secondary_identity)
+        if secondary_type != classify_subject(secondary):
+            raise ValueError("original and canonical secondary subject identity disagree")
+        if not compare_subjects_compatible(primary_identity, secondary_identity):
+            raise ValueError("persisted compare subject identities are incompatible")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": CUSTOM_HISTORY_SYSTEM_PROMPT},
         {"role": "user", "content": question},
@@ -1650,8 +1844,8 @@ def _trajectory(
             "primary_title": _title(primary), "secondary_title": _title(secondary or {}) or None,
             "primary_aliases": list(_target_aliases(primary)),
             "secondary_aliases": list(_target_aliases(secondary)) if secondary is not None else [],
-            "subject_type": classify_subject(primary),
-            "primary_subject_identity": _subject_identity_snapshot(primary),
+            "subject_type": primary_type,
+            "primary_subject_identity": primary_identity,
             "custom_history_eligible": is_custom_history_eligible(primary),
             "custom_history_eligibility_signals": list(custom_history_eligibility_signals(primary)),
             "vietnam_history_relevant": is_custom_history_eligible(primary),
@@ -1661,8 +1855,8 @@ def _trajectory(
                 primary.get("metadata", {}).get("content_facets", [])
                 if isinstance(primary.get("metadata"), dict) else []
             ),
-            "secondary_subject_type": classify_subject(secondary) if secondary is not None else None,
-            "secondary_subject_identity": _subject_identity_snapshot(secondary),
+            "secondary_subject_type": secondary_type,
+            "secondary_subject_identity": secondary_identity,
             "secondary_custom_history_eligible": (
                 is_custom_history_eligible(secondary) if secondary is not None else None
             ),
@@ -1771,7 +1965,10 @@ def build_custom_trajectories(
         wanted = config.task_counts.get(task_type, 0)
         selected = 0
         candidate_attempts = 0
-        task_rows: list[dict[str, Any]] = []
+        # The CLI's normal deterministic path has no inline teacher and can
+        # checkpoint each accepted row immediately. Preserve the legacy
+        # task-sized teacher batch contract when a direct teacher is supplied.
+        task_rows: list[dict[str, Any]] | None = [] if teacher is not None else None
         for primary_index, primary in enumerate(records):
             if selected >= wanted or candidate_attempts >= config.max_candidate_attempts_per_task:
                 break
@@ -1847,15 +2044,19 @@ def build_custom_trajectories(
                 used_compare_pairs.add(pair_key)
             selected += 1
             if row["id"] not in completed:
-                task_rows.append(row)
+                if task_rows is None:
+                    yield row
+                else:
+                    task_rows.append(row)
         if selected < wanted:
             raise ValueError(
                 "eligible, retrievable unique corpus subjects could produce only "
                 f"{selected}/{wanted} {task_type} trajectories after {candidate_attempts} candidate attempts"
             )
         if teacher is not None:
+            assert task_rows is not None
             task_rows = _apply_teacher_to_rows(task_rows, teacher, seed=config.seed + selected)
-        yield from task_rows
+            yield from task_rows
 
 
 def build_no_tool_trajectories() -> list[dict[str, Any]]:
