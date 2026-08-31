@@ -39,10 +39,11 @@ PUBLIC_SOURCE_DEFAULT_SPLITS = {
     "multihop": "train",
     "vietnam_history": "train",
 }
-AGENT_FLAN_COMPATIBLE_SPLITS = (
-    "agent_instruct_react",
-    "toolbench_react_10p",
-)
+AGENT_FLAN_RAW_FILES = {
+    "agent_instruct_react": "data/agent_instruct_react.jsonl",
+    "toolbench_react_10p": "data/toolbench_react_10p.jsonl",
+}
+AGENT_FLAN_COMPATIBLE_SPLITS = tuple(AGENT_FLAN_RAW_FILES)
 PUBLIC_POOL_STATE_VERSION = 1
 
 
@@ -105,6 +106,50 @@ def _public_rows(args: argparse.Namespace, *, split: str) -> Iterable[dict[str, 
         yield from iter_jsonl(args.input_jsonl)
         return
     dataset_id = args.dataset_id or PUBLIC_SOURCES[args.source][0]
+    if args.source == "agent_flan":
+        try:
+            filename = AGENT_FLAN_RAW_FILES[split]
+        except KeyError as exc:
+            supported = ", ".join(AGENT_FLAN_RAW_FILES)
+            raise ValueError(
+                f"Unsupported Agent-FLAN raw split {split!r}; expected one of: {supported}"
+            ) from exc
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install requirements-training.txt to download raw Agent-FLAN JSONL files"
+            ) from exc
+        try:
+            local_file = hf_hub_download(
+                repo_id=dataset_id,
+                filename=filename,
+                repo_type="dataset",
+                cache_dir=args.cache_dir,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to download raw Agent-FLAN source "
+                f"split={split!r}, filename={filename!r}, repo_id={dataset_id!r}"
+            ) from exc
+        with Path(local_file).open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "Malformed Agent-FLAN JSONL source: "
+                        f"split={split!r}, filename={filename!r}, line={line_number}"
+                    ) from exc
+                if not isinstance(row, dict):
+                    raise ValueError(
+                        "Agent-FLAN JSONL row must be an object: "
+                        f"split={split!r}, filename={filename!r}, line={line_number}"
+                    )
+                yield row
+        return
     try:
         from datasets import load_dataset
     except ImportError as exc:

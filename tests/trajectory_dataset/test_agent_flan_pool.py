@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import SimpleNamespace
 from collections import Counter
 from pathlib import Path
 
@@ -65,6 +67,178 @@ def _normalization_args(tmp_path: Path, *extra: str):
         "--max-samples", "3", "--max-attempts", "20",
         *extra,
     ])
+
+
+def _write_raw_jsonl(path: Path, rows: list[object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def test_agent_flan_raw_file_mapping_matches_auto_pool_order():
+    assert cli.AGENT_FLAN_RAW_FILES == {
+        "agent_instruct_react": "data/agent_instruct_react.jsonl",
+        "toolbench_react_10p": "data/toolbench_react_10p.jsonl",
+    }
+    assert tuple(cli.AGENT_FLAN_RAW_FILES) == cli.AGENT_FLAN_COMPATIBLE_SPLITS
+
+
+def test_raw_loader_preserves_inconsistent_nested_message_fields_and_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    rows = [
+        {
+            "id": "a",
+            "conversation": [
+                {"role": "user", "content": "Question A", "loss": False},
+                {"role": "assistant", "content": "Answer A", "loss": True},
+            ],
+        },
+        {
+            "id": "b",
+            "conversation": [
+                {"role": "system", "content": "System B", "type": "text"},
+                {"role": "user", "content": "Question B", "type": "text"},
+                {"role": "assistant", "content": "Answer B", "type": "text"},
+            ],
+        },
+        {
+            "id": "c",
+            "conversation": [
+                {"role": "user", "content": "Question C"},
+                {"role": "assistant", "content": "Answer C"},
+            ],
+        },
+    ]
+    raw_file = tmp_path / "agent_instruct_react.jsonl"
+    _write_raw_jsonl(raw_file, rows)
+    calls = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs)
+        return str(raw_file)
+
+    class DatasetsMustNotLoad:
+        def __getattr__(self, name):
+            raise AssertionError(f"datasets.{name} must be bypassed for Agent-FLAN")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    monkeypatch.setitem(sys.modules, "datasets", DatasetsMustNotLoad())
+    cache_dir = tmp_path / "hub-cache"
+    args = _normalization_args(
+        tmp_path / "output",
+        "--split", "agent_instruct_react",
+        "--cache-dir", str(cache_dir),
+    )
+
+    loaded = list(cli._public_rows(args, split="agent_instruct_react"))
+
+    assert loaded == rows
+    assert calls == [{
+        "repo_id": "internlm/Agent-FLAN",
+        "filename": "data/agent_instruct_react.jsonl",
+        "repo_type": "dataset",
+        "cache_dir": str(cache_dir),
+    }]
+    assert "loss" in loaded[0]["conversation"][0]
+    assert "type" in loaded[1]["conversation"][0]
+    assert set(loaded[2]["conversation"][0]) == {"role", "content"}
+
+
+def test_raw_loader_reports_download_malformed_json_and_unsupported_split(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    args = _normalization_args(tmp_path / "output", "--split", "agent_instruct_react")
+
+    def failed_download(**_kwargs):
+        raise OSError("offline fixture")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", failed_download)
+    with pytest.raises(RuntimeError, match=r"download.*split='agent_instruct_react'.*filename='data/agent_instruct_react.jsonl'"):
+        list(cli._public_rows(args, split="agent_instruct_react"))
+
+    malformed = tmp_path / "malformed.jsonl"
+    malformed.write_text('{"id": "ok"}\n{"id": broken}\n', encoding="utf-8")
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **_kwargs: str(malformed))
+    with pytest.raises(ValueError, match=r"split='agent_instruct_react'.*filename='data/agent_instruct_react.jsonl'.*line=2"):
+        list(cli._public_rows(args, split="agent_instruct_react"))
+
+    with pytest.raises(ValueError, match="Unsupported Agent-FLAN raw split 'unknown'"):
+        list(cli._public_rows(args, split="unknown"))
+
+
+def test_raw_auto_pool_reaches_both_existing_adapters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    agent_row = _plain_agent_row("agent-raw", "Agent raw question.")
+    for message in agent_row["conversation"]:
+        message["loss"] = message["role"] == "assistant"
+    toolbench_row = _toolbench_row("toolbench-raw", "ToolBench raw question.")
+    for message in toolbench_row["conversation"]:
+        message["type"] = "text"
+
+    raw_files = {
+        "data/agent_instruct_react.jsonl": tmp_path / "agent.jsonl",
+        "data/toolbench_react_10p.jsonl": tmp_path / "toolbench.jsonl",
+    }
+    _write_raw_jsonl(raw_files["data/agent_instruct_react.jsonl"], [agent_row])
+    _write_raw_jsonl(raw_files["data/toolbench_react_10p.jsonl"], [toolbench_row])
+
+    def fake_download(*, filename, **_kwargs):
+        return str(raw_files[filename])
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    args = _normalization_args(
+        tmp_path / "normalized",
+        "--split", "auto",
+        "--max-samples", "2",
+    )
+
+    result = cli._normalize_public(args)
+    normalized = read_jsonl(args.output)
+
+    assert result["source_splits"] == list(cli.AGENT_FLAN_COMPATIBLE_SPLITS)
+    assert result["target_reached"] and result["written"] == 2
+    assert [row["provenance"]["original_split"] for row in normalized] == [
+        "agent_instruct_react",
+        "toolbench_react_10p",
+    ]
+    assert normalized[0]["messages"][-1]["content"] == "Answer for agent-raw."
+    assert normalized[1]["messages"][-1]["content"] == "Fixture final answer."
+    assert "toolbench_json_actions_to_canonical_tools" in normalized[1]["provenance"]["transformations"]
+
+
+def test_non_agent_public_sources_keep_datasets_streaming_loader(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    calls = []
+
+    def fake_load_dataset(**kwargs):
+        calls.append(kwargs)
+        return iter([{"id": "fixture"}])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "datasets",
+        SimpleNamespace(load_dataset=fake_load_dataset),
+    )
+    args = cli.build_parser().parse_args([
+        "normalize-public",
+        "--source", "multihop",
+        "--split", "train",
+        "--cache-dir", str(tmp_path / "cache"),
+        "--output", str(tmp_path / "multihop.jsonl"),
+    ])
+
+    assert list(cli._public_rows(args, split="train")) == [{"id": "fixture"}]
+    assert calls == [{
+        "path": "khaimaitien/multi-hop-qa-function-calling-format-V1.0",
+        "split": "train",
+        "streaming": True,
+        "cache_dir": str(tmp_path / "cache"),
+    }]
 
 
 def test_toolbench_json_actions_convert_without_reasoning_targets():
