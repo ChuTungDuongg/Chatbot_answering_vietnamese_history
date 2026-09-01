@@ -96,6 +96,8 @@ def build_parser(*, defaults: dict[str, Any] | None = None) -> argparse.Argument
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--full-determinism", action="store_true")
     parser.add_argument("--evaluate-test-after-train", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--test-diagnostics", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--test-diagnostics-max-samples", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-validation-samples", type=int, default=None)
     parser.add_argument("--max-test-samples", type=int, default=None)
@@ -195,6 +197,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("persistent dataloader workers require --dataloader-num-workers > 0")
     if args.min_free_gpu_gb is not None and args.min_free_gpu_gb < 0:
         raise ValueError("--min-free-gpu-gb cannot be negative")
+    if args.test_diagnostics and not args.evaluate_test_after_train:
+        raise ValueError("--test-diagnostics requires --evaluate-test-after-train")
+    if args.test_diagnostics_max_samples is not None:
+        if args.test_diagnostics_max_samples < 1:
+            raise ValueError("--test-diagnostics-max-samples must be positive")
+        if not args.test_diagnostics:
+            raise ValueError("--test-diagnostics-max-samples requires --test-diagnostics")
     for name in ("max_train_samples", "max_validation_samples", "max_test_samples"):
         value = getattr(args, name)
         if value is not None and value < 1:

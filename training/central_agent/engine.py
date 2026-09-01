@@ -14,6 +14,7 @@ from training.trajectory_dataset.preprocess import build_canonical_sft_example
 from .config import build_lora_settings, build_qlora_settings, effective_train_batch_size
 from .constants import ADAPTER_FILES, CHECKPOINT_PATTERN
 from .data import DatasetSplit, ResolvedPaths
+from .diagnostics import evaluate_teacher_forced_test_diagnostics
 
 
 def load_tokenizer(tokenizer_id: str):
@@ -279,6 +280,51 @@ def load_model(args: argparse.Namespace, precision: PrecisionSettings, attention
     return model
 
 
+def evaluate_held_out_test(
+    args: argparse.Namespace,
+    paths: ResolvedPaths,
+    test_split: DatasetSplit | None,
+    test_dataset: Any,
+    trainer: Any,
+    tokenizer: Any,
+) -> None:
+    """Report held-out metrics after training without feeding test data into Trainer state."""
+    if not args.evaluate_test_after_train or test_split is None or test_dataset is None:
+        return
+    test_metrics = with_perplexity(
+        trainer.evaluate(test_dataset, metric_key_prefix="test"),
+        "test_loss",
+    )
+    _save_json_metrics(paths.output_dir / "test_metrics.json", test_metrics)
+    if not args.test_diagnostics:
+        return
+    best_checkpoint = getattr(trainer.state, "best_model_checkpoint", None)
+    diagnostic_model = getattr(trainer, "model_wrapped", trainer.model)
+    diagnostics = evaluate_teacher_forced_test_diagnostics(
+        diagnostic_model,
+        tokenizer,
+        test_split.selected_rows,
+        max_length=args.max_seq_length,
+        batch_size=args.per_device_eval_batch_size,
+        max_samples=args.test_diagnostics_max_samples,
+        prepare_inputs=getattr(trainer, "_prepare_inputs", None),
+        identifiers={
+            "model_id": args.model_id,
+            "model_state_source": (
+                "best_validation_checkpoint"
+                if args.load_best_model_at_end and best_checkpoint
+                else "post_training_model"
+            ),
+            "best_model_checkpoint": str(best_checkpoint) if best_checkpoint else None,
+            "test_split_path": str(test_split.path),
+            "test_split_sha256": test_split.sha256,
+            "selected_test_rows": len(test_split.selected_rows),
+            "diagnostic_max_samples": args.test_diagnostics_max_samples,
+        },
+    )
+    atomic_write_json(paths.output_dir / "test_diagnostics.json", diagnostics)
+
+
 def train(
     args: argparse.Namespace,
     paths: ResolvedPaths,
@@ -357,8 +403,11 @@ def train(
     tokenizer.save_pretrained(paths.output_dir / "tokenizer")
     validation_metrics = with_perplexity(trainer.evaluate(validation_dataset), "eval_loss")
     _save_json_metrics(paths.output_dir / "validation_metrics.json", validation_metrics)
-    if args.evaluate_test_after_train and test_dataset is not None:
-        test_metrics = with_perplexity(
-            trainer.evaluate(test_dataset, metric_key_prefix="test"), "test_loss",
-        )
-        _save_json_metrics(paths.output_dir / "test_metrics.json", test_metrics)
+    evaluate_held_out_test(
+        args,
+        paths,
+        splits.get("test"),
+        test_dataset,
+        trainer,
+        tokenizer,
+    )

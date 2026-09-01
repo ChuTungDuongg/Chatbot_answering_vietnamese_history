@@ -79,8 +79,11 @@ python -m training.train_qwen3_8b_agent \
   --save-steps 50 \
   --logging-steps 5 \
   --save-total-limit 3 \
-  --evaluate-test-after-train
+  --evaluate-test-after-train \
+  --test-diagnostics
 ```
+
+`--test-diagnostics` is optional and disabled by default. It requires `--evaluate-test-after-train` and writes `test_diagnostics.json` after training, using the same best model that normal held-out test evaluation sees. The report contains streaming, teacher-forced token NLL/perplexity/accuracy and row-level exact-match diagnostics for tool-call and final-answer assistant spans, plus task/source breakdowns. These are not free-generation accuracy metrics. Use `--test-diagnostics-max-samples N` for a deterministic prefix of the already-selected test split; normal `test_metrics.json` still evaluates the complete selected split.
 
 Resume after disconnect using the same hyperparameters:
 
@@ -134,7 +137,8 @@ training_runs/<run-name>/
 ├── tokenizer/
 ├── train_metrics.json
 ├── validation_metrics.json
-└── test_metrics.json          # only when requested and a test split exists
+├── test_metrics.json          # only when requested and a test split exists
+└── test_diagnostics.json      # optional teacher-forced held-out diagnostics
 ```
 
 Only PEFT adapters and tokenizer/config metadata are saved; base Qwen weights are not duplicated. `final_adapter` is captured from the actual last optimized in-memory state, immediately before Transformers reloads the best checkpoint for `load_best_model_at_end`. `best_adapter` is copied from `state.best_model_checkpoint`; therefore the two adapters may intentionally differ. `run_manifest.json` records both global steps and artifact sources.
