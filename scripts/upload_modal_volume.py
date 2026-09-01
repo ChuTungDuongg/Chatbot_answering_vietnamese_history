@@ -11,7 +11,22 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.artifact_contract import sha256_file
+from app.artifact_contract import (
+    INFERENCE_CONFIG_RELATIVE_PATH,
+    LOCK_FILENAME,
+    MODEL_REGISTRY_RELATIVE_PATH,
+    load_json,
+    sha256_file,
+    validate_artifact_lock,
+)
+
+
+CANONICAL_REQUIRED_FILES = (
+    LOCK_FILENAME,
+    "manifest.json",
+    INFERENCE_CONFIG_RELATIVE_PATH,
+    MODEL_REGISTRY_RELATIVE_PATH,
+)
 
 
 @dataclass(frozen=True)
@@ -51,17 +66,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="Validate and upload the three 4B role adapters, Central 8B adapter, and retrieval artifacts."
     )
     parser.add_argument("--volume", required=True, help="Existing Modal Volume name.")
-    parser.add_argument("--history-model", help="Optional legacy Qwen2.5 benchmark model directory.")
-    parser.add_argument("--history-adapter", help="Fresh Qwen3 History Answerer adapter directory.")
-    parser.add_argument("--research-agent", help="Research Agent LoRA adapter directory.")
-    parser.add_argument("--evidence-agent", help="Evidence Agent LoRA adapter directory.")
-    parser.add_argument("--central-agent", help="Qwen3-8B Central Agent LoRA adapter directory.")
-    parser.add_argument("--retrieval-dir", help="Directory containing faiss/ and bm25s_index/.")
-    parser.add_argument("--corpus", help="Enriched corpus JSONL file.")
-    parser.add_argument("--config-dir", help="Directory containing inference/runtime config files.")
-    parser.add_argument("--manifest", help="Deployment manifest JSON file.")
-    parser.add_argument("--local-dir", help="Upload a prebuilt artifact tree as-is (legacy/full-bundle mode).")
-    parser.add_argument("--remote-dir", default="/", help="Remote root for --local-dir mode.")
+    parser.add_argument("--history-model", help=argparse.SUPPRESS)
+    parser.add_argument("--history-adapter", help=argparse.SUPPRESS)
+    parser.add_argument("--research-agent", help=argparse.SUPPRESS)
+    parser.add_argument("--evidence-agent", help=argparse.SUPPRESS)
+    parser.add_argument("--central-agent", help=argparse.SUPPRESS)
+    parser.add_argument("--retrieval-dir", help=argparse.SUPPRESS)
+    parser.add_argument("--corpus", help=argparse.SUPPRESS)
+    parser.add_argument("--config-dir", help=argparse.SUPPRESS)
+    parser.add_argument("--manifest", help=argparse.SUPPRESS)
+    parser.add_argument("--local-dir", help="Validated canonical deployment bundle from export_artifacts.py.")
+    parser.add_argument("--remote-dir", default="/", help="Canonical Volume root; production requires '/'.")
     parser.add_argument("--exact-sync", action="store_true", help="Safely sync a prebuilt canonical tree against managed Modal files.")
     parser.add_argument("--remote-inventory-json", help="Precomputed Modal inventory JSON for exact-sync tests/offline planning.")
     parser.add_argument(
@@ -84,63 +99,57 @@ def _validated(path: str, *, label: str, directory: bool | None = None) -> Path:
     return resolved
 
 
-def collect_uploads(args: argparse.Namespace) -> list[Upload]:
-    if args.local_dir:
-        component_flags = (
-            args.history_model,
-            args.history_adapter,
-            args.research_agent,
-            args.evidence_agent,
-            getattr(args, "central_agent", None),
-            args.retrieval_dir,
-            args.corpus,
-            args.config_dir,
-            args.manifest,
-        )
-        if any(component_flags):
-            raise ValueError("--local-dir cannot be combined with component upload flags.")
-        bundle = _validated(args.local_dir, label="local bundle", directory=True)
-        remote_root = args.remote_dir.rstrip("/")
-        children = sorted(bundle.iterdir(), key=lambda path: path.name)
-        if not children:
-            raise ValueError(f"Local bundle is empty: {bundle}")
-        return [
-            Upload(child, f"{remote_root}/{child.name}" if remote_root else f"/{child.name}")
-            for child in children
-        ]
+def _component_values(args: argparse.Namespace) -> tuple[Any, ...]:
+    return tuple(getattr(args, name, None) for name in (
+        "history_model", "history_adapter", "research_agent", "evidence_agent",
+        "central_agent", "retrieval_dir", "corpus", "config_dir", "manifest",
+    ))
 
-    required = {
-        "--history-adapter": args.history_adapter,
-        "--research-agent": args.research_agent,
-        "--evidence-agent": args.evidence_agent,
-        "--central-agent": args.central_agent,
-        "--retrieval-dir": args.retrieval_dir,
-        "--corpus": args.corpus,
-        "--config-dir": args.config_dir,
-        "--manifest": args.manifest,
-    }
-    missing = [name for name, value in required.items() if not value]
+
+def validate_canonical_bundle(local_dir: str | Path) -> tuple[Path, dict[str, Any]]:
+    bundle = _validated(str(local_dir), label="canonical deployment bundle", directory=True)
+    missing = [relative for relative in CANONICAL_REQUIRED_FILES if not (bundle / relative).is_file()]
     if missing:
-        raise ValueError(f"Missing component upload flags: {', '.join(missing)}")
-
-    uploads = [
-        Upload(_validated(args.history_adapter, label="history adapter", directory=True), "/adapters/history"),
-        Upload(_validated(args.research_agent, label="research adapter", directory=True), "/adapters/research"),
-        Upload(_validated(args.evidence_agent, label="evidence adapter", directory=True), "/adapters/evidence"),
-        Upload(_validated(args.central_agent, label="central adapter", directory=True), "/adapters/central"),
-        Upload(_validated(args.retrieval_dir, label="retrieval directory", directory=True), "/retrieval"),
-        Upload(_validated(args.corpus, label="corpus", directory=False), "/corpus/vn_history_rag_chunks_enriched.jsonl"),
-        Upload(_validated(args.config_dir, label="config directory", directory=True), "/config"),
-        Upload(_validated(args.manifest, label="manifest", directory=False), "/manifest.json"),
-    ]
-    success_marker = Path(args.manifest).expanduser().resolve().with_name("EXPORT_SUCCESS.txt")
-    if success_marker.is_file():
-        uploads.append(Upload(success_marker, "/EXPORT_SUCCESS.txt"))
-    if args.history_model:
-        uploads.append(
-            Upload(_validated(args.history_model, label="legacy history model", directory=True), "/legacy/qwen25_history/model")
+        raise FileNotFoundError(
+            "Canonical deployment bundle is incomplete; missing:\n"
+            + "\n".join(f"- {item}" for item in missing)
         )
-    return uploads
+    lock = validate_artifact_lock(bundle)
+    manifest = load_json(bundle / "manifest.json")
+    if manifest.get("deployment_id") != lock.get("deployment_id"):
+        raise RuntimeError(
+            "Canonical bundle deployment_id mismatch: "
+            f"manifest={manifest.get('deployment_id')!r} lock={lock.get('deployment_id')!r}"
+        )
+    return bundle, lock
+
+
+def _mutation_priority(remote: str) -> tuple[int, str]:
+    normalized = "/" + remote.strip().lstrip("/")
+    if normalized == f"/{LOCK_FILENAME}":
+        return 2, normalized
+    if normalized == "/manifest.json":
+        return 1, normalized
+    return 0, normalized
+
+
+def _bundle_uploads(bundle: Path) -> list[Upload]:
+    uploads = [Upload(child, f"/{child.name}") for child in bundle.iterdir()]
+    return sorted(uploads, key=lambda item: _mutation_priority(item.remote))
+
+
+def collect_uploads(args: argparse.Namespace) -> list[Upload]:
+    if any(_component_values(args)):
+        raise ValueError(
+            "Unsafe component upload is disabled. Build one canonical bundle with "
+            "training.scripts.export_artifacts, then use --local-dir and preferably --exact-sync."
+        )
+    if not getattr(args, "local_dir", None):
+        raise ValueError("--local-dir is required and must point to a validated canonical deployment bundle.")
+    if str(getattr(args, "remote_dir", "/")).strip() not in {"", "/"}:
+        raise ValueError("Canonical production bundle must be uploaded to Volume root '/'.")
+    bundle, _ = validate_canonical_bundle(args.local_dir)
+    return _bundle_uploads(bundle)
 
 
 def _remote_join(root: str, relative: Path) -> str:
@@ -263,29 +272,57 @@ def execute_sync_plan(
     if plan.has_adapter_weight_replacement() and not allow_replace_adapter_weights:
         print("STOP: adapter_model.safetensors replacement detected; rerun only with explicit --allow-replace-adapter-weights.")
         return 2
-    commands: list[list[str]] = []
-    for item in [*plan.upload, *plan.replace]:
-        commands.append(["modal", "volume", "put", "--force", volume, str(item.source), item.remote])
-    for item in plan.delete_stale:
-        commands.append(["modal", "volume", "rm", volume, item.remote])
-    for command in commands:
+    if any(item.remote == f"/{LOCK_FILENAME}" for item in plan.delete_stale):
+        raise RuntimeError("Refusing to delete the existing artifact_lock.json before a coherent replacement exists.")
+    changed = sorted([*plan.upload, *plan.replace], key=lambda item: _mutation_priority(item.remote))
+    ordinary = [item for item in changed if _mutation_priority(item.remote)[0] == 0]
+    manifest = [item for item in changed if _mutation_priority(item.remote)[0] == 1]
+    lock = [item for item in changed if _mutation_priority(item.remote)[0] == 2]
+    commands: list[tuple[str, list[str]]] = []
+    for item in ordinary:
+        commands.append((item.remote, ["modal", "volume", "put", "--force", volume, str(item.source), item.remote]))
+    for item in sorted(plan.delete_stale, key=lambda value: value.remote):
+        commands.append((item.remote, ["modal", "volume", "rm", volume, item.remote]))
+    for item in [*manifest, *lock]:
+        commands.append((item.remote, ["modal", "volume", "put", "--force", volume, str(item.source), item.remote]))
+    for remote, command in commands:
         print(subprocess.list2cmdline(command))
         if not dry_run:
             completed = subprocess.run(command, check=False)
             if completed.returncode:
+                print(f"MODAL_MUTATION_FAILED remote={remote} exit_code={completed.returncode}")
                 return completed.returncode
     if not dry_run:
         print("Verifying managed remote hashes after mutation...")
-        fetch_remote_inventory()
+        remote_after = fetch_remote_inventory()
+        expected = {item.remote: item for item in [*plan.unchanged, *plan.upload, *plan.replace]}
+        mismatches = [
+            remote
+            for remote, local in expected.items()
+            if remote not in remote_after or remote_after[remote].sha256 != local.sha256
+        ]
+        stale_remaining = [item.remote for item in plan.delete_stale if item.remote in remote_after]
+        if mismatches or stale_remaining:
+            print(f"MODAL_SYNC_VERIFICATION_FAILED mismatches={mismatches} stale={stale_remaining}")
+            return 3
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if any(_component_values(args)):
+        raise ValueError(
+            "Unsafe component upload is disabled. Export and validate one canonical bundle, "
+            "then upload it with --local-dir."
+        )
+    if not args.local_dir:
+        raise ValueError("--local-dir is required and must point to a validated canonical deployment bundle.")
+    bundle, lock = validate_canonical_bundle(args.local_dir)
+    print(f"LOCAL_ARTIFACT_VALID deployment_id={lock['deployment_id']} root={bundle}")
     if args.exact_sync:
-        if not args.local_dir:
-            raise ValueError("--exact-sync requires --local-dir.")
-        local_files = collect_local_files(args.local_dir, args.remote_dir)
+        if str(args.remote_dir).strip() not in {"", "/"}:
+            raise ValueError("Canonical production exact-sync requires --remote-dir /.")
+        local_files = collect_local_files(bundle, "/")
         remote_files = (
             load_remote_inventory(args.remote_inventory_json)
             if args.remote_inventory_json
@@ -298,16 +335,21 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             allow_replace_adapter_weights=args.allow_replace_adapter_weights,
         )
-    uploads = collect_uploads(args)
+    uploads = _bundle_uploads(bundle)
     for upload in uploads:
         command = ["modal", "volume", "put", "--force", args.volume, str(upload.source), upload.remote]
         print(subprocess.list2cmdline(command))
         if not args.dry_run:
             completed = subprocess.run(command, check=False)
             if completed.returncode:
+                print(f"MODAL_UPLOAD_FAILED remote={upload.remote} exit_code={completed.returncode}")
                 return completed.returncode
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as exc:
+        print(f"UPLOAD_ABORTED_BEFORE_MUTATION\n{exc}", file=sys.stderr)
+        raise SystemExit(2) from None

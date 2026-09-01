@@ -24,6 +24,7 @@ BM25_MANIFEST_RELATIVE_PATH = "retrieval/bm25s_index/phase9_manifest.json"
 INFERENCE_CONFIG_RELATIVE_PATH = "config/inference_config.json"
 MODEL_REGISTRY_RELATIVE_PATH = "config/model_registry.json"
 DEPLOYMENT_ID_PREFIX = "qwen3"
+_MISSING = object()
 
 
 def stable_json_dumps(payload: Any) -> str:
@@ -206,6 +207,46 @@ def write_artifact_lock(root: str | Path) -> dict[str, Any]:
     return lock
 
 
+def _safe_diff_value(value: Any) -> str:
+    if value is _MISSING:
+        return "<missing>"
+    rendered = stable_json_dumps(value)
+    return rendered if len(rendered) <= 180 else rendered[:177] + "..."
+
+
+def diff_artifact_locks(
+    locked: dict[str, Any],
+    computed: dict[str, Any],
+    *,
+    max_differences: int = 20,
+) -> list[str]:
+    """Return a bounded field-level diff between persisted and computed locks."""
+
+    differences: list[str] = []
+
+    def visit(path: str, lock_value: Any, actual_value: Any) -> None:
+        if len(differences) >= max_differences or lock_value == actual_value:
+            return
+        if isinstance(lock_value, dict) and isinstance(actual_value, dict):
+            for key in sorted(set(lock_value) | set(actual_value)):
+                visit(
+                    f"{path}.{key}" if path else str(key),
+                    lock_value.get(key, _MISSING),
+                    actual_value.get(key, _MISSING),
+                )
+                if len(differences) >= max_differences:
+                    break
+            return
+        differences.append(
+            f"- {path}: lock={_safe_diff_value(lock_value)} actual={_safe_diff_value(actual_value)}"
+        )
+
+    visit("", locked, computed)
+    if not differences:
+        differences.append("- lock payload differs, but no scalar field diff could be rendered")
+    return differences
+
+
 def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
     root_path = Path(root)
     lock_path = root_path / LOCK_FILENAME
@@ -214,7 +255,12 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
     actual_lock = load_json(lock_path)
     expected_lock = build_artifact_lock(root_path)
     if actual_lock != expected_lock:
-        raise RuntimeError("Deployment artifact_lock.json does not match artifact bytes/configs.")
+        details = "\n".join(diff_artifact_locks(actual_lock, expected_lock))
+        raise RuntimeError(
+            "Deployment artifact_lock.json does not match artifact bytes/configs.\n"
+            "artifact lock mismatch:\n"
+            f"{details}"
+        )
     if actual_lock.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("Artifact lock shared base does not match canonical Qwen3.")
     if actual_lock.get("central") is not None and actual_lock.get("central_base_model_id") != CENTRAL_BASE_MODEL_ID:
@@ -224,7 +270,10 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
     inference_config = load_json(root_path / INFERENCE_CONFIG_RELATIVE_PATH)
     model_registry = load_json(root_path / MODEL_REGISTRY_RELATIVE_PATH)
     if manifest.get("deployment_id") != actual_lock["deployment_id"]:
-        raise RuntimeError("manifest deployment_id does not match artifact_lock.json.")
+        raise RuntimeError(
+            "manifest deployment_id does not match artifact_lock.json: "
+            f"manifest={manifest.get('deployment_id')!r} lock={actual_lock['deployment_id']!r}"
+        )
     if manifest.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("manifest shared base does not match canonical Qwen3.")
     if model_registry != registry_manifest():

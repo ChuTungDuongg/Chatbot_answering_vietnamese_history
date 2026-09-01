@@ -43,4 +43,10 @@ python -m training.scripts.export_artifacts \
   --output-root artifacts/vn_history_deployment
 ```
 
-Sau export, kiểm tra `manifest.json`, `EXPORT_SUCCESS.txt`, model/adapters và index trước khi upload Modal.
+Sau export, kiểm tra snapshot cục bộ trước khi upload Modal:
+
+```bash
+python scripts/validate_artifact_bundle.py artifacts/vn_history_deployment
+```
+
+Không upload riêng adapter/config vào production Volume; `artifact_lock.json` chỉ hợp lệ cho đúng bytes của toàn snapshot.

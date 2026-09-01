@@ -4,6 +4,12 @@
 
 ## 🚚 Upload bundle đầy đủ
 
+Trước tiên validate hoàn toàn cục bộ:
+
+```bash
+python scripts/validate_artifact_bundle.py artifacts/vn_history_deployment
+```
+
 ```bash
 python scripts/upload_modal_volume.py \
   --volume vn-history-artifacts \
@@ -12,25 +18,22 @@ python scripts/upload_modal_volume.py \
   --dry-run
 ```
 
-`--dry-run` vẫn validate path nhưng chỉ in các lệnh `modal volume put --force`. Bỏ flag để chạy upload thật.
+`--dry-run` vẫn gọi `validate_artifact_lock()` trước khi chỉ in các lệnh `modal volume put --force`. Bỏ flag để chạy upload thật.
 
-## 🧩 Upload từng component
+## 🔒 Exact sync production
 
 ```bash
 python scripts/upload_modal_volume.py \
   --volume vn-history-artifacts \
-  --history-adapter outputs/history-answerer-full/adapter \
-  --research-agent outputs/research_agent \
-  --evidence-agent outputs/evidence_agent \
-  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
-  --retrieval-dir artifacts/retrieval \
-  --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
-  --config-dir artifacts/vn_history_deployment/config \
-  --manifest artifacts/vn_history_deployment/manifest.json \
+  --local-dir artifacts/vn_history_deployment \
+  --remote-dir / \
+  --exact-sync \
+  --allow-replace-adapter-weights \
   --dry-run
 ```
 
-Remote destinations gồm `/adapters/history`, `/adapters/research`, `/adapters/evidence`, `/adapters/central`, `/retrieval`, `/corpus`, `/config` và `/manifest.json`.
+Component mutation đã bị vô hiệu hóa. Hãy build một snapshot bằng `training.scripts.export_artifacts`; uploader quản lý cả `/manifest.json` và `/artifact_lock.json`, với lock luôn được ghi cuối cùng.
+`--exact-sync --dry-run` vẫn đọc inventory từ Modal để lập mutation plan, trừ khi truyền `--remote-inventory-json`; đây không phải kiểm tra hoàn toàn offline.
 
 ## ✅ Sau upload
 

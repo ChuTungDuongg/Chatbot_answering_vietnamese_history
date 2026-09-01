@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.artifact_contract import validate_artifact_lock
 from training.scripts.export_artifacts import main
 
 
@@ -52,5 +53,7 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
     assert all((output / "adapters" / role / "adapter_config.json").is_file() for role in manifest["roles"])
     assert (output / "adapters" / "central" / "adapter_config.json").is_file()
     assert (output / "artifact_lock.json").is_file()
+    lock = validate_artifact_lock(output)
+    assert lock["central"]["base_model_name_or_path"] == CENTRAL_BASE_MODEL_ID
     assert not (output / "stale.txt").exists()
     assert not (output / "adapters" / "research" / "checkpoint-1").exists()

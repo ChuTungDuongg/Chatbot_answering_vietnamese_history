@@ -457,7 +457,14 @@ artifacts/vn_history_deployment/
 ├── config/inference_config.json
 ├── config/model_registry.json
 ├── manifest.json
+├── artifact_lock.json
 └── EXPORT_SUCCESS.txt
+```
+
+Kiểm tra toàn bộ snapshot cục bộ, không cần GPU hoặc Modal:
+
+```bash
+python scripts/validate_artifact_bundle.py artifacts/vn_history_deployment
 ```
 
 ## ☁️ Đưa artifact lên Modal Volume
@@ -475,7 +482,7 @@ modal volume create vn-history-hf-cache
 
 ### 2. Dry-run upload
 
-Cách ít lỗi nhất là upload bundle đã export:
+Uploader chỉ chấp nhận một canonical bundle đã được `validate_artifact_lock()` xác minh. Component upload độc lập bị từ chối vì có thể để bytes mới đi cùng lock cũ.
 
 ```bash
 python scripts/upload_modal_volume.py \
@@ -485,23 +492,20 @@ python scripts/upload_modal_volume.py \
   --dry-run
 ```
 
-Hoặc upload từng component:
+Khi chuẩn bị cập nhật production, ưu tiên exact sync:
 
 ```bash
 python scripts/upload_modal_volume.py \
   --volume vn-history-artifacts \
-  --history-adapter outputs/history-answerer-full/adapter \
-  --research-agent outputs/research_agent \
-  --evidence-agent outputs/evidence_agent \
-  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
-  --retrieval-dir artifacts/retrieval \
-  --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
-  --config-dir artifacts/vn_history_deployment/config \
-  --manifest artifacts/vn_history_deployment/manifest.json \
+  --local-dir artifacts/vn_history_deployment \
+  --remote-dir / \
+  --exact-sync \
+  --allow-replace-adapter-weights \
   --dry-run
 ```
 
-CLI kiểm tra tất cả path trước khi gọi Modal. Không có token nào trong source.
+Upload/sync luôn ghi adapters, retrieval, corpus và config trước; `manifest.json` gần cuối và `artifact_lock.json` cuối cùng. Không có token nào trong source.
+Lưu ý: exact-sync dry-run phải đọc inventory Modal (hoặc dùng `--remote-inventory-json` đã lưu), nên validation hoàn toàn offline phải dùng `scripts/validate_artifact_bundle.py`.
 
 ### 3. Upload thật và kiểm tra
 

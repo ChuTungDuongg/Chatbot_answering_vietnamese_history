@@ -22,6 +22,7 @@ artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
 ├── config/model_registry.json
 ├── legacy/qwen25_history/model/       # optional benchmark-only baseline
 ├── manifest.json
+├── artifact_lock.json
 └── EXPORT_SUCCESS.txt
 ```
 
@@ -58,6 +59,12 @@ python -m training.scripts.export_artifacts \
 
 ## ☁️ Upload
 
+Validate local trước:
+
+```bash
+python scripts/validate_artifact_bundle.py artifacts/vn_history_deployment
+```
+
 ```bash
 python scripts/upload_modal_volume.py \
   --volume vn-history-artifacts \
@@ -66,7 +73,7 @@ python scripts/upload_modal_volume.py \
   --dry-run
 ```
 
-Bỏ `--dry-run` khi danh sách lệnh đúng. CLI validate local path trước khi ghi Volume.
+Bỏ `--dry-run` khi danh sách lệnh đúng. CLI từ chối component upload, validate toàn bộ canonical bundle trước khi ghi Volume và upload lock cuối cùng. Với production update, thêm `--exact-sync --allow-replace-adapter-weights` sau khi đã xem mutation plan.
 
 ## ✅ Sanity
 
@@ -82,5 +89,6 @@ Artifact sanity kiểm tra layout, hai base contracts, corpus/index và bốn ad
 
 - Corpus count, FAISS `ntotal` và BM25 manifest phải khớp.
 - Không sửa manifest để né validation.
+- Không upload riêng adapter/config vào một bundle đã khóa; luôn export lại snapshot và upload cả bundle.
 - Không force-add `.safetensors`, `.index`, corpus lớn hoặc SQLite vào Git.
 - Upload config mới cần restart/redeploy container; runtime không hot-reload config.

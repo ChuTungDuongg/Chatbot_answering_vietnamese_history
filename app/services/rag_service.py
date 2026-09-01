@@ -236,13 +236,17 @@ class RAGService:
         lock = validate_artifact_lock(settings.artifact_root)
         self.artifact_lock = lock
         self.deployment_id = str(lock["deployment_id"])
+        role_hashes = {
+            f"{role}_sha": str(payload.get("adapter_model_sha256") or "")[:12]
+            for role, payload in (lock.get("roles") or {}).items()
+        }
+        central_payload = lock.get("central") or {}
         log_event(
             "ARTIFACT_DEPLOYMENT",
             deployment_id=self.deployment_id,
             shared_base=lock["shared_base_model_id"],
-            research_sha=lock["roles"]["research"]["adapter_model_sha256"][:12],
-            evidence_sha=lock["roles"]["evidence"]["adapter_model_sha256"][:12],
-            history_sha=lock["roles"]["history"]["adapter_model_sha256"][:12],
+            **role_hashes,
+            central_sha=str(central_payload.get("adapter_model_sha256") or "")[:12] or None,
             corpus_count=lock["corpus"]["count"],
             faiss_count=lock["faiss"]["ntotal"],
             bm25_count=lock["bm25"]["count"],

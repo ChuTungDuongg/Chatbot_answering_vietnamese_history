@@ -8,6 +8,7 @@ import pytest
 from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 from app.artifact_contract import (
     build_artifact_lock,
+    diff_artifact_locks,
     inference_config_payload,
     manifest_payload,
     validate_artifact_lock,
@@ -88,6 +89,17 @@ def test_artifact_hash_mismatch_fails(tmp_path):
         validate_artifact_lock(root)
 
 
+def test_central_adapter_byte_change_reports_exact_stale_field(tmp_path):
+    root = _artifact_root(tmp_path)
+    (root / "adapters" / "central" / "adapter_model.safetensors").write_bytes(b"changed-central")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_artifact_lock(root)
+
+    assert "central.adapter_model_sha256" in str(exc_info.value)
+    assert "lock=" in str(exc_info.value) and "actual=" in str(exc_info.value)
+
+
 def test_config_consistency_validation_fails(tmp_path):
     root = _artifact_root(tmp_path)
     config_path = root / "config" / "inference_config.json"
@@ -95,7 +107,36 @@ def test_config_consistency_validation_fails(tmp_path):
     config["generation"]["research"]["max_new_tokens"] = 123
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="artifact_lock"):
+    with pytest.raises(RuntimeError, match="inference_config_sha256"):
+        validate_artifact_lock(root)
+
+
+def test_model_registry_change_reports_exact_stale_field(tmp_path):
+    root = _artifact_root(tmp_path)
+    registry = root / "config" / "model_registry.json"
+    registry.write_text(registry.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="model_registry_sha256"):
+        validate_artifact_lock(root)
+
+
+def test_lock_diff_is_bounded_and_field_level():
+    differences = diff_artifact_locks(
+        {"central": {"adapter_model_sha256": "old"}, "same": 1},
+        {"central": {"adapter_model_sha256": "new"}, "same": 1},
+    )
+
+    assert differences == ['- central.adapter_model_sha256: lock="old" actual="new"']
+
+
+def test_manifest_deployment_id_must_match_lock(tmp_path):
+    root = _artifact_root(tmp_path)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["deployment_id"] = "qwen3-stale-manifest"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="manifest deployment_id.*qwen3-stale-manifest"):
         validate_artifact_lock(root)
 
 
