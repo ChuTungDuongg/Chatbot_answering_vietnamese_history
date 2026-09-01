@@ -111,8 +111,9 @@ async def lifespan(app: FastAPI):
 
             if settings.enable_central_mode:
                 if settings.llm_backend != "transformers":
-                    raise ValueError("The standalone Central PEFT runtime currently requires LLM_BACKEND=transformers.")
-                validate_central_adapter(settings.central_adapter_path)
+                    raise ValueError("The standalone Central runtime currently requires LLM_BACKEND=transformers.")
+                if settings.central_adapter_path is not None:
+                    validate_central_adapter(settings.central_adapter_path)
                 central_model_runtime = LazyRuntime(
                     lambda: CentralModelRuntime(
                         model_id=settings.central_agent_model_id,
@@ -206,17 +207,21 @@ async def lifespan(app: FastAPI):
                     model_runtime=central_model_runtime,
                     tool_registry=tool_registry,
                     config=CentralAgentConfig(
-                        max_steps=settings.central_agent_max_steps,
+                        max_action_rounds=settings.central_agent_max_action_rounds,
                         repair_max_generations=settings.central_agent_repair_max_generations,
-                        max_new_tokens=settings.central_agent_max_new_tokens,
+                        action_max_new_tokens=settings.central_action_max_new_tokens,
+                        final_max_new_tokens=settings.central_final_max_new_tokens,
+                        repair_max_new_tokens=settings.central_repair_max_new_tokens,
                         max_tool_results=settings.central_agent_max_tool_results,
                         observation_char_budget=settings.central_agent_observation_char_budget,
                         timeout_seconds=settings.central_agent_timeout_seconds,
                         model_load_timeout_seconds=settings.central_model_load_timeout_seconds,
+                        tool_timeout_seconds=settings.central_tool_timeout_seconds,
                         enable_history=settings.central_agent_enable_history,
                         enable_documents=settings.central_agent_enable_documents,
                         enable_wikipedia=settings.central_agent_enable_wikipedia,
                         enable_web=settings.central_agent_enable_web,
+                        web_search_provider=settings.web_search_provider,
                     ),
                     has_uploaded_documents=lambda owner, conversation: any(
                         item.get("status") == "ready" and int(item.get("chunk_count") or 0) > 0

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 SHARED_BASE_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 CENTRAL_BASE_MODEL_ID = "Qwen/Qwen3-8B"
-CENTRAL_ADAPTER_PATH = "adapters/central"
+FUTURE_CENTRAL_V2_ADAPTER_PATH = "adapters/central-v2"
 RoleName = Literal["research", "evidence", "history"]
 
 
@@ -24,16 +24,21 @@ class RoleModelSpec:
 @dataclass(frozen=True)
 class CentralModelSpec:
     model_name: str
-    adapter_path: str
+    adapter_path: str | None
     expected_base_model_id: str
     generation: dict[str, Any]
 
 
 CENTRAL_MODEL = CentralModelSpec(
     model_name="central",
-    adapter_path=CENTRAL_ADAPTER_PATH,
+    adapter_path=None,
     expected_base_model_id=CENTRAL_BASE_MODEL_ID,
-    generation={"max_new_tokens": 1536, "temperature": 0.0, "top_p": 1.0},
+    generation={
+        "action_max_new_tokens": 256,
+        "final_max_new_tokens": 1536,
+        "repair_max_new_tokens": 1024,
+        "enable_thinking": False,
+    },
 )
 
 
@@ -61,13 +66,30 @@ ROLE_MODELS: dict[RoleName, RoleModelSpec] = {
     ),
 }
 
-def registry_manifest() -> dict[str, Any]:
+def _optional_adapter_path(adapter_path: str | None) -> str | None:
+    value = str(adapter_path or "").strip().replace("\\", "/")
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or not value.startswith("adapters/"):
+        raise ValueError("Central adapter path must be a safe artifact-relative adapters/... path")
+    return value
+
+
+def registry_manifest(*, central_adapter_path: str | None = None) -> dict[str, Any]:
+    configured_path = _optional_adapter_path(central_adapter_path)
+    central = asdict(CENTRAL_MODEL)
+    central.update({
+        "adapter_path": configured_path,
+        "adapter_configured": configured_path is not None,
+        "adapter_source": "peft" if configured_path else "none",
+    })
     return {
         "shared_base_model_id": SHARED_BASE_MODEL_ID,
         "tokenizer_model_id": SHARED_BASE_MODEL_ID,
         "roles": {name: asdict(spec) for name, spec in ROLE_MODELS.items()},
         "legacy_models": {},
-        "central": asdict(CENTRAL_MODEL),
+        "central": central,
     }
 
 

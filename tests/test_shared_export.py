@@ -51,7 +51,8 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
     assert manifest["base_weights_bundled"] is False
     assert set(manifest["roles"]) == {"research", "evidence", "history"}
     assert all((output / "adapters" / role / "adapter_config.json").is_file() for role in manifest["roles"])
-    assert (output / "adapters" / "central" / "adapter_config.json").is_file()
+    assert (output / "adapters" / "central-v2" / "adapter_config.json").is_file()
+    assert manifest["central"]["adapter_path"] == "adapters/central-v2"
     assert (output / "artifact_lock.json").is_file()
     lock = validate_artifact_lock(output)
     assert lock["central"]["base_model_name_or_path"] == CENTRAL_BASE_MODEL_ID

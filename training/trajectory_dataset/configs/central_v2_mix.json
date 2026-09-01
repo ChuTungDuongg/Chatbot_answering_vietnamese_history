@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "profile": "central_v2",
+  "description": "Central V2 only: structured Hermes function calls plus grounded Vietnamese history QA.",
+  "allowed_sources": [
+    "hermes_function_calling",
+    "uit_viquad2_grounded"
+  ],
+  "ratios": {
+    "hermes_function_calling": 0.65,
+    "uit_viquad2_grounded": 0.35
+  },
+  "duplication_allowed": false,
+  "enable_thinking": false
+}

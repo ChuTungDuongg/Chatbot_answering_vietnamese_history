@@ -73,7 +73,9 @@ def bm25_count(manifest_path: str | Path) -> int | None:
         return None
 
 
-def inference_config_payload() -> dict[str, Any]:
+def inference_config_payload(*, central_adapter_path: str | None = None) -> dict[str, Any]:
+    registry = registry_manifest(central_adapter_path=central_adapter_path)
+    central = registry["central"]
     return {
         "llm": {
             "backend": "transformers",
@@ -82,7 +84,9 @@ def inference_config_payload() -> dict[str, Any]:
             "role_models": {role: spec.model_name for role, spec in ROLE_MODELS.items()},
             "central": {
                 "model_id": CENTRAL_BASE_MODEL_ID,
-                "adapter_path": CENTRAL_MODEL.adapter_path,
+                "adapter_path": central["adapter_path"],
+                "adapter_configured": central["adapter_configured"],
+                "adapter_source": central["adapter_source"],
             },
             "vllm_base_url": "http://127.0.0.1:8001/v1",
         },
@@ -95,9 +99,14 @@ def inference_config_payload() -> dict[str, Any]:
     }
 
 
-def manifest_payload(*, corpus_count: int, deployment_id: str | None = None) -> dict[str, Any]:
+def manifest_payload(
+    *,
+    corpus_count: int,
+    deployment_id: str | None = None,
+    central_adapter_path: str | None = None,
+) -> dict[str, Any]:
     payload = {
-        **registry_manifest(),
+        **registry_manifest(central_adapter_path=central_adapter_path),
         "corpus": {"path": CORPUS_RELATIVE_PATH, "count": corpus_count},
         "retrieval": {
             "faiss": "retrieval/faiss",
@@ -132,25 +141,27 @@ def _lock_payload_without_deployment_id(root: str | Path) -> dict[str, Any]:
             "adapter_model_size": model_path.stat().st_size,
         }
 
-    central_dir = root_path / CENTRAL_MODEL.adapter_path
+    registry = load_json(root_path / MODEL_REGISTRY_RELATIVE_PATH)
+    central_config = registry.get("central") if isinstance(registry.get("central"), dict) else {}
+    central_relative_path = str(central_config.get("adapter_path") or "").strip() or None
     central = None
-    if central_dir.exists():
+    if central_relative_path is not None:
+        central_dir = root_path / central_relative_path
+        if not central_dir.is_dir():
+            raise FileNotFoundError(f"Configured Central adapter directory is missing: {central_dir}")
         validate_central_adapter(central_dir)
         central_config_path = central_dir / "adapter_config.json"
         central_model_path = central_dir / "adapter_model.safetensors"
         if not central_model_path.is_file():
             raise FileNotFoundError(f"Missing central adapter weights: {central_model_path}")
-        central_config = load_json(central_config_path)
+        adapter_config = load_json(central_config_path)
         central = {
-            "path": CENTRAL_MODEL.adapter_path,
-            "base_model_name_or_path": str(central_config.get("base_model_name_or_path") or ""),
+            "path": central_relative_path,
+            "base_model_name_or_path": str(adapter_config.get("base_model_name_or_path") or ""),
             "adapter_config_sha256": sha256_file(central_config_path),
             "adapter_model_sha256": sha256_file(central_model_path),
             "adapter_model_size": central_model_path.stat().st_size,
         }
-    if not roles and central is None:
-        raise RuntimeError("Artifact lock requires at least one role or Central adapter.")
-
     corpus_path = root_path / CORPUS_RELATIVE_PATH
     faiss_path = root_path / FAISS_RELATIVE_PATH
     bm25_manifest_path = root_path / BM25_MANIFEST_RELATIVE_PATH
@@ -158,14 +169,15 @@ def _lock_payload_without_deployment_id(root: str | Path) -> dict[str, Any]:
     model_registry_path = root_path / MODEL_REGISTRY_RELATIVE_PATH
     faiss_info = faiss_metadata(faiss_path)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "deployment_id_derivation": (
             "sha256 over canonical artifact_lock payload excluding deployment_id, "
             "then prefix qwen3- and truncate to 16 hex chars"
         ),
         "shared_base_model_id": SHARED_BASE_MODEL_ID,
         "roles": roles,
-        "central_base_model_id": CENTRAL_BASE_MODEL_ID if central is not None else None,
+        "central_base_model_id": CENTRAL_BASE_MODEL_ID,
+        "central_adapter_present": central is not None,
         "central": central,
         "corpus": {
             "path": CORPUS_RELATIVE_PATH,
@@ -263,8 +275,10 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
         )
     if actual_lock.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("Artifact lock shared base does not match canonical Qwen3.")
-    if actual_lock.get("central") is not None and actual_lock.get("central_base_model_id") != CENTRAL_BASE_MODEL_ID:
+    if actual_lock.get("central_base_model_id") != CENTRAL_BASE_MODEL_ID:
         raise RuntimeError("Artifact lock Central base does not match canonical Qwen3-8B.")
+    if bool(actual_lock.get("central_adapter_present")) != (actual_lock.get("central") is not None):
+        raise RuntimeError("Artifact lock Central adapter presence flag is inconsistent.")
 
     manifest = load_json(root_path / "manifest.json")
     inference_config = load_json(root_path / INFERENCE_CONFIG_RELATIVE_PATH)
@@ -276,13 +290,20 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
         )
     if manifest.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("manifest shared base does not match canonical Qwen3.")
-    if model_registry != registry_manifest():
+    registry_central = model_registry.get("central") if isinstance(model_registry.get("central"), dict) else {}
+    configured_path = registry_central.get("adapter_path")
+    if model_registry != registry_manifest(central_adapter_path=configured_path):
         raise RuntimeError("model_registry.json does not match app.agents.model_registry.")
+    expected_central_manifest = registry_manifest(central_adapter_path=configured_path)["central"]
+    if manifest.get("central") != expected_central_manifest:
+        raise RuntimeError("manifest Central adapter contract does not match model_registry.json.")
     llm = inference_config.get("llm", {})
     if llm.get("backend") != "transformers":
         raise RuntimeError("inference_config llm.backend must be transformers.")
     if llm.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("inference_config shared base does not match canonical Qwen3.")
+    if llm.get("central") != inference_config_payload(central_adapter_path=configured_path)["llm"]["central"]:
+        raise RuntimeError("inference_config Central adapter contract does not match registry.")
     if inference_config.get("generation") != {role: spec.generation for role, spec in ROLE_MODELS.items()}:
         raise RuntimeError("inference_config generation budgets do not match registry.")
     if inference_config.get("central_generation") != CENTRAL_MODEL.generation:

@@ -12,7 +12,8 @@ artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
 │   ├── research/                      # Qwen3 Research LoRA
 │   ├── evidence/                      # Qwen3 Evidence LoRA
 │   ├── history/                       # fresh Qwen3 History LoRA
-│   └── central/                       # Qwen3-8B Central Agent LoRA
+│   ├── central/                       # optional retained V1 baseline; never referenced by default
+│   └── central-v2/                    # optional future Qwen3-8B Central V2 LoRA
 ├── retrieval/
 │   ├── faiss/chunks.index
 │   ├── faiss/manifest.json
@@ -35,14 +36,14 @@ Trên Modal, Volume được mount trực tiếp ở `/artifacts`. Qwen3-4B role
 | `api-only` | Không artifact. |
 | `retrieval-only` | corpus, config, manifest, FAISS, BM25S. |
 | `full` + `legacy-merged` | retrieval artifacts + legacy History model (baseline only). |
-| `full` + `transformers`, mọi mode bật | retrieval artifacts + ba role adapters 4B + Central adapter 8B. |
-| `full` + `transformers`, chỉ `central` | retrieval artifacts + Central adapter 8B; không cần ba role adapters 4B. |
+| `full` + `transformers`, mọi mode bật | retrieval artifacts + ba role adapters 4B; Central chạy Qwen3-8B base nếu chưa cấu hình adapter V2. |
+| `full` + `transformers`, chỉ `central` | retrieval artifacts; Central chạy Qwen3-8B base, không cần adapter role 4B hay Central adapter. |
 | `full` + `transformers`, chỉ `hybrid` | retrieval artifacts + History adapter 4B. |
 | `full` + `transformers`, chỉ `three_llm` | retrieval artifacts + ba role adapters 4B. |
 | `full` + `vllm` | retrieval artifacts + endpoint đã phục vụ ba role names. |
 
 Cả Research, Evidence và History adapter phải khai báo cùng `Qwen/Qwen3-4B-Instruct-2507`; exporter/runtime fail sớm khi metadata lệch base.
-Central adapter phải khai báo riêng `Qwen/Qwen3-8B`; adapter 4B bị từ chối.
+Một Central V2 adapter tương lai là tùy chọn và phải khai báo riêng `Qwen/Qwen3-8B`; adapter 4B bị từ chối. `central_adapter_present=false`/`central=null` là bundle hợp lệ. Thư mục V1 `adapters/central` có thể được giữ làm baseline nhưng không được config/registry/manifest/lock tham chiếu.
 
 ## 🏗️ Tạo bundle
 
@@ -51,7 +52,6 @@ python -m training.scripts.export_artifacts \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
   --history-agent outputs/history-answerer-full/adapter \
-  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -83,7 +83,7 @@ modal run scripts/modal_artifact_sanity.py
 modal run scripts/modal_runtime_sanity.py
 ```
 
-Artifact sanity kiểm tra layout, hai base contracts, corpus/index và bốn adapters. Runtime sanity kiểm tra retrieval; mọi lệnh Modal có thể phát sinh quota/chi phí.
+Artifact sanity kiểm tra layout, base contracts, corpus/index, ba role adapters và Central adapter nếu được cấu hình. Runtime sanity kiểm tra retrieval; mọi lệnh Modal có thể phát sinh quota/chi phí.
 
 ## 🔒 Quy tắc
 

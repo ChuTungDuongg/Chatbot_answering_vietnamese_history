@@ -30,7 +30,10 @@ def test_all_active_roles_use_one_qwen3_base_and_unique_adapters():
     manifest = registry_manifest()
     assert manifest["legacy_models"] == {}
     assert manifest["central"]["expected_base_model_id"] == CENTRAL_BASE_MODEL_ID
-    assert CENTRAL_MODEL.adapter_path == "adapters/central"
+    assert CENTRAL_MODEL.adapter_path is None
+    assert manifest["central"]["adapter_path"] is None
+    assert manifest["central"]["adapter_configured"] is False
+    assert manifest["central"]["adapter_source"] == "none"
 
 
 def test_active_settings_reject_legacy_merged_backend():
@@ -87,6 +90,29 @@ def test_central_only_settings_do_not_require_any_4b_role_adapter(tmp_path):
 
     assert root / "adapters" / "central" in required
     assert all(root / "adapters" / role not in required for role in ("research", "evidence", "history"))
+
+
+def test_central_base_only_settings_require_no_adapter_and_blank_env_is_none(tmp_path):
+    root = tmp_path / "artifacts"
+    settings = Settings(
+        app_mode="full",
+        artifact_root=root,
+        enable_hybrid_mode=False,
+        enable_three_llm_mode=False,
+        enable_central_mode=True,
+        central_agent_adapter_path="   ",
+    )
+
+    assert settings.central_adapter_path is None
+    assert settings.required_full_paths() == settings.required_retrieval_paths()
+
+
+def test_registry_supports_future_optional_central_v2_adapter():
+    manifest = registry_manifest(central_adapter_path="adapters/central-v2")
+
+    assert manifest["central"]["adapter_path"] == "adapters/central-v2"
+    assert manifest["central"]["adapter_configured"] is True
+    assert manifest["central"]["adapter_source"] == "peft"
 
 
 def test_merge_rejects_qwen25_adapter_for_qwen3_before_loading_weights(tmp_path):

@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID, registry_manifest
 from app.artifact_contract import (
     build_artifact_lock,
     diff_artifact_locks,
@@ -16,7 +16,7 @@ from app.artifact_contract import (
 )
 
 
-def _artifact_root(tmp_path):
+def _artifact_root(tmp_path, *, central_adapter_path: str | None = None):
     root = tmp_path / "deployment"
     for role in ("research", "evidence", "history"):
         adapter = root / "adapters" / role
@@ -26,7 +26,10 @@ def _artifact_root(tmp_path):
             encoding="utf-8",
         )
         (adapter / "adapter_model.safetensors").write_bytes(f"{role}-weights".encode("ascii"))
-    central = root / "adapters" / "central"
+    # Keep an unreferenced V1 directory in base-only fixtures. The V2 contract is
+    # driven exclusively by explicit config, so its bytes must not be loaded or
+    # included in the deployment identity.
+    central = root / (central_adapter_path or "adapters/central")
     central.mkdir(parents=True)
     (central / "adapter_config.json").write_text(
         json.dumps({"base_model_name_or_path": CENTRAL_BASE_MODEL_ID}), encoding="utf-8",
@@ -44,16 +47,24 @@ def _artifact_root(tmp_path):
     (root / "retrieval" / "bm25s_index" / "phase9_manifest.json").write_text('{"count":2}', encoding="utf-8")
     (root / "config").mkdir()
     (root / "config" / "inference_config.json").write_text(
-        json.dumps(inference_config_payload(), ensure_ascii=False, indent=2),
+        json.dumps(inference_config_payload(central_adapter_path=central_adapter_path), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (root / "config" / "model_registry.json").write_text(
-        json.dumps(__import__("app.agents.model_registry", fromlist=["registry_manifest"]).registry_manifest(), ensure_ascii=False, indent=2),
+        json.dumps(registry_manifest(central_adapter_path=central_adapter_path), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     provisional = build_artifact_lock(root)
     (root / "manifest.json").write_text(
-        json.dumps(manifest_payload(corpus_count=2, deployment_id=provisional["deployment_id"]), ensure_ascii=False, indent=2),
+        json.dumps(
+            manifest_payload(
+                corpus_count=2,
+                deployment_id=provisional["deployment_id"],
+                central_adapter_path=central_adapter_path,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     write_artifact_lock(root)
@@ -90,14 +101,35 @@ def test_artifact_hash_mismatch_fails(tmp_path):
 
 
 def test_central_adapter_byte_change_reports_exact_stale_field(tmp_path):
-    root = _artifact_root(tmp_path)
-    (root / "adapters" / "central" / "adapter_model.safetensors").write_bytes(b"changed-central")
+    root = _artifact_root(tmp_path, central_adapter_path="adapters/central-v2")
+    (root / "adapters" / "central-v2" / "adapter_model.safetensors").write_bytes(b"changed-central")
 
     with pytest.raises(RuntimeError) as exc_info:
         validate_artifact_lock(root)
 
     assert "central.adapter_model_sha256" in str(exc_info.value)
     assert "lock=" in str(exc_info.value) and "actual=" in str(exc_info.value)
+
+
+def test_base_only_lock_ignores_retained_unconfigured_v1_adapter_bytes(tmp_path):
+    root = _artifact_root(tmp_path)
+    before = validate_artifact_lock(root)
+    (root / "adapters" / "central" / "adapter_model.safetensors").write_bytes(b"obsolete-v1-changed")
+
+    after = validate_artifact_lock(root)
+
+    assert before == after
+    assert after["central_adapter_present"] is False
+    assert after["central"] is None
+
+
+def test_future_configured_central_v2_adapter_is_valid(tmp_path):
+    root = _artifact_root(tmp_path, central_adapter_path="adapters/central-v2")
+
+    lock = validate_artifact_lock(root)
+
+    assert lock["central_adapter_present"] is True
+    assert lock["central"]["path"] == "adapters/central-v2"
 
 
 def test_config_consistency_validation_fails(tmp_path):
@@ -140,6 +172,19 @@ def test_manifest_deployment_id_must_match_lock(tmp_path):
         validate_artifact_lock(root)
 
 
+def test_manifest_cannot_retain_a_stale_central_v1_reference(tmp_path):
+    root = _artifact_root(tmp_path)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["central"]["adapter_path"] = "adapters/central"
+    manifest["central"]["adapter_configured"] = True
+    manifest["central"]["adapter_source"] = "peft"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="manifest Central adapter contract"):
+        validate_artifact_lock(root)
+
+
 def test_central_only_artifact_lock_does_not_require_three_role_adapters(tmp_path):
     root = _artifact_root(tmp_path)
     for role in ("research", "evidence", "history"):
@@ -154,4 +199,5 @@ def test_central_only_artifact_lock_does_not_require_three_role_adapters(tmp_pat
     lock = validate_artifact_lock(root)
 
     assert lock["roles"] == {}
-    assert lock["central"]["base_model_name_or_path"] == CENTRAL_BASE_MODEL_ID
+    assert lock["central"] is None
+    assert lock["central_adapter_present"] is False

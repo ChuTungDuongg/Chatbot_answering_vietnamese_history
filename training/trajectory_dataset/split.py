@@ -84,12 +84,19 @@ def split_trajectories(
         raise ValueError("train/validation/test ratios must sum to 1")
     union_find = _UnionFind(len(rows))
     first_row_for_group: dict[str, int] = {}
+    first_row_for_question: dict[str, int] = {}
     for index, row in enumerate(rows):
         for group in source_groups(row):
             if group in first_row_for_group:
                 union_find.union(index, first_row_for_group[group])
             else:
                 first_row_for_group[group] = index
+        question_key = normalized_question(first_user_question(row))
+        if question_key:
+            if question_key in first_row_for_question:
+                union_find.union(index, first_row_for_question[question_key])
+            else:
+                first_row_for_question[question_key] = index
 
     components: dict[int, list[dict[str, Any]]] = {}
     for index, row in enumerate(rows):
@@ -177,6 +184,7 @@ def split_trajectories(
 def split_coverage_report(splits: TrajectorySplits) -> dict[str, Any]:
     report: dict[str, Any] = {"splits": {}}
     groups_by_split: dict[str, set[str]] = {}
+    questions_by_split: dict[str, set[str]] = {}
     for name in ("train", "validation", "test"):
         rows = getattr(splits, name)
         source_counts = Counter(str(row.get("source_dataset") or "unknown") for row in rows)
@@ -187,6 +195,9 @@ def split_coverage_report(splits: TrajectorySplits) -> dict[str, Any]:
             if str(row.get("source_dataset") or "").startswith("custom_history")
         )
         groups_by_split[name] = {group for row in rows for group in source_groups(row)}
+        questions_by_split[name] = {
+            key for row in rows if (key := normalized_question(first_user_question(row)))
+        }
         report["splits"][name] = {
             "rows": len(rows),
             "source_dataset_counts": dict(sorted(source_counts.items())),
@@ -205,4 +216,12 @@ def split_coverage_report(splits: TrajectorySplits) -> dict[str, Any]:
                 overlaps[f"{left}__{right}"] = shared[:20]
     report["source_group_leakage_count"] = sum(len(values) for values in overlaps.values())
     report["source_group_leakage"] = overlaps
+    question_overlaps: dict[str, list[str]] = {}
+    for index, left in enumerate(names):
+        for right in names[index + 1:]:
+            shared = sorted(questions_by_split[left] & questions_by_split[right])
+            if shared:
+                question_overlaps[f"{left}__{right}"] = shared[:20]
+    report["normalized_question_leakage_count"] = sum(len(values) for values in question_overlaps.values())
+    report["normalized_question_leakage"] = question_overlaps
     return report

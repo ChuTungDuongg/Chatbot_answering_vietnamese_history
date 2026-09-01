@@ -35,7 +35,8 @@ def _canonical_bundle(tmp_path):
             json.dumps({"base_model_name_or_path": SHARED_BASE_MODEL_ID}), encoding="utf-8",
         )
         (adapter / "adapter_model.safetensors").write_bytes(f"{role}-weights".encode())
-    central = bundle / "adapters" / "central"
+    central_adapter_path = "adapters/central-v2"
+    central = bundle / central_adapter_path
     central.mkdir(parents=True)
     (central / "adapter_config.json").write_text(
         json.dumps({"base_model_name_or_path": CENTRAL_BASE_MODEL_ID}), encoding="utf-8",
@@ -54,14 +55,20 @@ def _canonical_bundle(tmp_path):
     )
     (bundle / "config").mkdir()
     (bundle / "config" / "inference_config.json").write_text(
-        json.dumps(inference_config_payload()), encoding="utf-8",
+        json.dumps(inference_config_payload(central_adapter_path=central_adapter_path)), encoding="utf-8",
     )
     (bundle / "config" / "model_registry.json").write_text(
-        json.dumps(registry_manifest()), encoding="utf-8",
+        json.dumps(registry_manifest(central_adapter_path=central_adapter_path)), encoding="utf-8",
     )
     provisional = build_artifact_lock(bundle)
     (bundle / "manifest.json").write_text(
-        json.dumps(manifest_payload(corpus_count=1, deployment_id=provisional["deployment_id"])),
+        json.dumps(
+            manifest_payload(
+                corpus_count=1,
+                deployment_id=provisional["deployment_id"],
+                central_adapter_path=central_adapter_path,
+            )
+        ),
         encoding="utf-8",
     )
     write_artifact_lock(bundle)
@@ -134,7 +141,7 @@ def test_local_validation_cli_needs_no_modal_or_gpu(tmp_path, capsys):
 
 def test_local_validation_cli_returns_nonzero_with_compact_lock_diff(tmp_path, capsys):
     bundle = _canonical_bundle(tmp_path)
-    (bundle / "adapters" / "central" / "adapter_model.safetensors").write_bytes(b"stale")
+    (bundle / "adapters" / "central-v2" / "adapter_model.safetensors").write_bytes(b"stale")
 
     assert validate_bundle_main([str(bundle)]) == 1
     error = capsys.readouterr().err

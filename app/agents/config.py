@@ -28,28 +28,41 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class CentralAgentConfig:
-    """Latency and evidence bounds for the standalone Central model loop."""
+    """Latency, generation, and evidence bounds for Central V2."""
 
-    max_steps: int = 3
-    hard_max_steps: int = 3
+    max_action_rounds: int = 2
     repair_max_generations: int = 1
-    max_new_tokens: int = 1536
+    action_max_new_tokens: int = 256
+    final_max_new_tokens: int = 1536
+    repair_max_new_tokens: int = 1024
     max_tool_results: int = 6
     observation_char_budget: int = 12_000
     timeout_seconds: float = 180.0
     model_load_timeout_seconds: float = 300.0
+    tool_timeout_seconds: float = 30.0
     enable_history: bool = True
     enable_documents: bool = True
     enable_wikipedia: bool = True
     enable_web: bool = True
+    web_search_provider: str = "local-only"
+    # Deprecated constructor aliases retained for older callers/tests only.
+    max_steps: int | None = None
+    hard_max_steps: int = 4
+    max_new_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if not 1 <= self.max_steps <= self.hard_max_steps <= 3:
-            raise ValueError("Central max_steps must be between 1 and hard_max_steps (maximum 3).")
+        if self.max_steps is not None:
+            object.__setattr__(self, "max_action_rounds", max(0, min(2, self.max_steps - 1)))
+        if self.max_new_tokens is not None:
+            object.__setattr__(self, "final_max_new_tokens", self.max_new_tokens)
+        if not 0 <= self.max_action_rounds <= 4:
+            raise ValueError("Central max_action_rounds must be between 0 and 4.")
         if not 0 <= self.repair_max_generations <= 1:
             raise ValueError("Central repair_max_generations must be 0 or 1.")
-        if self.max_new_tokens < 256:
-            raise ValueError("Central max_new_tokens must be at least 256.")
+        if self.action_max_new_tokens < 32:
+            raise ValueError("Central action_max_new_tokens must be at least 32.")
+        if self.final_max_new_tokens < 128 or self.repair_max_new_tokens < 128:
+            raise ValueError("Central final/repair token budgets must be at least 128.")
         if not 1 <= self.max_tool_results <= 10:
             raise ValueError("Central max_tool_results must be between 1 and 10.")
         if self.observation_char_budget < 1_000:
@@ -58,3 +71,5 @@ class CentralAgentConfig:
             raise ValueError("Central timeout_seconds must be positive.")
         if self.model_load_timeout_seconds <= 0:
             raise ValueError("Central model_load_timeout_seconds must be positive.")
+        if self.tool_timeout_seconds <= 0:
+            raise ValueError("Central tool_timeout_seconds must be positive.")

@@ -24,7 +24,7 @@ Hệ thống có ba mode user-facing tách biệt:
 
 1. **`hybrid`**: hybrid retrieval rồi một History Answerer tạo câu trả lời.
 2. **`three_llm`**: pipeline Research → Evidence → History dùng shared Qwen3-4B và ba adapter vai trò.
-3. **`central`**: một Qwen3-8B + Central adapter tự chọn công cụ, đọc observation và tự viết final answer.
+3. **`central`**: Central V2 trên Qwen3-8B base (PEFT tùy chọn), luôn lấy local history evidence trước rồi dùng structured tool calling có giới hạn và tự tổng hợp final answer.
 
 Pipeline `three_llm` giữ ba vai trò:
 
@@ -209,12 +209,19 @@ ENABLE_HYBRID_MODE=false
 ENABLE_THREE_LLM_MODE=false
 ENABLE_CENTRAL_MODE=true
 CENTRAL_AGENT_MODEL_ID=Qwen/Qwen3-8B
-CENTRAL_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/central
+CENTRAL_AGENT_ADAPTER_PATH=
+CENTRAL_ACTION_MAX_NEW_TOKENS=256
+CENTRAL_FINAL_MAX_NEW_TOKENS=1536
+CENTRAL_REPAIR_MAX_NEW_TOKENS=1024
+CENTRAL_AGENT_MAX_ACTION_ROUNDS=2
+CENTRAL_AGENT_TIMEOUT_SECONDS=180
+CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS=300
+CENTRAL_TOOL_TIMEOUT_SECONDS=30
 RUNTIME_LOADING_STRATEGY=lazy
 DEFAULT_INFERENCE_MODE=central
 ```
 
-Central adapter phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`; runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
+Central V2 mặc định chạy `Qwen/Qwen3-8B` base và không tự dùng `adapters/central`. Một adapter tương lai chỉ được gắn khi `CENTRAL_AGENT_ADAPTER_PATH` được cấu hình rõ ràng; nó phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`. Runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
 Nếu muốn Central fail-fast khi base model chưa có trong cache, đặt thêm `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` sau khi đã seed/validate Hugging Face cache.
 Central tách timeout load model khỏi timeout suy luận: `CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS` bảo vệ lazy initialization Qwen3-8B, còn `CENTRAL_AGENT_TIMEOUT_SECONDS` chỉ áp dụng sau khi model đã sẵn sàng.
 
@@ -432,14 +439,13 @@ Index builder dùng normalized E5 embeddings + `faiss.IndexFlatIP` và BM25S. Ru
 
 ## 📦 Export shared-base artifact
 
-Export ba adapter 4B và một Central adapter 8B; base weights được cache riêng:
+Export ba adapter 4B; Central V2 base-only là mặc định và base weights được cache riêng. Khi đã train adapter V2, có thể thêm `--central-agent outputs/central-v2/final_adapter --central-adapter-relative-path adapters/central-v2`:
 
 ```bash
 python -m training.scripts.export_artifacts \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
   --history-agent outputs/history-answerer-full/adapter \
-  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -452,7 +458,8 @@ artifacts/vn_history_deployment/
 ├── adapters/research/
 ├── adapters/evidence/
 ├── adapters/history/
-├── adapters/central/
+├── adapters/central/             # optional retained V1 baseline, unreferenced
+├── adapters/central-v2/          # only when explicitly exported/configured
 ├── retrieval/faiss/
 ├── retrieval/bm25s_index/
 ├── corpus/vn_history_rag_chunks_enriched.jsonl

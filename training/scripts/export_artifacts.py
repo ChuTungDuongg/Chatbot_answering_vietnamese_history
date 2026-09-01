@@ -15,7 +15,7 @@ from app.artifact_contract import (
     write_artifact_lock,
 )
 from app.agents.model_registry import (
-    CENTRAL_MODEL,
+    FUTURE_CENTRAL_V2_ADAPTER_PATH,
     ROLE_MODELS,
     registry_manifest,
     validate_central_adapter,
@@ -101,7 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--research-agent", required=True, help="Research Agent adapter directory.")
     parser.add_argument("--evidence-agent", required=True, help="Evidence Agent adapter directory.")
     parser.add_argument("--history-agent", required=True, help="Fresh Qwen3 History Answerer adapter directory.")
-    parser.add_argument("--central-agent", required=True, help="Qwen3-8B Central Agent adapter directory.")
+    parser.add_argument("--central-agent", default=None, help="Optional future Qwen3-8B Central V2 adapter directory.")
+    parser.add_argument(
+        "--central-adapter-relative-path",
+        default=FUTURE_CENTRAL_V2_ADAPTER_PATH,
+        help="Artifact-relative destination used only when --central-agent is configured.",
+    )
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--retrieval-dir", required=True)
     parser.add_argument("--output-root", default="artifacts/vn_history_deployment")
@@ -123,8 +128,11 @@ def main(argv: list[str] | None = None) -> int:
         for role, source in adapter_sources.items():
             validate_role_adapter(role, source)
             _copy_adapter(source, tmp_root / ROLE_MODELS[role].adapter_path)
-        validate_central_adapter(args.central_agent)
-        _copy_adapter(args.central_agent, tmp_root / CENTRAL_MODEL.adapter_path)
+        central_adapter_path = None
+        if args.central_agent:
+            central_adapter_path = args.central_adapter_relative_path
+            validate_central_adapter(args.central_agent)
+            _copy_adapter(args.central_agent, tmp_root / central_adapter_path)
         if args.model_dir:
             legacy_dir = tmp_root / "legacy" / "qwen25_history" / "benchmark_only_model"
             _copy(args.model_dir, legacy_dir)
@@ -133,22 +141,26 @@ def main(argv: list[str] | None = None) -> int:
         _copy(Path(args.retrieval_dir) / "bm25s_index", tmp_root / "retrieval" / "bm25s_index")
         (tmp_root / "config").mkdir(parents=True, exist_ok=True)
         (tmp_root / "config" / "inference_config.json").write_text(
-            json.dumps(inference_config_payload(), ensure_ascii=False, indent=2),
+            json.dumps(inference_config_payload(central_adapter_path=central_adapter_path), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        model_registry = registry_manifest()
+        model_registry = registry_manifest(central_adapter_path=central_adapter_path)
         (tmp_root / "config" / "model_registry.json").write_text(
             json.dumps(model_registry, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         corpus_count = sum(1 for line in Path(args.corpus).open("r", encoding="utf-8") if line.strip())
-        provisional_manifest = manifest_payload(corpus_count=corpus_count)
+        provisional_manifest = manifest_payload(corpus_count=corpus_count, central_adapter_path=central_adapter_path)
         (tmp_root / "manifest.json").write_text(
             json.dumps(provisional_manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         provisional_lock = build_artifact_lock(tmp_root)
-        manifest = manifest_payload(corpus_count=corpus_count, deployment_id=provisional_lock["deployment_id"])
+        manifest = manifest_payload(
+            corpus_count=corpus_count,
+            deployment_id=provisional_lock["deployment_id"],
+            central_adapter_path=central_adapter_path,
+        )
         (tmp_root / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",

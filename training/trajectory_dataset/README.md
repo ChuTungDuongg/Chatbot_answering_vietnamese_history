@@ -1,4 +1,104 @@
-# Central Qwen3-8B trajectory dataset pipeline (custom builder V4)
+# Central Qwen3-8B trajectory datasets
+
+## Central V2 (current default)
+
+Central V2 stores semantic conversations and uses only two sources by default:
+
+| Canonical source | Accepted input | Training purpose |
+|---|---|---|
+| `hermes_function_calling` | `func-calling-singleturn.json`, `func-calling.json`, `glaive-function-calling-5k.json` from `NousResearch/hermes-function-calling-v1` | Structured single-call, multi-call, and multi-turn tool behavior. |
+| `uit_viquad2_grounded` | History-relevant rows from the official `train`, `validation`, and `test` splits of `taidng/UIT-ViQuAD2.0` | Mandatory `search_history` grounding, Vietnamese evidence synthesis, and insufficient-evidence behavior. |
+
+The Hermes JSON-mode files `json-mode-agentic.json` and `json-mode-singleturn.json` are excluded from this profile. Agent-FLAN, Vietnam-History-200K, `custom_history`, and the old multi-hop source remain available only through the legacy V1 workflow below. The checked-in [`central_v2_mix.json`](configs/central_v2_mix.json) permits only the two V2 sources, requests a 65/35 row ratio, never duplicates rows to fill capacity, and records the achieved ratio.
+
+Hermes normalization prefers an explicit `tools` field and otherwise safely parses the system `<tools>` block. It emits canonical assistant `tool_calls` and paired `tool` messages with stable call IDs; source serialization, scratchpads, `Thought:`, and plaintext `Action:` are not assistant targets. UIT-ViQuAD uses a conservative deterministic history score over title, question, and context. Every accepted row starts with `search_history`. Answerable rows use a bounded sentence containing the answer span and cite the synthetic observed ID; impossible rows explicitly say the supplied evidence is insufficient and do not fabricate support.
+
+Both preprocessing and production use `tokenizer.apply_chat_template(..., tools=tools, enable_thinking=False)`. Stored JSONL must not contain Qwen control tokens or a hand-written ReAct protocol. System, user, and tool observations are masked; assistant tool calls and final answers are supervised.
+
+### Google Colab workflow for the real Central V2 dataset
+
+Run these commands tomorrow in Colab, not as part of repository tests. They download the two public datasets and, during the audit/preflight steps, the Qwen tokenizer. They do not need model weights until the final training command.
+
+```bash
+git clone https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history.git
+cd Chatbot_answering_vietnamese_history
+python -m pip install -r requirements-training.txt
+
+CENTRAL_V2=/content/drive/MyDrive/vn_history/central_v2
+mkdir -p "$CENTRAL_V2/intermediate" "$CENTRAL_V2/final" "$CENTRAL_V2/reports"
+
+python -m training.trajectory_dataset.cli normalize-public \
+  --source hermes_function_calling \
+  --split auto \
+  --max-samples 1000000 \
+  --max-attempts 2000000 \
+  --output "$CENTRAL_V2/intermediate/hermes_function_calling.jsonl" \
+  --rejected-output "$CENTRAL_V2/intermediate/hermes_function_calling.rejected.jsonl" \
+  --report-output "$CENTRAL_V2/reports/hermes_report.json"
+
+python -m training.trajectory_dataset.cli normalize-public \
+  --source uit_viquad2 \
+  --split auto \
+  --max-samples 1000000 \
+  --max-attempts 2000000 \
+  --viquad-history-threshold 4 \
+  --viquad-max-impossible-ratio 0.20 \
+  --top-k 6 \
+  --output "$CENTRAL_V2/intermediate/uit_viquad2_grounded.jsonl" \
+  --rejected-output "$CENTRAL_V2/intermediate/uit_viquad2_grounded.rejected.jsonl" \
+  --report-output "$CENTRAL_V2/reports/viquad_report.json"
+
+python -m training.trajectory_dataset.cli mix \
+  --config training/trajectory_dataset/configs/central_v2_mix.json \
+  --input "hermes_function_calling=$CENTRAL_V2/intermediate/hermes_function_calling.jsonl" \
+  --input "uit_viquad2_grounded=$CENTRAL_V2/intermediate/uit_viquad2_grounded.jsonl" \
+  --output "$CENTRAL_V2/mixed.jsonl" \
+  --rejected-output "$CENTRAL_V2/intermediate/mix.rejected.jsonl" \
+  --report-output "$CENTRAL_V2/reports/mix_report.json"
+
+python -m training.trajectory_dataset.cli validate \
+  --input "$CENTRAL_V2/mixed.jsonl" \
+  --output "$CENTRAL_V2/validated.jsonl" \
+  --rejected-output "$CENTRAL_V2/intermediate/validation.rejected.jsonl" \
+  --report-output "$CENTRAL_V2/reports/validation_report.json"
+
+python -m training.trajectory_dataset.cli audit \
+  --input "$CENTRAL_V2/validated.jsonl" \
+  --tokenizer Qwen/Qwen3-8B \
+  --max-seq-length 4096 \
+  --output "$CENTRAL_V2/reports/audit_report.json"
+
+python -m training.trajectory_dataset.cli split \
+  --input "$CENTRAL_V2/validated.jsonl" \
+  --output-dir "$CENTRAL_V2/final" \
+  --train-ratio 0.90 \
+  --val-ratio 0.05 \
+  --test-ratio 0.05 \
+  --seed 42 \
+  --report-output "$CENTRAL_V2/reports/split_report.json"
+```
+
+Inspect every report and rejected file before training. The split command preserves UIT-ViQuAD validation/test provenance where possible, groups connected source records, and unions identical normalized questions so they cannot cross final splits. The audit reports source/task counts, exact labeled tokens when the tokenizer is supplied, tool-call versus final-answer tokens, first-assistant behavior, answerability, tool-call counts, length percentiles, truncation risk, repeated prefixes, and suspicious protocol/template strings.
+
+First verify the existing trainer without loading model weights:
+
+```bash
+python -m training.train_qwen3_8b_agent \
+  --model-id Qwen/Qwen3-8B \
+  --train-file "$CENTRAL_V2/final/train.jsonl" \
+  --validation-file "$CENTRAL_V2/final/validation.jsonl" \
+  --test-file "$CENTRAL_V2/final/test.jsonl" \
+  --output-dir /content/drive/MyDrive/vn_history/outputs/central-v2 \
+  --dry-run
+```
+
+After reviewing the dry-run, remove `--dry-run` to train. Export the resulting adapter to `adapters/central-v2` and set `CENTRAL_AGENT_ADAPTER_PATH=/artifacts/adapters/central-v2`; no application architecture change is required.
+
+### Offline adapter fixtures
+
+Both V2 normalizers accept `--input-jsonl PATH`, which bypasses Hugging Face. The test suite uses this path exclusively and performs no network access.
+
+## Legacy V1 pipeline (reproducibility only)
 
 This additive pipeline prepares behavioral training examples for one possible future central Qwen3-8B Vietnamese-language history agent. It does not replace the current Research Agent, Evidence Critic, or History Answerer. It does not rebuild the retrieval indexes and it never edits the enriched corpus.
 
@@ -14,7 +114,7 @@ The corpus is knowledge; the trajectory dataset is behavior. Blindly putting all
 
 ## Sources and normalization
 
-V1 supports three bounded public sources plus custom corpus-grounded rows:
+Legacy V1 supports three bounded public sources plus custom corpus-grounded rows:
 
 | Canonical source | Public dataset | Contribution |
 |---|---|---|

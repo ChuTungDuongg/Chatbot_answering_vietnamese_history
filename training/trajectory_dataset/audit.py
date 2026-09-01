@@ -18,7 +18,12 @@ from .builders.custom_history import (
 )
 from .citations import extract_evidence_citations
 from .dedup import first_user_question, normalized_question
-from .preprocess import IGNORE_INDEX, analyze_truncation, build_canonical_sft_example
+from .preprocess import (
+    IGNORE_INDEX,
+    analyze_truncation,
+    assistant_labeled_token_counts,
+    build_canonical_sft_example,
+)
 
 
 def _describe(values: list[int]) -> dict[str, float | int]:
@@ -487,4 +492,102 @@ def tokenizer_audit(
         "preprocessing_error_row_ids": preprocessing_error_row_ids,
         "preprocessing_error_examples": preprocessing_error_examples,
         "max_seq_length": max_seq_length,
+    }
+
+
+def central_v2_audit(
+    rows: Iterable[dict[str, Any]],
+    *,
+    tokenizer: Any | None = None,
+    max_seq_length: int = 4096,
+) -> dict[str, Any]:
+    """Behavior and labeled-token audit for the Central V2 two-source mix."""
+    materialized = list(rows)
+    source_counts = Counter(str(row.get("source_dataset") or "unknown") for row in materialized)
+    task_counts = Counter(str(row.get("task_type") or "unknown") for row in materialized)
+    rows_using_tools = 0
+    first_tool = 0
+    direct_first_answer = 0
+    tool_calls_per_row: list[int] = []
+    lengths: list[int] = []
+    answerability: Counter[str] = Counter()
+    prefixes: Counter[str] = Counter()
+    suspicious = Counter({"Vào năm": 0, "Ý nghĩa:": 0, "Action:": 0, "Thought:": 0})
+    total_labeled = tool_labeled = final_labeled = 0
+    trajectory_tokens: list[int] = []
+    truncation_risk = 0
+    token_errors = 0
+
+    for row in materialized:
+        messages = [message for message in row.get("messages") or [] if isinstance(message, dict)]
+        assistants = [message for message in messages if message.get("role") == "assistant"]
+        calls = sum(len(message.get("tool_calls") or []) for message in assistants)
+        tool_calls_per_row.append(calls)
+        lengths.append(len(messages))
+        if calls:
+            rows_using_tools += 1
+        if assistants and assistants[0].get("tool_calls"):
+            first_tool += 1
+        elif assistants and str(assistants[0].get("content") or "").strip():
+            direct_first_answer += 1
+        provenance = row.get("provenance") or {}
+        if provenance.get("answerable") is True:
+            answerability["answerable"] += 1
+        elif provenance.get("is_impossible") is True or provenance.get("answerable") is False:
+            answerability["unanswerable"] += 1
+        for message in assistants:
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            normalized_prefix = " ".join(content.split())[:48]
+            prefixes[normalized_prefix] += 1
+            for needle in suspicious:
+                suspicious[needle] += content.count(needle)
+
+        if tokenizer is not None:
+            try:
+                counts = assistant_labeled_token_counts(tokenizer, row)
+                tool_labeled += counts["assistant_tool_call_labeled_tokens"]
+                final_labeled += counts["assistant_final_answer_labeled_tokens"]
+                total_labeled += counts["total_assistant_labeled_tokens"]
+                trajectory_tokens.append(counts["trajectory_tokens"])
+                truncation_risk += int(counts["trajectory_tokens"] > max_seq_length)
+            except Exception:
+                token_errors += 1
+        else:
+            # Clearly marked estimate for cheap offline inspection; the Colab
+            # workflow supplies the Qwen tokenizer for exact labeled tokens.
+            for message in assistants:
+                content = json.dumps(message.get("tool_calls"), ensure_ascii=False) if message.get("tool_calls") else str(message.get("content") or "")
+                count = len(content.split())
+                total_labeled += count
+                if message.get("tool_calls"):
+                    tool_labeled += count
+                else:
+                    final_labeled += count
+
+    row_count = len(materialized)
+    return {
+        "rows": row_count,
+        "rows_by_source": dict(sorted(source_counts.items())),
+        "rows_by_task": dict(sorted(task_counts.items())),
+        "rows_using_tools": rows_using_tools,
+        "total_assistant_labeled_tokens": total_labeled,
+        "assistant_tool_call_labeled_tokens": tool_labeled,
+        "assistant_final_answer_labeled_tokens": final_labeled,
+        "tool_call_tokens_per_all_labeled_tokens": round(tool_labeled / total_labeled, 6) if total_labeled else 0.0,
+        "token_metrics_exact": tokenizer is not None,
+        "token_metric_errors": token_errors,
+        "first_assistant_tool_call_rate": round(first_tool / row_count, 6) if row_count else 0.0,
+        "direct_first_assistant_answer_rate": round(direct_first_answer / row_count, 6) if row_count else 0.0,
+        "tool_calls_per_trajectory": _describe(tool_calls_per_row),
+        "answerable_unanswerable": dict(sorted(answerability.items())),
+        "trajectory_turns": _describe(lengths),
+        "trajectory_tokens": _describe(trajectory_tokens),
+        "truncation_risk_rows": truncation_risk,
+        "max_seq_length": max_seq_length,
+        "top_repeated_assistant_prefixes": [
+            {"prefix": prefix, "count": count} for prefix, count in prefixes.most_common(20)
+        ],
+        "suspicious_string_frequency": dict(suspicious),
     }

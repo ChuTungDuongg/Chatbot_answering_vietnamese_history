@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -8,6 +9,7 @@ from .adapters.agent_flan import contains_agent_flan_action_syntax, contains_age
 from .adapters.vietnam_history import canonical_analysis_messages_remaining
 from .citations import extract_evidence_citations
 from .schema import SCHEMA_VERSION, tool_names
+from .schema import QWEN3_TOOL_TEMPLATE_CONTRACT
 
 
 VALID_ROLES = {"system", "user", "assistant", "tool"}
@@ -107,6 +109,13 @@ def validate_trajectory(row: dict[str, Any]) -> list[str]:
                 errors.append(f"message {index} has an empty user question")
         if role == "assistant":
             calls = message.get("tool_calls") or []
+            if message.get("analysis") or message.get("reasoning_content"):
+                errors.append(f"message {index} contains hidden-analysis supervision")
+            if isinstance(content, str) and (
+                re.search(r"(?:^|\n)\s*(?:thought|action|reasoning|scratchpad)\s*:", content, re.I)
+                or "<think>" in content.casefold()
+            ):
+                errors.append(f"message {index} contains plaintext/hidden reasoning supervision")
             if calls and not isinstance(calls, list):
                 errors.append(f"message {index} tool_calls must be a list")
                 calls = []
@@ -151,7 +160,13 @@ def validate_trajectory(row: dict[str, Any]) -> list[str]:
 
     if not has_user:
         errors.append("trajectory has no user message")
-    if pending:
+    terminal_tool_call_only = bool((provenance or {}).get("terminal_tool_call_only"))
+    terminal_pending_allowed = bool(
+        terminal_tool_call_only
+        and messages[-1].get("role") == "assistant"
+        and messages[-1].get("tool_calls")
+    )
+    if pending and not terminal_pending_allowed:
         errors.append(f"tool calls without results: {sorted(pending)}")
     require_final = (provenance or {}).get("requires_final_answer", True)
     if require_final:
@@ -170,6 +185,40 @@ def validate_trajectory(row: dict[str, Any]) -> list[str]:
         errors.append("uses_tools does not match messages")
 
     source_dataset = str(row.get("source_dataset") or "")
+    if source_dataset in {"hermes_function_calling", "uit_viquad2_grounded"}:
+        if (provenance or {}).get("chat_template_contract") != QWEN3_TOOL_TEMPLATE_CONTRACT:
+            errors.append("train/inference Qwen tool format contract is inconsistent")
+    if source_dataset == "hermes_function_calling":
+        variant = str((provenance or {}).get("source_file") or "").casefold().replace("_", "-")
+        if "json-mode" in variant:
+            errors.append("Hermes JSON-mode-only sample entered function-call mix")
+        assistant_text = "\n".join(
+            str(message.get("content") or "")
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "assistant"
+        )
+        if "<tool_call>" in assistant_text or "<tool_response>" in assistant_text or "<tools>" in assistant_text:
+            errors.append("raw Hermes protocol text remains in assistant supervision")
+    if source_dataset == "uit_viquad2_grounded":
+        assistant_messages = [
+            message for message in messages
+            if isinstance(message, dict) and message.get("role") == "assistant"
+        ]
+        first_calls = assistant_messages[0].get("tool_calls") if assistant_messages else None
+        first_name = ""
+        if isinstance(first_calls, list) and first_calls:
+            function = first_calls[0].get("function") if isinstance(first_calls[0], dict) else None
+            first_name = str(function.get("name") or "") if isinstance(function, dict) else ""
+        if first_name != "search_history":
+            errors.append("ViQuAD grounded row must begin with a search_history assistant tool call")
+        impossible = bool((provenance or {}).get("is_impossible"))
+        if impossible:
+            if extract_evidence_citations(final_assistant_content, observed_evidence).citations:
+                errors.append("unanswerable ViQuAD row cites evidence as a supported answer")
+            if "không đủ" not in final_assistant_content.casefold() and "chưa đủ" not in final_assistant_content.casefold():
+                errors.append("unanswerable ViQuAD row fabricates a supported answer")
+        elif not extract_evidence_citations(final_assistant_content, observed_evidence).citations:
+            errors.append("answerable ViQuAD final answer cites no available evidence")
     if source_dataset == "vietnam_history_200k" and canonical_analysis_messages_remaining(row):
         errors.append("Vietnam-History assistant analysis channel remains in canonical messages")
     if source_dataset == "agent_flan":

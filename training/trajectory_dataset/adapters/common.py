@@ -30,7 +30,15 @@ def clean_reasoning(text: str, *, include_reasoning: bool) -> str:
 
 def normalize_tool_definition(tool: dict[str, Any]) -> dict[str, Any]:
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
-        return copy.deepcopy(tool)
+        function = tool["function"]
+        name = str(function.get("name") or "").strip()
+        parameters = function.get("parameters")
+        if not name or not isinstance(parameters, dict):
+            raise AdapterError("function tool definition requires name and parameters")
+        normalized = copy.deepcopy(tool)
+        normalized["function"]["name"] = name
+        normalized["function"].setdefault("description", "")
+        return normalized
     name = tool.get("name")
     if not name:
         raise AdapterError("tool definition is missing name")

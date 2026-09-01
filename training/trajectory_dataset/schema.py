@@ -10,6 +10,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "Bạn là trợ lý trung tâm về lịch sử Việt Nam. Hãy dùng công cụ khi cần, "
     "chỉ kết luận từ bằng chứng quan sát được và trích dẫn ID nguồn."
 )
+CENTRAL_V2_SYSTEM_PROMPT = (
+    "Bạn là Central V2. Dùng function call có cấu trúc khi công cụ được cung cấp, "
+    "đọc kết quả công cụ, chỉ kết luận từ bằng chứng và không tiết lộ suy luận ẩn."
+)
+QWEN3_TOOL_TEMPLATE_CONTRACT = {
+    "family": "qwen3",
+    "tool_format": "semantic_tool_calls",
+    "tool_result_role": "tool",
+    "enable_thinking": False,
+}
 
 SEARCH_HISTORY_TOOL: dict[str, Any] = {
     "type": "function",

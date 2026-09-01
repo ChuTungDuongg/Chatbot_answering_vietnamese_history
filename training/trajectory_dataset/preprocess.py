@@ -17,10 +17,22 @@ def _ids(tokenizer: Any, text: str) -> list[int]:
 def _render(tokenizer: Any, messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, generation: bool) -> str:
     if not messages:
         return ""
-    kwargs = {"tokenize": False, "add_generation_prompt": generation}
+    kwargs = {
+        "tokenize": False,
+        "add_generation_prompt": generation,
+        "enable_thinking": False,
+    }
     if tools:
         kwargs["tools"] = tools
-    return tokenizer.apply_chat_template(messages, **kwargs)
+    try:
+        return tokenizer.apply_chat_template(messages, **kwargs)
+    except TypeError as exc:
+        # Lightweight legacy test tokenizers may predate the Qwen kwarg. Real
+        # Central V2 preprocessing always uses a tokenizer that accepts it.
+        if "enable_thinking" not in str(exc):
+            raise
+        kwargs.pop("enable_thinking")
+        return tokenizer.apply_chat_template(messages, **kwargs)
 
 
 def _common_prefix(left: list[int], right: list[int]) -> int:
@@ -134,3 +146,27 @@ def build_canonical_sft_example(
     if not any(label != IGNORE_INDEX for label in labels):
         raise ValueError("truncation removed every assistant target; increase --max-seq-length")
     return {"input_ids": full_ids, "attention_mask": [1] * len(full_ids), "labels": labels}
+
+
+def assistant_labeled_token_counts(tokenizer: Any, row: dict[str, Any]) -> dict[str, int]:
+    """Count exact Qwen-rendered assistant targets by semantic target type."""
+    messages = row.get("messages") or []
+    tools = row.get("tools") or []
+    full_ids = _ids(tokenizer, _render(tokenizer, messages, tools, generation=False))
+    tool_call_tokens = 0
+    final_answer_tokens = 0
+    for index, message in enumerate(messages):
+        if message.get("role") != "assistant":
+            continue
+        start, end = _message_span(tokenizer, messages, tools, full_ids, index)
+        count = max(0, end - start)
+        if message.get("tool_calls"):
+            tool_call_tokens += count
+        else:
+            final_answer_tokens += count
+    return {
+        "assistant_tool_call_labeled_tokens": tool_call_tokens,
+        "assistant_final_answer_labeled_tokens": final_answer_tokens,
+        "total_assistant_labeled_tokens": tool_call_tokens + final_answer_tokens,
+        "trajectory_tokens": len(full_ids),
+    }

@@ -54,7 +54,7 @@ app/
 |---|---|
 | `hybrid` | Hybrid retrieval → History Answerer; không Research/Evidence. |
 | `three_llm` | Research → Evidence → History trên shared Qwen3-4B role runtime. |
-| `central` | Qwen3-8B Central adapter tự chọn tool và tự viết final answer. |
+| `central` | Qwen3-8B Central V2: host-side history grounding, bounded structured tool calls, rồi evidence synthesis. Base-only by default; PEFT is optional. |
 
 Alias cũ: `fast`/`hybrid_rag` → `hybrid`, `agentic_rag` → `three_llm`, `agent` → `central`. Central không có fallback sang 3 LLM.
 
@@ -83,7 +83,14 @@ EVIDENCE_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
 EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/evidence
 HISTORY_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/history
 CENTRAL_AGENT_MODEL_ID=Qwen/Qwen3-8B
-CENTRAL_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/central
+CENTRAL_AGENT_ADAPTER_PATH=
+CENTRAL_ACTION_MAX_NEW_TOKENS=256
+CENTRAL_FINAL_MAX_NEW_TOKENS=1536
+CENTRAL_REPAIR_MAX_NEW_TOKENS=1024
+CENTRAL_AGENT_MAX_ACTION_ROUNDS=2
+CENTRAL_AGENT_TIMEOUT_SECONDS=180
+CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS=300
+CENTRAL_TOOL_TIMEOUT_SECONDS=30
 RUNTIME_LOADING_STRATEGY=lazy
 MAX_AGENT_STEPS=6
 MAX_WEB_SEARCHES=3

@@ -57,11 +57,14 @@ class Settings(BaseSettings):
     agent_enable_web: bool = True
     agent_enable_wikipedia: bool = True
     agent_enable_document_search: bool = True
-    central_agent_max_steps: int = 3
+    central_agent_max_action_rounds: int = 2
     central_agent_repair_max_generations: int = 1
-    central_agent_max_new_tokens: int = 1536
+    central_action_max_new_tokens: int = 256
+    central_final_max_new_tokens: int = 1536
+    central_repair_max_new_tokens: int = 1024
     central_agent_timeout_seconds: float = 180.0
     central_model_load_timeout_seconds: float = 300.0
+    central_tool_timeout_seconds: float = 30.0
     central_agent_observation_char_budget: int = 12_000
     central_agent_max_tool_results: int = 6
     central_agent_enable_history: bool = True
@@ -107,7 +110,11 @@ class Settings(BaseSettings):
     )
     @classmethod
     def empty_path_is_none(cls, value):
-        return None if value in {None, ""} else value
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("default_inference_mode", mode="before")
     @classmethod
@@ -195,8 +202,8 @@ class Settings(BaseSettings):
         return self.artifact_root / "manifest.json"
 
     @property
-    def central_adapter_path(self) -> Path:
-        return self.central_agent_adapter_path or self.artifact_root / "adapters" / "central"
+    def central_adapter_path(self) -> Path | None:
+        return self.central_agent_adapter_path
 
     # ========================================================
     # Validation helpers
@@ -223,7 +230,7 @@ class Settings(BaseSettings):
                     paths.append(self.evidence_agent_adapter_path)
                 if self.history_agent_adapter_path is not None:
                     paths.append(self.history_agent_adapter_path)
-            if self.enable_central_mode:
+            if self.enable_central_mode and self.central_adapter_path is not None:
                 paths.append(self.central_adapter_path)
         return paths
 

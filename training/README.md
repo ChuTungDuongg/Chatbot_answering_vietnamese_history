@@ -192,7 +192,7 @@ L4/A100 dùng `--bf16 --no-fp16` sau khi preflight xác nhận BF16 support. `--
 | 7 | evaluate/benchmark CLIs | Inference sanity và metrics |
 | 8 | `scripts/enrich_corpus.py` | Metadata/year enrichment |
 | 9 | `scripts/build_index.py`, `app/rag/retrieval.py` | FAISS + BM25S + hybrid runtime |
-| 10 | `scripts/export_artifacts.py` | Ba role adapters 4B + Central adapter 8B + retrieval/corpus |
+| 10 | `scripts/export_artifacts.py` | Ba role adapters 4B + optional future Central V2 adapter 8B + retrieval/corpus |
 
 Không còn `.ipynb` hoặc notebook archive trong source project; mọi workflow bắt buộc đều là Python CLI.
 

@@ -51,6 +51,12 @@ def _ascii_fold_vietnamese(text: str) -> str:
 def _clean_target(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip(" ,;:-")
     value = re.sub(r"^(?:giữa|hai|sự kiện|nhân vật|chủ thể)\s+", "", value, flags=re.I).strip()
+    value = re.sub(
+        r"\s+(?:về|xét\s+về|theo\s+(?:các\s+)?tiêu\s+chí|trên\s+(?:các\s+)?phương\s+diện)\s+.+$",
+        "",
+        value,
+        flags=re.I,
+    ).strip(" ,;:-")
     return value
 
 

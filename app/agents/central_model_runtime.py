@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import json
-import logging
 import copy
-import re
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.agents.hermes_function_call import HermesFunctionCallCodec
 from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, validate_central_adapter
 from app.telemetry import GenerationMetric, current_request_telemetry, log_event
 
 
 logger = logging.getLogger(__name__)
-TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.S)
-THINK_RE = re.compile(r"<think>.*?(?:</think>|$)", re.S | re.I)
+FUNCTION_CALL_CODEC = HermesFunctionCallCodec()
 
 
 @dataclass(frozen=True)
@@ -33,13 +31,21 @@ class CentralGeneration:
     input_tokens: int = 0
     output_tokens: int = 0
     generation_ms: float = 0.0
+    generation_stage: str = "unknown"
+    finish_reason: str = "stop"
+    generation_stop_reason: str = "stop"
+    generation_hit_token_limit: bool = False
+    generation_hit_time_limit: bool = False
     tool_parse_failures: int = 0
     malformed_tool_calls: tuple[str, ...] = ()
 
 
 class CentralLLMBackend(Protocol):
     model_id: str
+    adapter_configured: bool
     adapter_loaded: bool
+    adapter_path: str | None
+    adapter_source: str
 
     def generate(
         self,
@@ -47,47 +53,15 @@ class CentralLLMBackend(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_new_tokens: int,
+        stage: str,
+        deadline: float,
     ) -> CentralGeneration: ...
 
 
 def parse_central_generation_detailed(text: str) -> tuple[str, tuple[CentralToolCall, ...], int, tuple[str, ...]]:
-    calls: list[CentralToolCall] = []
-    failures = 0
-    malformed: list[str] = []
-    for index, match in enumerate(TOOL_CALL_RE.finditer(text)):
-        try:
-            value = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            failures += 1
-            malformed.append(match.group(1)[:300])
-            continue
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            if not isinstance(item, dict):
-                continue
-            function = item.get("function") if isinstance(item.get("function"), dict) else item
-            name = str(function.get("name") or "").strip()
-            arguments = function.get("arguments") or {}
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
-            if name and isinstance(arguments, dict):
-                calls.append(CentralToolCall(
-                    id=str(item.get("id") or f"central_call_{index + 1}"),
-                    name=name,
-                    arguments=arguments,
-                ))
-            else:
-                failures += 1
-                malformed.append(json.dumps(item, ensure_ascii=False)[:300])
-    content = TOOL_CALL_RE.sub("", text)
-    content = THINK_RE.sub("", content)
-    for token in ("<|im_end|>", "<|endoftext|>", "<|im_start|>assistant"):
-        content = content.replace(token, "")
-    content = content.strip()
-    return content, tuple(calls), failures, tuple(malformed)
+    decoded = FUNCTION_CALL_CODEC.decode(text)
+    calls = tuple(CentralToolCall(call.id, call.name, call.arguments) for call in decoded.tool_calls)
+    return decoded.content, calls, decoded.failures, decoded.malformed
 
 
 def parse_central_generation(text: str) -> tuple[str, tuple[CentralToolCall, ...]]:
@@ -96,13 +70,13 @@ def parse_central_generation(text: str) -> tuple[str, tuple[CentralToolCall, ...
 
 
 class CentralModelRuntime:
-    """Dedicated Qwen3-8B + PEFT runtime; it never loads a role adapter."""
+    """Dedicated Qwen3-8B base runtime with an optional future PEFT adapter."""
 
     def __init__(
         self,
         *,
         model_id: str,
-        adapter_path: str | Path,
+        adapter_path: str | Path | None = None,
         dtype: str = "bfloat16",
         device: str = "cuda",
         cache_dir: str | Path | None = None,
@@ -110,19 +84,22 @@ class CentralModelRuntime:
     ):
         if model_id != CENTRAL_BASE_MODEL_ID:
             raise ValueError(f"Central runtime requires {CENTRAL_BASE_MODEL_ID!r}, received {model_id!r}")
-        validate_central_adapter(adapter_path)
+        normalized_adapter = str(adapter_path).strip() if adapter_path is not None else ""
+        if normalized_adapter:
+            validate_central_adapter(normalized_adapter)
 
         from app.agents.hf_cache import hf_cache_status, resolve_hf_hub_cache_dir
 
         import torch
-        from peft import PeftModel
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("Central runtime was configured for CUDA but CUDA is unavailable.")
         compute_dtype = getattr(torch, dtype)
         self.model_id = model_id
-        self.adapter_path = str(adapter_path)
+        self.adapter_path = normalized_adapter or None
+        self.adapter_configured = self.adapter_path is not None
+        self.adapter_source = "peft" if self.adapter_configured else "none"
         self.cache_dir = resolve_hf_hub_cache_dir(cache_dir)
         resolve_started = time.perf_counter()
         before_status = hf_cache_status(model_id, cache_dir=self.cache_dir)
@@ -151,16 +128,23 @@ class CentralModelRuntime:
             local_files_only=local_files_only,
         )
         model_load_ms = (time.perf_counter() - load_started) * 1000
-        adapter_started = time.perf_counter()
-        self.model = PeftModel.from_pretrained(base, self.adapter_path)
-        adapter_load_ms = (time.perf_counter() - adapter_started) * 1000
+        adapter_load_ms = 0.0
+        if self.adapter_path is not None:
+            from peft import PeftModel
+
+            adapter_started = time.perf_counter()
+            self.model = PeftModel.from_pretrained(base, self.adapter_path)
+            adapter_load_ms = (time.perf_counter() - adapter_started) * 1000
+            self.adapter_loaded = True
+        else:
+            self.model = base
+            self.adapter_loaded = False
         self.model.eval()
         self.generation_config = copy.deepcopy(self.model.generation_config)
         self.generation_config.do_sample = False
         for sampling_field in ("temperature", "top_p", "top_k"):
             if hasattr(self.generation_config, sampling_field):
                 setattr(self.generation_config, sampling_field, None)
-        self.adapter_loaded = True
         self._lock = threading.RLock()
         self.placement = self._placement()
         after_status = hf_cache_status(model_id, cache_dir=self.cache_dir)
@@ -185,36 +169,61 @@ class CentralModelRuntime:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_new_tokens: int,
+        stage: str = "synthesis",
+        deadline: float | None = None,
     ) -> CentralGeneration:
         import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList
 
-        rendered = self.tokenizer.apply_chat_template(
-            messages,
-            tools=tools,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,
-        )
+        class DeadlineStoppingCriteria(StoppingCriteria):
+            def __init__(self, absolute_deadline: float | None):
+                self.absolute_deadline = absolute_deadline
+                self.hit = False
+
+            def __call__(self, input_ids, scores, **kwargs):
+                del input_ids, scores, kwargs
+                self.hit = self.absolute_deadline is not None and time.monotonic() >= self.absolute_deadline
+                return self.hit
+
+        template_kwargs: dict[str, Any] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+            "enable_thinking": False,
+        }
+        if tools:
+            template_kwargs["tools"] = tools
+        rendered = self.tokenizer.apply_chat_template(messages, **template_kwargs)
         inputs = self.tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
         input_tokens = int(inputs["input_ids"].shape[1])
         telemetry = current_request_telemetry()
         with self._lock:
             inputs = inputs.to(self.model.get_input_embeddings().weight.device)
             started = time.perf_counter()
+            stopping = DeadlineStoppingCriteria(deadline)
+            remaining = max(0.1, deadline - time.monotonic()) if deadline is not None else None
+            generation_kwargs: dict[str, Any] = {
+                "max_new_tokens": max_new_tokens,
+                "generation_config": self.generation_config,
+                "do_sample": False,
+                "use_cache": True,
+                "pad_token_id": self.tokenizer.pad_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+                "stopping_criteria": StoppingCriteriaList([stopping]),
+            }
+            if remaining is not None:
+                generation_kwargs["max_time"] = remaining
             generated = self.model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                generation_config=self.generation_config,
-                do_sample=False,
-                use_cache=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                **generation_kwargs,
             )
             generation_ms = (time.perf_counter() - started) * 1000
         new_tokens = generated[0, inputs["input_ids"].shape[1]:]
         output_tokens = int(new_tokens.shape[0])
         decoded = self.tokenizer.decode(new_tokens, skip_special_tokens=False)
         content, tool_calls, parse_failures, malformed = parse_central_generation_detailed(decoded)
+        hit_time_limit = stopping.hit or (deadline is not None and time.monotonic() >= deadline)
+        hit_token_limit = output_tokens >= max_new_tokens and not hit_time_limit
+        stop_reason = "time_limit" if hit_time_limit else "token_limit" if hit_token_limit else "stop"
         rate = output_tokens / (generation_ms / 1000) if generation_ms else 0.0
         if telemetry is not None:
             telemetry.add_generation(GenerationMetric(
@@ -233,6 +242,8 @@ class CentralModelRuntime:
             generation_ms=generation_ms,
             tool_call_count=len(tool_calls),
             tool_parse_failures=parse_failures,
+            generation_stage=stage,
+            generation_stop_reason=stop_reason,
         )
         return CentralGeneration(
             content=content,
@@ -240,6 +251,11 @@ class CentralModelRuntime:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             generation_ms=generation_ms,
+            generation_stage=stage,
+            finish_reason=stop_reason,
+            generation_stop_reason=stop_reason,
+            generation_hit_token_limit=hit_token_limit,
+            generation_hit_time_limit=hit_time_limit,
             tool_parse_failures=parse_failures,
             malformed_tool_calls=malformed,
         )

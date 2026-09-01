@@ -7,9 +7,16 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .adapters import normalize_agent_flan, normalize_multihop, normalize_vietnam_history
+from .adapters import (
+    normalize_agent_flan,
+    normalize_hermes_function_calling,
+    normalize_multihop,
+    normalize_uit_viquad2,
+    normalize_vietnam_history,
+)
+from .adapters.hermes_function_calling import HERMES_FUNCTION_FILES
 from .adapters.common import AdapterError, get_messages, semantic_messages
-from .audit import audit_rows, tokenizer_audit
+from .audit import audit_rows, central_v2_audit, tokenizer_audit
 from .builders.custom_history import (
     CustomBuildConfig,
     build_custom_trajectories,
@@ -21,7 +28,7 @@ from .dedup import deduplicate, first_user_question, normalized_question
 from .drive import resolve_corpus_path
 from .final_gate import final_dataset_gate
 from .io_utils import IncrementalJsonlWriter, atomic_write_json, atomic_write_jsonl, iter_jsonl, read_jsonl
-from .mix import DEFAULT_MIX_RATIOS, agent_flan_pool_gate, mix_capacity_report, mix_sources
+from .mix import DEFAULT_MIX_RATIOS, agent_flan_pool_gate, mix_capacity_report, mix_sources, source_counts
 from .retrieval import FixtureRetriever, PrecomputedRetriever, PrecomputedToolRetriever, ProjectRetriever
 from .split import TrajectorySplits, source_groups, split_coverage_report, split_trajectories
 from .stats import dataset_stats
@@ -34,11 +41,15 @@ PUBLIC_SOURCES: dict[str, tuple[str, Callable[..., dict[str, Any]]]] = {
     "agent_flan": ("internlm/Agent-FLAN", normalize_agent_flan),
     "multihop": ("khaimaitien/multi-hop-qa-function-calling-format-V1.0", normalize_multihop),
     "vietnam_history": ("minhxthanh/Vietnam-History-200K-Vi", normalize_vietnam_history),
+    "hermes_function_calling": ("NousResearch/hermes-function-calling-v1", normalize_hermes_function_calling),
+    "uit_viquad2": ("taidng/UIT-ViQuAD2.0", normalize_uit_viquad2),
 }
 PUBLIC_SOURCE_DEFAULT_SPLITS = {
     "agent_flan": "agent_instruct_react",
     "multihop": "train",
     "vietnam_history": "train",
+    "hermes_function_calling": "auto",
+    "uit_viquad2": "auto",
 }
 AGENT_FLAN_RAW_FILES = {
     "agent_instruct_react": "data/agent_instruct_react.jsonl",
@@ -100,6 +111,18 @@ def _corpus(args: argparse.Namespace, *, must_exist: bool = True) -> Path:
 
 def _resolved_public_splits(args: argparse.Namespace) -> tuple[str, ...]:
     selected = args.split or PUBLIC_SOURCE_DEFAULT_SPLITS[args.source]
+    if args.source == "hermes_function_calling":
+        if selected != "auto":
+            return (selected,)
+        if args.input_jsonl:
+            return ("offline-fixture",)
+        return HERMES_FUNCTION_FILES
+    if args.source == "uit_viquad2":
+        if selected != "auto":
+            return (selected,)
+        if args.input_jsonl:
+            return ("train",)
+        return ("train", "validation", "test")
     if selected != "auto":
         return (selected,)
     if args.source != "agent_flan":
@@ -114,6 +137,27 @@ def _public_rows(args: argparse.Namespace, *, split: str) -> Iterable[dict[str, 
         yield from iter_jsonl(args.input_jsonl)
         return
     dataset_id = args.dataset_id or PUBLIC_SOURCES[args.source][0]
+    if args.source == "hermes_function_calling":
+        if split not in HERMES_FUNCTION_FILES:
+            raise ValueError(f"Unsupported Hermes function-calling file: {split}")
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise RuntimeError("Install requirements-training.txt to download Hermes source files") from exc
+        local_file = hf_hub_download(
+            repo_id=dataset_id,
+            filename=split,
+            repo_type="dataset",
+            cache_dir=args.cache_dir,
+        )
+        payload = json.loads(Path(local_file).read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"Hermes source file must contain a JSON array: {split}")
+        for row in payload:
+            if not isinstance(row, dict):
+                raise ValueError(f"Hermes source file contains a non-object row: {split}")
+            yield row
+        return
     if args.source == "agent_flan":
         try:
             filename = AGENT_FLAN_RAW_FILES[split]
@@ -251,6 +295,8 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
     rejected: list[dict[str, Any]] = []
     attempted = 0
     seen_questions: set[str] = set()
+    viquad_answerable = 0
+    viquad_impossible = 0
     existing_rows = 0
     if args.resume and output.exists():
         existing = list(iter_jsonl(output))
@@ -259,6 +305,11 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
             key for row in existing
             if (key := normalized_question(first_user_question(row)))
         }
+        if args.source == "uit_viquad2":
+            viquad_impossible = sum(
+                bool((row.get("provenance") or {}).get("is_impossible")) for row in existing
+            )
+            viquad_answerable = existing_rows - viquad_impossible
     max_attempts = getattr(args, "max_attempts", None) or max(args.max_samples * 10, args.max_samples + 100)
     source_breakdown: dict[str, dict[str, Any]] = {
         split: {
@@ -305,6 +356,27 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
                                 raw_row, index=index, split=source_split,
                                 include_reasoning=args.include_reasoning,
                             )
+                        elif args.source == "hermes_function_calling":
+                            row = adapter(
+                                raw_row, index=index, split="train", source_file=source_split,
+                            )
+                        elif args.source == "uit_viquad2":
+                            row = adapter(
+                                raw_row,
+                                index=index,
+                                split=source_split,
+                                history_threshold=args.viquad_history_threshold,
+                                top_k=args.top_k,
+                            )
+                            impossible = bool((row.get("provenance") or {}).get("is_impossible"))
+                            if impossible:
+                                ratio = args.viquad_max_impossible_ratio
+                                allowed_impossible = max(
+                                    1,
+                                    int(viquad_answerable * ratio / max(1e-9, 1.0 - ratio)),
+                                )
+                                if viquad_impossible >= allowed_impossible:
+                                    raise AdapterError("ViQuAD impossible-row ratio cap reached")
                         else:
                             retrieval_results = None
                             if retriever is not None:
@@ -331,6 +403,11 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
                             raise AdapterError(validation.rejected[0]["reason"])
                         if writer.write(row):
                             breakdown["written"] += 1
+                            if args.source == "uit_viquad2":
+                                if bool((row.get("provenance") or {}).get("is_impossible")):
+                                    viquad_impossible += 1
+                                else:
+                                    viquad_answerable += 1
                         if question_key:
                             seen_questions.add(question_key)
                     except (AdapterError, ValueError, KeyError, TypeError) as exc:
@@ -360,7 +437,7 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
         )
         if args.source == "agent_flan" and final_max_samples is not None else None
     )
-    return {
+    report = {
         "attempted": attempted,
         "written": pool_rows,
         "written_this_run": writer.written,
@@ -381,7 +458,12 @@ def _normalize_public(args: argparse.Namespace) -> dict[str, Any]:
         "output": str(output),
         "rejected_output": str(rejected_path),
         "state_output": str(state_path),
+        "viquad_answerable": viquad_answerable,
+        "viquad_impossible": viquad_impossible,
     }
+    if getattr(args, "report_output", None):
+        atomic_write_json(args.report_output, report)
+    return report
 
 
 def _custom_config(args: argparse.Namespace) -> CustomBuildConfig:
@@ -566,6 +648,7 @@ def _enhance_teacher(args: argparse.Namespace) -> dict[str, Any]:
 def _audit_command(args: argparse.Namespace) -> dict[str, Any]:
     rows = read_jsonl(args.input)
     report = audit_rows(rows, strict_custom=args.strict_custom)
+    tokenizer = None
     if args.tokenizer:
         try:
             from transformers import AutoTokenizer
@@ -578,6 +661,11 @@ def _audit_command(args: argparse.Namespace) -> dict[str, Any]:
             or report["tokenizer"]["rows_any_tool_call_supervision_lost"]
         ):
             report["valid"] = False
+    report["central_v2"] = central_v2_audit(
+        rows,
+        tokenizer=tokenizer,
+        max_seq_length=args.max_seq_length,
+    )
     if args.output:
         atomic_write_json(args.output, report)
     return report
@@ -606,12 +694,30 @@ def _validate_command(args: argparse.Namespace) -> dict[str, Any]:
         atomic_write_jsonl(args.output, result.valid)
     rejected_path = args.rejected_output or str(Path(args.input).with_name("rejected.jsonl"))
     atomic_write_jsonl(rejected_path, result.rejected)
-    return {"valid": len(result.valid), "rejected": len(result.rejected), "rejected_output": rejected_path}
+    report = {"valid": len(result.valid), "rejected": len(result.rejected), "rejected_output": rejected_path}
+    if getattr(args, "report_output", None):
+        atomic_write_json(args.report_output, report)
+    return report
 
 
 def _mix_command(args: argparse.Namespace) -> dict[str, Any]:
     paths = _key_value(args.input)
-    ratios = _key_value(args.ratio, value_type=float) if args.ratio else DEFAULT_MIX_RATIOS
+    config_payload: dict[str, Any] = {}
+    if args.config:
+        config_payload = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        if not isinstance(config_payload, dict):
+            raise ValueError("mix config must be a JSON object")
+    ratios = (
+        _key_value(args.ratio, value_type=float)
+        if args.ratio
+        else config_payload.get("ratios") or DEFAULT_MIX_RATIOS
+    )
+    if not paths:
+        raise ValueError("mix requires at least one --input SOURCE=PATH")
+    allowed_sources = set(config_payload.get("allowed_sources") or paths)
+    unexpected = sorted(set(paths) - allowed_sources)
+    if unexpected:
+        raise ValueError(f"mix contains sources outside configured profile: {unexpected}")
     sources = {name: read_jsonl(path) for name, path in paths.items()}
     capacity = mix_capacity_report(sources, ratios, requested_total=args.max_samples)
     mixed = mix_sources(sources, ratios, seed=args.seed, max_total=args.max_samples)
@@ -622,10 +728,22 @@ def _mix_command(args: argparse.Namespace) -> dict[str, Any]:
         atomic_write_jsonl(args.output, validation.valid)
         atomic_write_jsonl(args.rejected_output or str(Path(args.output).with_name("rejected.jsonl")), rejected)
         atomic_write_json(str(Path(args.output).with_suffix(".stats.json")), dataset_stats(validation.valid))
-    return {
+    counts = source_counts(validation.valid)
+    total = sum(counts.values())
+    report = {
         "mixed": len(mixed), "valid": len(validation.valid), "rejected": len(rejected),
-        "source_capacity": capacity, "dry_run": args.dry_run,
+        "source_capacity": capacity,
+        "achieved_source_rows": counts,
+        "achieved_source_ratios": {
+            name: round(count / total, 6) if total else 0.0 for name, count in sorted(counts.items())
+        },
+        "duplicates_fabricated": False,
+        "config_profile": config_payload.get("profile"),
+        "dry_run": args.dry_run,
     }
+    if args.report_output and not args.dry_run:
+        atomic_write_json(args.report_output, report)
+    return report
 
 
 def _split_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -655,6 +773,8 @@ def _split_command(args: argparse.Namespace) -> dict[str, Any]:
         atomic_write_jsonl(output_dir / "test.jsonl", splits.test)
         atomic_write_json(output_dir / "dataset_stats.json", stats)
         atomic_write_json(output_dir / "manifest.json", manifest)
+        if getattr(args, "report_output", None):
+            atomic_write_json(args.report_output, manifest)
     return {
         **manifest["rows"], "coverage": manifest["coverage"],
         "output_dir": str(output_dir), "dry_run": args.dry_run,
@@ -675,7 +795,7 @@ def _build_all(args: argparse.Namespace) -> dict[str, Any]:
     intermediate = output_dir / "intermediate"
     normalized_paths: dict[str, Path] = {}
     normalization_reports: dict[str, dict[str, Any]] = {}
-    for source in PUBLIC_SOURCES:
+    for source in ("agent_flan", "multihop", "vietnam_history"):
         namespace = argparse.Namespace(**vars(args))
         namespace.source = source
         namespace.output = str(intermediate / f"{source}.jsonl")
@@ -747,6 +867,7 @@ def build_parser() -> argparse.ArgumentParser:
     public.add_argument("--input-jsonl", default=None, help="Offline raw fixture instead of Hugging Face.")
     public.add_argument("--output", required=True)
     public.add_argument("--rejected-output", default=None)
+    public.add_argument("--report-output", default=None)
     public.add_argument("--cache-dir", default=None)
     public.add_argument("--max-samples", type=_positive, default=1000)
     public.add_argument("--max-attempts", type=_positive, default=None)
@@ -763,6 +884,8 @@ def build_parser() -> argparse.ArgumentParser:
     public.add_argument("--retrieval-backend", choices=("project", "precomputed", "fixture"), default="project")
     public.add_argument("--retrieval-results", default=None)
     public.add_argument("--top-k", type=_positive, default=6)
+    public.add_argument("--viquad-history-threshold", type=_positive, default=4)
+    public.add_argument("--viquad-max-impossible-ratio", type=_ratio, default=0.25)
     public.add_argument("--max-corpus-records", type=_positive, default=10_000)
     public.add_argument("--seed", type=int, default=42)
     public.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
@@ -806,12 +929,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--input", required=True)
     validate.add_argument("--output", default=None)
     validate.add_argument("--rejected-output", default=None)
+    validate.add_argument("--report-output", default=None)
 
     mix = subparsers.add_parser("mix", help="Mix canonical sources with configurable ratios.")
-    mix.add_argument("--input", action="append", required=True, metavar="SOURCE=PATH")
+    mix.add_argument("--input", action="append", default=None, metavar="SOURCE=PATH")
     mix.add_argument("--ratio", action="append", default=None, metavar="SOURCE=RATIO")
+    mix.add_argument("--config", default=None)
     mix.add_argument("--output", required=True)
     mix.add_argument("--rejected-output", default=None)
+    mix.add_argument("--report-output", default=None)
     mix.add_argument("--max-samples", type=_positive, default=None)
     mix.add_argument("--seed", type=int, default=42)
     mix.add_argument("--dry-run", action="store_true")
@@ -823,6 +949,7 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--val-ratio", type=_ratio, default=0.05)
     split.add_argument("--test-ratio", type=_ratio, default=0.05)
     split.add_argument("--seed", type=int, default=42)
+    split.add_argument("--report-output", default=None)
     split.add_argument("--dry-run", action="store_true")
 
     enhance = subparsers.add_parser("enhance-teacher", help="Post-process canonical rows with an answer-only local teacher.")

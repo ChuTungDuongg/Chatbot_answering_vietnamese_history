@@ -44,6 +44,8 @@ def _report(written: int, *, valid: bool) -> dict:
 
 
 def test_full_notebook_agent_flan_command_uses_auto_and_final_mix_size():
+    if not NOTEBOOK_PATH.is_file():
+        pytest.skip("legacy V1 Colab notebook is not shipped in this checkout")
     source = _cell_source("FULL AGENT-FLAN (AUTO POOL)")
     compile(source, str(NOTEBOOK_PATH), "exec")
     command = source[source.index("agent_cmd = ["):source.index("agent_proc =")]
