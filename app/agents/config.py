@@ -32,10 +32,12 @@ class CentralAgentConfig:
 
     max_steps: int = 3
     hard_max_steps: int = 3
+    repair_max_generations: int = 1
     max_new_tokens: int = 1536
     max_tool_results: int = 6
     observation_char_budget: int = 12_000
-    timeout_seconds: float = 120.0
+    timeout_seconds: float = 180.0
+    model_load_timeout_seconds: float = 300.0
     enable_history: bool = True
     enable_documents: bool = True
     enable_wikipedia: bool = True
@@ -44,6 +46,8 @@ class CentralAgentConfig:
     def __post_init__(self) -> None:
         if not 1 <= self.max_steps <= self.hard_max_steps <= 3:
             raise ValueError("Central max_steps must be between 1 and hard_max_steps (maximum 3).")
+        if not 0 <= self.repair_max_generations <= 1:
+            raise ValueError("Central repair_max_generations must be 0 or 1.")
         if self.max_new_tokens < 256:
             raise ValueError("Central max_new_tokens must be at least 256.")
         if not 1 <= self.max_tool_results <= 10:
@@ -52,3 +56,5 @@ class CentralAgentConfig:
             raise ValueError("Central observation_char_budget must be at least 1000 characters.")
         if self.timeout_seconds <= 0:
             raise ValueError("Central timeout_seconds must be positive.")
+        if self.model_load_timeout_seconds <= 0:
+            raise ValueError("Central model_load_timeout_seconds must be positive.")

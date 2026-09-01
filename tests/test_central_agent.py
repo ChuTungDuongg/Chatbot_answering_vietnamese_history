@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import copy
+import threading
+import time
 from collections import deque
 
 from pydantic import BaseModel, Field
 
 from app.agents.central_agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER
+from app.agents.lazy_runtime import LazyRuntime
 from app.agents.central_model_runtime import CentralGeneration, CentralToolCall, parse_central_generation
 from app.agents.central_model_runtime import parse_central_generation_detailed
 from app.agents.central_question import analyze_central_question
@@ -56,6 +59,16 @@ class FakeCentralRuntime:
     def generate(self, **kwargs):
         self.calls.append(copy.deepcopy(kwargs))
         return self.outputs.popleft()
+
+
+class SleepingCentralRuntime(FakeCentralRuntime):
+    def __init__(self, outputs, *, sleep_seconds: float):
+        super().__init__(outputs)
+        self.sleep_seconds = sleep_seconds
+
+    def generate(self, **kwargs):
+        time.sleep(self.sleep_seconds)
+        return super().generate(**kwargs)
 
 
 def call(name: str, arguments: dict, call_id: str = "call_1") -> CentralGeneration:
@@ -122,12 +135,12 @@ def test_analytical_no_tool_final_gets_one_research_intervention():
     runtime = FakeCentralRuntime([
         CentralGeneration(content="Hai sự kiện đều rất quan trọng."),
         call("search_history", {"query": "Cách mạng Tháng Tám Điện Biên Phủ", "top_k": 6}),
-        CentralGeneration(content=(
+        CentralGeneration(content=" ".join([(
             "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ đều là mốc lớn. "
             "Điểm giống nhau là đều làm thay đổi cục diện chính trị. "
             "Điểm khác biệt là một bên là cách mạng giành chính quyền, một bên là thắng lợi quân sự. "
-            "Vì vậy ý nghĩa lịch sử của chúng nằm ở hai tầng khác nhau. [cmt8]"
-        )),
+            "Vì vậy ý nghĩa lịch sử của chúng nằm ở hai tầng khác nhau."
+        )] * 8) + " [cmt8]"),
     ])
 
     result = agent(runtime, history).chat("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
@@ -138,6 +151,30 @@ def test_analytical_no_tool_final_gets_one_research_intervention():
     assert result["answer_provenance"]["analytical_no_tool_intervention_attempted"] is True
     assert result["answer_provenance"]["analytical_no_tool_intervention_used"] is True
     assert "search_history" in runtime.calls[1]["messages"][-1]["content"]
+
+
+def test_analytical_comparison_normally_researches_on_first_generation_then_final():
+    history = FakeTool("search_history", [{
+        "chunk_id": "cmp1", "title": "So sánh hai sự kiện",
+        "text": "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ đều là bước ngoặt lịch sử.",
+    }])
+    runtime = FakeCentralRuntime([
+        call("search_history", {"query": "Cách mạng Tháng Tám Điện Biên Phủ", "top_k": 6}),
+        CentralGeneration(content=" ".join([(
+            "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ đều là bước ngoặt. "
+            "Điểm giống nhau là đều tác động đến vận mệnh dân tộc; điểm khác biệt là bối cảnh "
+            "và hình thức đấu tranh. Vì vậy ý nghĩa lịch sử của chúng cần được đặt trong tiến trình chung."
+        )] * 8) + " [cmp1]"),
+    ])
+
+    result = agent(runtime, history).chat("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
+
+    assert len(runtime.calls) == 2
+    assert history.calls == 1
+    assert runtime.calls[0]["messages"][0]["content"].count("search_history") >= 1
+    assert runtime.calls[1]["messages"][-1]["role"] == "tool"
+    assert result["answer_provenance"]["central_model_calls"] == 2
+    assert result["answer_provenance"]["analytical_no_tool_intervention_attempted"] is False
 
 
 def test_central_wikipedia_search_fetch_and_final_are_bounded_to_three_calls():
@@ -329,6 +366,29 @@ def test_deep_comparison_guard_repairs_missing_similarity_difference_and_citatio
     assert result["source_ids"] == ["cmp1"]
 
 
+def test_quality_repair_can_run_after_three_normal_generations():
+    evidence = FakeTool("search_history", [{"chunk_id": "cmp1", "text": "Bằng chứng về hai sự kiện."}])
+    repaired = " ".join([
+        "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ có điểm giống nhau, điểm khác biệt, "
+        "ý nghĩa lịch sử và quan hệ nhân quả cần phân tích vì chúng tác động đến tiến trình Việt Nam."
+    ] * 20) + " [cmp1]"
+    runtime = FakeCentralRuntime([
+        CentralGeneration(content="Hai sự kiện đều quan trọng."),
+        call("search_history", {"query": "Cách mạng Tháng Tám Điện Biên Phủ"}),
+        CentralGeneration(content="Hai sự kiện có ý nghĩa. [cmp1]"),
+        CentralGeneration(content=repaired),
+    ])
+
+    result = agent(runtime, evidence).chat("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
+
+    assert len(runtime.calls) == 4
+    assert result["answer_provenance"]["central_model_calls"] == 4
+    assert result["answer_provenance"]["repair_generation_used"] is True
+    assert result["answer_provenance"]["research_generation_calls"] == 0
+    assert result["answer_provenance"]["evidence_generation_calls"] == 0
+    assert result["answer_provenance"]["history_generation_calls"] == 0
+
+
 def test_simple_factual_question_can_stay_direct_and_concise():
     runtime = FakeCentralRuntime([CentralGeneration(content="Ngô Quyền thắng quân Nam Hán năm 938.")])
 
@@ -337,6 +397,108 @@ def test_simple_factual_question_can_stay_direct_and_concise():
     assert len(runtime.calls) == 1
     assert result["analysis"]["analytical"] is False
     assert result["answer"] == "Ngô Quyền thắng quân Nam Hán năm 938."
+
+
+def test_slow_cold_model_load_does_not_consume_agent_timeout_budget():
+    loads: list[str] = []
+
+    def build():
+        time.sleep(0.08)
+        loads.append("central")
+        return FakeCentralRuntime([CentralGeneration(content="Câu trả lời sau khi model đã sẵn sàng.")])
+
+    lazy = LazyRuntime(build, name="central")
+    config = CentralAgentConfig(timeout_seconds=0.05, model_load_timeout_seconds=0.2)
+
+    result = agent(lazy, config=config).chat("Câu hỏi factual ngắn")
+
+    assert result["status"] == "ok"
+    assert loads == ["central"]
+    assert lazy.is_ready is True
+
+
+def test_model_load_timeout_reports_initialization_stage():
+    def build():
+        time.sleep(0.05)
+        return FakeCentralRuntime([CentralGeneration(content="late")])
+
+    lazy = LazyRuntime(build, name="central")
+    config = CentralAgentConfig(timeout_seconds=0.2, model_load_timeout_seconds=0.01)
+
+    result = agent(lazy, config=config).chat("Câu hỏi factual ngắn")
+
+    assert result["answer_provenance"]["source"] == "central_timeout"
+    assert result["answer_provenance"]["timeout_stage"] == "model_initialization"
+    assert result["answer_provenance"]["central_model_ready"] is False
+    assert result["answer_provenance"]["central_model_calls"] == 0
+    assert result["answer_provenance"]["research_generation_calls"] == 0
+    assert result["answer_provenance"]["evidence_generation_calls"] == 0
+    assert result["answer_provenance"]["history_generation_calls"] == 0
+
+
+def test_warm_central_request_skips_lazy_initialization():
+    loads: list[str] = []
+    runtime = FakeCentralRuntime([
+        CentralGeneration(content="Lần một."),
+        CentralGeneration(content="Lần hai."),
+    ])
+
+    def build():
+        loads.append("central")
+        return runtime
+
+    lazy = LazyRuntime(build, name="central")
+    central = agent(lazy)
+
+    assert central.chat("Một câu factual")["answer"] == "Lần một."
+    assert central.chat("Một câu factual khác")["answer"] == "Lần hai."
+    assert loads == ["central"]
+    assert len(runtime.calls) == 2
+
+
+def test_two_simultaneous_central_requests_initialize_lazy_runtime_once():
+    loads: list[str] = []
+    runtime = FakeCentralRuntime([
+        CentralGeneration(content="Trả lời một."),
+        CentralGeneration(content="Trả lời hai."),
+    ])
+
+    def build():
+        time.sleep(0.03)
+        loads.append("central")
+        return runtime
+
+    lazy = LazyRuntime(build, name="central")
+    central = agent(lazy)
+    answers: list[str] = []
+    threads = [
+        threading.Thread(target=lambda question=q: answers.append(central.chat(question)["answer"]))
+        for q in ("Câu hỏi 1", "Câu hỏi 2")
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert sorted(answers) == ["Trả lời hai.", "Trả lời một."]
+    assert loads == ["central"]
+    assert len(runtime.calls) == 2
+
+
+def test_agent_generation_timeout_preserves_partial_central_telemetry():
+    runtime = SleepingCentralRuntime([CentralGeneration(content="Quá muộn.")], sleep_seconds=0.05)
+    config = CentralAgentConfig(timeout_seconds=0.01, model_load_timeout_seconds=0.2)
+
+    result = agent(runtime, config=config).chat("Một câu factual")
+
+    assert result["answer_provenance"]["source"] == "central_timeout"
+    assert result["answer_provenance"]["timeout_stage"] == "generation"
+    assert "central_model_calls" in result["performance_debug"]
+    assert "central_generation_ms" in result["performance_debug"]
+    assert result["answer_provenance"]["research_generation_calls"] == 0
+    assert result["answer_provenance"]["evidence_generation_calls"] == 0
+    assert result["answer_provenance"]["history_generation_calls"] == 0
 
 
 def test_central_request_telemetry_exposes_model_tokens_and_zero_role_calls():

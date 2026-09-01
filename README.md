@@ -216,6 +216,7 @@ DEFAULT_INFERENCE_MODE=central
 
 Central adapter phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`; runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
 Nếu muốn Central fail-fast khi base model chưa có trong cache, đặt thêm `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` sau khi đã seed/validate Hugging Face cache.
+Central tách timeout load model khỏi timeout suy luận: `CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS` bảo vệ lazy initialization Qwen3-8B, còn `CENTRAL_AGENT_TIMEOUT_SECONDS` chỉ áp dụng sau khi model đã sẵn sàng.
 
 ### Frontend
 
@@ -560,7 +561,7 @@ Production:
 modal deploy modal_app.py
 ```
 
-`modal_app.py` dùng A100, mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`. Shared Qwen3-4B role runtime và Central Qwen3-8B runtime được cache/lazy-load riêng: mode đầu tiên chỉ khởi tạo model nó cần, không CPU/disk offload ngầm.
+`modal_app.py` dùng A100, mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`. Shared Qwen3-4B role runtime và Central Qwen3-8B runtime được cache/lazy-load riêng: mode đầu tiên chỉ khởi tạo model nó cần, không CPU/disk offload ngầm. Lazy initialization là single-flight, nên hai request Central cold cùng lúc chỉ load Qwen3-8B một lần.
 Central runtime truyền `HF_HUB_CACHE=/hf-cache/hub` và ghi telemetry `central_cache_root`, `central_model_snapshot_resolved`, `central_cache_hit`, `central_model_resolve_ms`, `central_model_load_ms`, `central_adapter_load_ms`.
 
 Sau `modal serve`, lấy URL `https://...modal.run`, đặt vào `frontend/.env`:

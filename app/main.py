@@ -207,10 +207,12 @@ async def lifespan(app: FastAPI):
                     tool_registry=tool_registry,
                     config=CentralAgentConfig(
                         max_steps=settings.central_agent_max_steps,
+                        repair_max_generations=settings.central_agent_repair_max_generations,
                         max_new_tokens=settings.central_agent_max_new_tokens,
                         max_tool_results=settings.central_agent_max_tool_results,
                         observation_char_budget=settings.central_agent_observation_char_budget,
                         timeout_seconds=settings.central_agent_timeout_seconds,
+                        model_load_timeout_seconds=settings.central_model_load_timeout_seconds,
                         enable_history=settings.central_agent_enable_history,
                         enable_documents=settings.central_agent_enable_documents,
                         enable_wikipedia=settings.central_agent_enable_wikipedia,

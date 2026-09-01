@@ -71,8 +71,15 @@ class CentralAgent:
         return allowed
 
     @staticmethod
-    def _messages(question: str, history: list[dict[str, str]] | None) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": CENTRAL_SYSTEM_PROMPT}]
+    def _messages(
+        question: str,
+        history: list[dict[str, str]] | None,
+        initial_instruction: str | None = None,
+    ) -> list[dict[str, Any]]:
+        system_prompt = CENTRAL_SYSTEM_PROMPT
+        if initial_instruction:
+            system_prompt = f"{system_prompt}\n\nChỉ dẫn cho lượt hiện tại: {initial_instruction}"
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         for item in (history or [])[-6:]:
             role = str(item.get("role") or "")
             content = str(item.get("content") or "").strip()
@@ -110,6 +117,115 @@ class CentralAgent:
             answer = re.sub(r"[ \t]{2,}", " ", answer).strip()
         return answer, valid, invalid
 
+    def _ensure_model_ready(self) -> Any:
+        ensure_ready = getattr(self.model_runtime, "ensure_ready", None)
+        if callable(ensure_ready):
+            return ensure_ready()
+        return self.model_runtime
+
+    def _runtime_snapshot(self) -> dict[str, Any]:
+        runtime = self.model_runtime
+        instance = getattr(runtime, "_instance", None)
+        target = instance if instance is not None else runtime
+        lazy_not_loaded = instance is None and hasattr(runtime, "loaded")
+        if lazy_not_loaded:
+            target = None
+        snapshot = {
+            "central_model_ready": bool(getattr(runtime, "is_ready", True)) if not lazy_not_loaded else False,
+            "central_model_load_ms": float(getattr(runtime, "load_elapsed_ms", 0.0) or 0.0),
+            "central_model_load_error": getattr(runtime, "load_error", None),
+        }
+        if target is not None:
+            snapshot.update({
+                "central_model_id": getattr(target, "model_id", None),
+                "central_adapter_loaded": bool(getattr(target, "adapter_loaded", False)),
+                "model_placement": dict(getattr(target, "placement", {}) or {}),
+            })
+            cache_info = dict(getattr(target, "cache_info", {}) or {})
+            if cache_info:
+                snapshot.update(cache_info)
+        return snapshot
+
+    def _timeout_result(
+        self,
+        *,
+        question: str,
+        timeout_stage: str,
+        started: float,
+        analysis: Any | None = None,
+    ) -> dict[str, Any]:
+        telemetry = current_request_telemetry()
+        model_calls = telemetry.central_model_calls if telemetry is not None else 0
+        generation_ms = telemetry.central_generation_ms if telemetry is not None else 0.0
+        input_tokens = telemetry.central_input_tokens if telemetry is not None else 0
+        output_tokens = telemetry.central_output_tokens if telemetry is not None else 0
+        tool_calls = telemetry.tool_calls if telemetry is not None and telemetry.inference_mode == "central" else 0
+        tool_counts = telemetry.tool_calls_by_type if telemetry is not None and telemetry.inference_mode == "central" else {}
+        tool_ms = telemetry.central_tool_ms if telemetry is not None else 0.0
+        external_count = telemetry.central_external_results_count if telemetry is not None else 0
+        runtime = self._runtime_snapshot()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        provenance = {
+            "mode": "central",
+            "source": "central_timeout",
+            "timeout_stage": timeout_stage,
+            **runtime,
+            "central_model_calls": model_calls,
+            "central_tool_calls": tool_calls,
+            "central_tool_calls_by_type": dict(tool_counts),
+            "central_generation_ms": generation_ms,
+            "central_tool_ms": tool_ms,
+            "central_input_tokens": input_tokens,
+            "central_output_tokens": output_tokens,
+            "central_external_results_count": external_count,
+            "research_generation_calls": 0,
+            "evidence_generation_calls": 0,
+            "history_generation_calls": 0,
+            "total_llm_calls": model_calls,
+        }
+        return {
+            "question": question,
+            "answer": INSUFFICIENT_EVIDENCE_ANSWER,
+            "status": "insufficient_evidence",
+            "source_ids": [],
+            "source_chunks": [],
+            "retrieval": {"question": question, "final_context": [], "tool_trace": []},
+            "analysis": {
+                "question": question,
+                "analytical": bool(getattr(analysis, "analytical", False)),
+                "question_type": getattr(analysis, "question_type", None),
+                "comparison_targets": list(getattr(analysis, "comparison_targets", ()) or ()),
+            },
+            "tool_trace": [],
+            "central_debug": {
+                "tools": [],
+                "timeout_stage": timeout_stage,
+                **runtime,
+            },
+            "agentic": True,
+            "inference_mode": "central",
+            "answer_provenance": provenance,
+            "performance_debug": {
+                "timeout_stage": timeout_stage,
+                "central_model_ready": runtime["central_model_ready"],
+                "central_model_load_ms": runtime["central_model_load_ms"],
+                "central_model_calls": model_calls,
+                "central_tool_calls": tool_calls,
+                "central_tool_calls_by_type": dict(tool_counts),
+                "central_generation_ms": generation_ms,
+                "central_tool_ms": tool_ms,
+                "central_total_latency_ms": elapsed_ms,
+                "central_input_tokens": input_tokens,
+                "central_output_tokens": output_tokens,
+                "central_external_results_count": external_count,
+                "research_generation_calls": 0,
+                "evidence_generation_calls": 0,
+                "history_generation_calls": 0,
+            },
+            "latency_sec": elapsed_ms / 1000,
+            "total_latency_sec": elapsed_ms / 1000,
+        }
+
     async def _run(
         self,
         *,
@@ -118,12 +234,14 @@ class CentralAgent:
         owner_id: str | None,
         conversation_id: str | None,
         request_id: str | None,
+        progress: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
         allowed_tools = self._allowed_tools(owner_id, conversation_id)
         schemas = qwen_tool_schemas(self.tool_registry, allowed_tools)
-        messages = self._messages(question, history)
         analysis = analyze_central_question(question)
+        initial_instruction = build_research_instruction(analysis, allowed_tools) if analysis.analytical and schemas else None
+        messages = self._messages(question, history, initial_instruction=initial_instruction)
         context = ToolExecutionContext(
             owner_id=owner_id,
             conversation_id=conversation_id,
@@ -158,6 +276,8 @@ class CentralAgent:
             )
 
         while model_calls < self.config.max_steps:
+            if progress is not None:
+                progress["timeout_stage"] = "generation"
             generation: CentralGeneration = await asyncio.to_thread(generate_once)
             model_calls += 1
             generation_ms += generation.generation_ms
@@ -213,6 +333,8 @@ class CentralAgent:
                 result, record = await self.tool_registry.call(name, arguments, context=context)
                 return result, record, (time.perf_counter() - call_started) * 1000
 
+            if progress is not None and pending:
+                progress["timeout_stage"] = "tool"
             executed = await asyncio.gather(*(
                 execute_tool(name, arguments) for name, arguments in pending
             )) if pending else []
@@ -269,7 +391,8 @@ class CentralAgent:
             source_ids=pre_validation_source_ids,
             evidence_available=bool(source_by_id),
         )
-        if final_answer and quality_issues and source_by_id and model_calls < self.config.max_steps and not repair_attempted:
+        repair_limit = self.config.max_steps + self.config.repair_max_generations
+        if final_answer and quality_issues and source_by_id and model_calls < repair_limit and not repair_attempted:
             repair_attempted = True
             repair_reason = quality_issues[0]
             messages.extend([
@@ -284,6 +407,8 @@ class CentralAgent:
                     ),
                 },
             ])
+            if progress is not None:
+                progress["timeout_stage"] = "repair"
             repaired = await asyncio.to_thread(generate_once)
             model_calls += 1
             generation_ms += repaired.generation_ms
@@ -294,6 +419,13 @@ class CentralAgent:
             if repaired.content.strip() and not repaired.tool_calls:
                 final_answer = repaired.content.strip()
                 repair_used = True
+                pre_validation_answer, pre_validation_source_ids, _ = self._validated_citations(final_answer, source_by_id)
+                quality_issues = analytical_answer_issues(
+                    analysis=analysis,
+                    answer=pre_validation_answer,
+                    source_ids=pre_validation_source_ids,
+                    evidence_available=bool(source_by_id),
+                )
 
         status = "ok" if final_answer else "insufficient_evidence"
         if not final_answer:
@@ -409,6 +541,21 @@ class CentralAgent:
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         question = str(kwargs.get("question") or "").strip()
+        started = time.perf_counter()
+        analysis = analyze_central_question(question)
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._ensure_model_ready),
+                timeout=self.config.model_load_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return self._timeout_result(
+                question=question,
+                timeout_stage="model_initialization",
+                started=started,
+                analysis=analysis,
+            )
+        progress: dict[str, Any] = {"timeout_stage": "agent_budget"}
         try:
             return await asyncio.wait_for(
                 self._run(
@@ -417,27 +564,17 @@ class CentralAgent:
                     owner_id=kwargs.get("owner_id"),
                     conversation_id=kwargs.get("conversation_id"),
                     request_id=kwargs.get("request_id"),
+                    progress=progress,
                 ),
                 timeout=self.config.timeout_seconds,
             )
         except asyncio.TimeoutError:
-            return {
-                "question": question,
-                "answer": INSUFFICIENT_EVIDENCE_ANSWER,
-                "status": "insufficient_evidence",
-                "source_ids": [],
-                "source_chunks": [],
-                "retrieval": {"question": question, "final_context": [], "tool_trace": []},
-                "analysis": {"question": question},
-                "tool_trace": [],
-                "agentic": True,
-                "inference_mode": "central",
-                "answer_provenance": {
-                    "mode": "central", "source": "central_timeout",
-                    "research_generation_calls": 0, "evidence_generation_calls": 0,
-                    "history_generation_calls": 0,
-                },
-            }
+            return self._timeout_result(
+                question=question,
+                timeout_stage=str(progress.get("timeout_stage") or "agent_budget"),
+                started=started,
+                analysis=analysis,
+            )
 
     def chat(
         self,

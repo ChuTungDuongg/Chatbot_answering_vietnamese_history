@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     agent_enable_wikipedia: bool = True
     agent_enable_document_search: bool = True
     central_agent_max_steps: int = 3
+    central_agent_repair_max_generations: int = 1
     central_agent_max_new_tokens: int = 1536
-    central_agent_timeout_seconds: float = 120.0
+    central_agent_timeout_seconds: float = 180.0
+    central_model_load_timeout_seconds: float = 300.0
     central_agent_observation_char_budget: int = 12_000
     central_agent_max_tool_results: int = 6
     central_agent_enable_history: bool = True
