@@ -12,7 +12,9 @@
 
 `SharedAgentModelRuntime` nạp Qwen3 base một lần ở NF4 4-bit, load ba adapter tên `research`, `evidence`, `history`, rồi chuyển đúng adapter dưới lock trước generation. Metadata base mismatch hoặc role chưa load bị từ chối. `VLLMOpenAIBackend` giữ cùng interface và ba model name nhưng không tự quản lý server.
 
-`CentralModelRuntime` là runtime riêng cho `Qwen/Qwen3-8B` + `adapters/central`. `CentralAgent` đưa native tool schemas vào Qwen chat template, chạy tối đa ba generation, chống tool call lặp và tự viết final answer. Nó không import/delegate sang `AgentOrchestrator`, `ResearchAgent`, `EvidenceCriticAgent` hoặc `HistoryAnswererAgent`. Hai runtime dùng `LazyRuntime` để không cùng khởi tạo khi chưa cần.
+`CentralModelRuntime` là runtime riêng cho `Qwen/Qwen3-8B` + `adapters/central`. `CentralAgent` đưa native tool schemas vào Qwen chat template, chạy tối đa ba generation, chống tool call lặp và tự viết final answer. Câu hỏi phân tích/so sánh được phân loại trước để telemetry biết `question_type`, target so sánh và để guard can thiệp một lần nếu model định trả lời ngay khi chưa có evidence. Nó không import/delegate sang `AgentOrchestrator`, `ResearchAgent`, `EvidenceCriticAgent` hoặc `HistoryAnswererAgent`. Hai runtime dùng `LazyRuntime` để không cùng khởi tạo khi chưa cần.
+
+Central base model dùng Hugging Face cache riêng ở `/hf-cache/hub` trên Modal. Runtime log `central_cache_hit`, resolved snapshot và thời gian resolve/load/adapter-load; `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` chỉ nên bật sau khi `scripts/modal_seed_hf_cache.py --validate-only` đã pass.
 
 ## 🔁 Orchestration
 

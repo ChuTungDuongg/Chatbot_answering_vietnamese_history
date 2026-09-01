@@ -9,7 +9,12 @@ from collections.abc import Callable
 from typing import Any
 
 from app.agents.central_model_runtime import CentralGeneration, CentralLLMBackend, CentralToolCall
-from app.agents.central_prompt import CENTRAL_SYSTEM_PROMPT, is_analytical_question
+from app.agents.central_prompt import CENTRAL_SYSTEM_PROMPT
+from app.agents.central_question import (
+    analytical_answer_issues,
+    analyze_central_question,
+    build_research_instruction,
+)
 from app.agents.central_tools import EXTERNAL_TOOLS, bounded_tool_arguments, normalize_tool_result, qwen_tool_schemas
 from app.agents.config import CentralAgentConfig
 from app.telemetry import current_request_telemetry
@@ -118,6 +123,7 @@ class CentralAgent:
         allowed_tools = self._allowed_tools(owner_id, conversation_id)
         schemas = qwen_tool_schemas(self.tool_registry, allowed_tools)
         messages = self._messages(question, history)
+        analysis = analyze_central_question(question)
         context = ToolExecutionContext(
             owner_id=owner_id,
             conversation_id=conversation_id,
@@ -138,22 +144,46 @@ class CentralAgent:
         final_answer = ""
         repair_attempted = False
         repair_used = False
+        repair_reason: str | None = None
+        no_tool_intervention_attempted = False
+        no_tool_intervention_used = False
+        tool_parse_failures = 0
+        malformed_tool_calls: list[str] = []
 
-        while model_calls < self.config.max_steps:
-            generation: CentralGeneration = await asyncio.to_thread(
-                self.model_runtime.generate,
+        def generate_once() -> CentralGeneration:
+            return self.model_runtime.generate(
                 messages=messages,
                 tools=schemas,
                 max_new_tokens=self.config.max_new_tokens,
             )
+
+        while model_calls < self.config.max_steps:
+            generation: CentralGeneration = await asyncio.to_thread(generate_once)
             model_calls += 1
             generation_ms += generation.generation_ms
             input_tokens += generation.input_tokens
             output_tokens += generation.output_tokens
+            tool_parse_failures += getattr(generation, "tool_parse_failures", 0)
+            malformed_tool_calls.extend(getattr(generation, "malformed_tool_calls", ()) or ())
             if not generation.tool_calls:
                 final_answer = generation.content.strip()
+                if (
+                    final_answer
+                    and analysis.analytical
+                    and not source_by_id
+                    and schemas
+                    and not no_tool_intervention_attempted
+                    and model_calls < self.config.max_steps
+                ):
+                    no_tool_intervention_attempted = True
+                    messages.extend([
+                        {"role": "assistant", "content": final_answer},
+                        {"role": "user", "content": build_research_instruction(analysis, allowed_tools)},
+                    ])
+                    continue
                 if not final_answer and not repair_attempted and model_calls < self.config.max_steps:
                     repair_attempted = True
+                    repair_reason = "empty_or_malformed_protocol"
                     messages.append({
                         "role": "user",
                         "content": "Output trước rỗng hoặc sai protocol. Hãy trả lời hoặc phát đúng một tool call hợp lệ.",
@@ -162,6 +192,8 @@ class CentralAgent:
                 break
 
             messages.append(self._assistant_tool_message(generation.tool_calls))
+            if no_tool_intervention_attempted:
+                no_tool_intervention_used = True
             prepared: list[tuple[CentralToolCall, dict[str, Any], str | None, int | None]] = []
             pending: list[tuple[str, dict[str, Any]]] = []
             for call in generation.tool_calls:
@@ -230,35 +262,35 @@ class CentralAgent:
                 observation_chars += len(observation)
                 messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name, "content": observation})
 
-        if (
-            final_answer
-            and is_analytical_question(question)
-            and source_by_id
-            and len(final_answer.split()) < 120
-            and model_calls < self.config.max_steps
-            and not repair_attempted
-        ):
+        pre_validation_answer, pre_validation_source_ids, _ = self._validated_citations(final_answer, source_by_id)
+        quality_issues = analytical_answer_issues(
+            analysis=analysis,
+            answer=pre_validation_answer,
+            source_ids=pre_validation_source_ids,
+            evidence_available=bool(source_by_id),
+        )
+        if final_answer and quality_issues and source_by_id and model_calls < self.config.max_steps and not repair_attempted:
             repair_attempted = True
+            repair_reason = quality_issues[0]
             messages.extend([
                 {"role": "assistant", "content": final_answer},
                 {
                     "role": "user",
                     "content": (
-                        "Câu trả lời phân tích quá ngắn. Hãy viết lại sâu hơn từ đúng các bằng chứng đã có, "
-                        "nêu nhiều chiều ý nghĩa/hệ quả phù hợp và giữ nguyên các ID trích dẫn hợp lệ."
+                        "Câu trả lời phân tích chưa đạt yêu cầu: "
+                        + ", ".join(quality_issues)
+                        + ". Hãy viết lại sâu hơn từ đúng các bằng chứng đã có, nêu các chiều phân tích phù hợp, "
+                        "giải thích vì sao các điểm đó quan trọng và giữ nguyên các ID trích dẫn hợp lệ."
                     ),
                 },
             ])
-            repaired = await asyncio.to_thread(
-                self.model_runtime.generate,
-                messages=messages,
-                tools=schemas,
-                max_new_tokens=self.config.max_new_tokens,
-            )
+            repaired = await asyncio.to_thread(generate_once)
             model_calls += 1
             generation_ms += repaired.generation_ms
             input_tokens += repaired.input_tokens
             output_tokens += repaired.output_tokens
+            tool_parse_failures += getattr(repaired, "tool_parse_failures", 0)
+            malformed_tool_calls.extend(getattr(repaired, "malformed_tool_calls", ()) or ())
             if repaired.content.strip() and not repaired.tool_calls:
                 final_answer = repaired.content.strip()
                 repair_used = True
@@ -279,6 +311,10 @@ class CentralAgent:
             )
             telemetry.central_tool_ms += tool_ms
             telemetry.central_external_results_count += external_results_count
+            telemetry.central_tool_schema_count = len(schemas)
+            telemetry.central_tools_exposed_to_model = [item["function"]["name"] for item in schemas]
+            telemetry.central_tool_parse_failures += tool_parse_failures
+            telemetry.central_malformed_tool_calls += len(malformed_tool_calls)
 
         provenance = {
             "mode": "central",
@@ -296,7 +332,19 @@ class CentralAgent:
             "total_llm_calls": model_calls,
             "repair_generation_used": repair_used,
             "repair_generation_attempted": repair_attempted,
+            "repair_reason": repair_reason,
+            "analytical_no_tool_intervention_attempted": no_tool_intervention_attempted,
+            "analytical_no_tool_intervention_used": no_tool_intervention_used,
+            "central_tool_schema_count": len(schemas),
+            "central_tools_exposed_to_model": [item["function"]["name"] for item in schemas],
+            "central_tool_parse_failures": tool_parse_failures,
+            "central_malformed_tool_calls": malformed_tool_calls[:5],
+            "question_type": analysis.question_type,
+            "comparison_targets": list(analysis.comparison_targets),
         }
+        cache_info = dict(getattr(self.model_runtime, "cache_info", {}) or {})
+        if cache_info:
+            provenance.update(cache_info)
         return {
             "question": question,
             "answer": final_answer,
@@ -310,9 +358,26 @@ class CentralAgent:
                 "final_context": list(source_by_id.values()),
                 "tool_trace": [f"central:{item['name']}" for item in traces],
             },
-            "analysis": {"question": question, "analytical": is_analytical_question(question)},
+            "analysis": {
+                "question": question,
+                "analytical": analysis.analytical,
+                "question_type": analysis.question_type,
+                "comparison_targets": list(analysis.comparison_targets),
+                "answer_quality_issues": quality_issues,
+            },
             "tool_trace": [f"central:{item['name']}" for item in traces],
-            "central_debug": {"tools": traces, "allowed_tools": sorted(allowed_tools)},
+            "central_debug": {
+                "tools": traces,
+                "allowed_tools": sorted(allowed_tools),
+                "tool_schema_count": len(schemas),
+                "tools_exposed_to_model": [item["function"]["name"] for item in schemas],
+                "tool_parse_failures": tool_parse_failures,
+                "malformed_tool_calls": malformed_tool_calls[:5],
+                "question_type": analysis.question_type,
+                "comparison_targets": list(analysis.comparison_targets),
+                "analytical_no_tool_intervention_attempted": no_tool_intervention_attempted,
+                "analytical_no_tool_intervention_used": no_tool_intervention_used,
+            },
             "agentic": True,
             "inference_mode": "central",
             "answer_provenance": provenance,
@@ -326,6 +391,14 @@ class CentralAgent:
                 "central_input_tokens": input_tokens,
                 "central_output_tokens": output_tokens,
                 "central_external_results_count": external_results_count,
+                "central_tool_schema_count": len(schemas),
+                "central_tool_parse_failures": tool_parse_failures,
+                "central_malformed_tool_calls": len(malformed_tool_calls),
+                "question_type": analysis.question_type,
+                "comparison_targets": list(analysis.comparison_targets),
+                "repair_generation_attempted": repair_attempted,
+                "repair_generation_used": repair_used,
+                "repair_reason": repair_reason,
                 "research_generation_calls": 0,
                 "evidence_generation_calls": 0,
                 "history_generation_calls": 0,

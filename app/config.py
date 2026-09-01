@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     history_model_path: Path | None = None
     central_agent_model_id: str = CENTRAL_BASE_MODEL_ID
     central_agent_adapter_path: Path | None = None
+    central_agent_hf_cache_dir: Path | None = None
+    central_agent_local_files_only: bool = False
     runtime_loading_strategy: Literal["lazy", "eager"] = "lazy"
     enable_hybrid_mode: bool = True
     enable_three_llm_mode: bool = True
@@ -97,6 +99,7 @@ class Settings(BaseSettings):
         "evidence_agent_adapter_path",
         "history_agent_adapter_path",
         "central_agent_adapter_path",
+        "central_agent_hf_cache_dir",
         "history_model_path",
         mode="before",
     )

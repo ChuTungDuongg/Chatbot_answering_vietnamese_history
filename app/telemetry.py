@@ -52,6 +52,10 @@ class RequestTelemetry:
     tool_calls_by_type: dict[str, int] = field(default_factory=dict)
     central_tool_ms: float = 0.0
     central_external_results_count: int = 0
+    central_tool_schema_count: int = 0
+    central_tools_exposed_to_model: list[str] = field(default_factory=list)
+    central_tool_parse_failures: int = 0
+    central_malformed_tool_calls: int = 0
     domain_gate_result: str | None = None
     domain_gate_reason: str | None = None
     history_anchor: float | None = None
@@ -222,6 +226,10 @@ class RequestTelemetry:
             "central_input_tokens": self.central_input_tokens,
             "central_output_tokens": self.central_output_tokens,
             "central_external_results_count": self.central_external_results_count,
+            "central_tool_schema_count": self.central_tool_schema_count,
+            "central_tools_exposed_to_model": self.central_tools_exposed_to_model,
+            "central_tool_parse_failures": self.central_tool_parse_failures,
+            "central_malformed_tool_calls": self.central_malformed_tool_calls,
             "domain_gate_result": self.domain_gate_result,
             "domain_gate_reason": self.domain_gate_reason,
             "history_anchor": self.history_anchor,

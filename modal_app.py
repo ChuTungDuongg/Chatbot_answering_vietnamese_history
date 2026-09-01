@@ -63,6 +63,9 @@ image = modal.Image.from_dockerfile(
         "DEFAULT_INFERENCE_MODE": "central",
         "CHAT_DATABASE_PATH": "/data/chat.sqlite3",
         "HF_HOME": "/hf-cache",
+        "HF_HUB_CACHE": "/hf-cache/hub",
+        "CENTRAL_AGENT_HF_CACHE_DIR": "/hf-cache/hub",
+        "CENTRAL_AGENT_LOCAL_FILES_ONLY": os.getenv("CENTRAL_AGENT_LOCAL_FILES_ONLY", "false"),
         "CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
     }
 )

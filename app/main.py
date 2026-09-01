@@ -119,6 +119,8 @@ async def lifespan(app: FastAPI):
                         adapter_path=settings.central_adapter_path,
                         dtype=settings.dtype,
                         device=settings.device,
+                        cache_dir=settings.central_agent_hf_cache_dir,
+                        local_files_only=settings.central_agent_local_files_only,
                     ),
                     name="qwen3-8b-central-runtime",
                 )

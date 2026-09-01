@@ -34,6 +34,8 @@ def test_production_modal_uses_a100_and_lazy_independent_central_runtime():
     assert 'gpu="L4"' not in source
     assert '"CENTRAL_AGENT_MODEL_ID": "Qwen/Qwen3-8B"' in source
     assert '"CENTRAL_AGENT_ADAPTER_PATH": "/artifacts/adapters/central"' in source
+    assert '"HF_HUB_CACHE": "/hf-cache/hub"' in source
+    assert '"CENTRAL_AGENT_HF_CACHE_DIR": "/hf-cache/hub"' in source
     assert '"RUNTIME_LOADING_STRATEGY": "lazy"' in source
     assert 'os.getenv("WEB_SEARCH_PROVIDER", "local-only")' in source
     assert "MODAL_WEB_SEARCH_SECRET_NAME" in source
@@ -48,3 +50,20 @@ def test_obsolete_root_modal_smoke_files_are_absent():
         assert not (ROOT / name).exists()
     assert (ROOT / "scripts" / "central_smoke.py").is_file()
     assert (ROOT / "scripts" / "modal_artifact_sanity.py").is_file()
+
+
+def test_central_runtime_passes_native_tool_schemas_to_qwen_template():
+    source = (ROOT / "app" / "agents" / "central_model_runtime.py").read_text(encoding="utf-8")
+
+    assert "apply_chat_template(" in source
+    assert "tools=tools" in source
+    assert "enable_thinking=False" in source
+    assert "parse_central_generation_detailed" in source
+
+
+def test_modal_cache_seed_helper_is_cpu_only():
+    source = (ROOT / "scripts" / "modal_seed_hf_cache.py").read_text(encoding="utf-8")
+
+    assert "gpu=" not in source
+    assert '"/hf-cache": hf_cache' in source
+    assert '"HF_HUB_CACHE": "/hf-cache/hub"' in source

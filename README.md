@@ -215,6 +215,7 @@ DEFAULT_INFERENCE_MODE=central
 ```
 
 Central adapter phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`; runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
+Nếu muốn Central fail-fast khi base model chưa có trong cache, đặt thêm `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` sau khi đã seed/validate Hugging Face cache.
 
 ### Frontend
 
@@ -519,6 +520,32 @@ modal run scripts/modal_runtime_sanity.py
 
 Hai check xác minh layout/count và retrieval. Các lệnh này là thao tác Modal và có thể phát sinh quota/chi phí.
 
+### 4. Seed Hugging Face cache cho Central
+
+Central Qwen3-8B dùng persistent HF cache ở `/hf-cache/hub`. Seed cache trước request production đầu tiên để tránh request đầu phải tải shard model qua mạng:
+
+```bash
+modal run scripts/modal_seed_hf_cache.py
+```
+
+Kiểm tra cache đã có snapshot cần thiết:
+
+```bash
+modal run scripts/modal_seed_hf_cache.py --validate-only
+```
+
+Muốn seed thêm shared 4B base cho `three_llm`:
+
+```bash
+modal run scripts/modal_seed_hf_cache.py --include-shared-4b
+```
+
+Tất cả lệnh trên là thao tác Modal. Local/offline check cho một cache dir đã mount hoặc mirror:
+
+```bash
+python scripts/hf_cache.py --validate-only --cache-dir /hf-cache/hub
+```
+
 ## 🚢 Khởi động và deploy Modal
 
 Development:
@@ -534,6 +561,7 @@ modal deploy modal_app.py
 ```
 
 `modal_app.py` dùng A100, mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`. Shared Qwen3-4B role runtime và Central Qwen3-8B runtime được cache/lazy-load riêng: mode đầu tiên chỉ khởi tạo model nó cần, không CPU/disk offload ngầm.
+Central runtime truyền `HF_HUB_CACHE=/hf-cache/hub` và ghi telemetry `central_cache_root`, `central_model_snapshot_resolved`, `central_cache_hit`, `central_model_resolve_ms`, `central_model_load_ms`, `central_adapter_load_ms`.
 
 Sau `modal serve`, lấy URL `https://...modal.run`, đặt vào `frontend/.env`:
 

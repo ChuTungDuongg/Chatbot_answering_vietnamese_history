@@ -349,7 +349,12 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
         "request": {
             "mode": result.get("inference_mode"),
             "question": result.get("question") or retrieval.get("question"),
-            "question_type": history.get("question_type") or evidence.get("question_type") or analysis.get("facet"),
+            "question_type": (
+                history.get("question_type")
+                or evidence.get("question_type")
+                or analysis.get("question_type")
+                or analysis.get("facet")
+            ),
             "facet": analysis.get("facet"),
             "facets": analysis.get("facets") or [],
             "comparison_targets": evidence.get("comparison_targets") or analysis.get("comparison_targets") or [],

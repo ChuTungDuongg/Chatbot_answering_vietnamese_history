@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import copy
 from collections import deque
 
 from pydantic import BaseModel, Field
 
 from app.agents.central_agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER
 from app.agents.central_model_runtime import CentralGeneration, CentralToolCall, parse_central_generation
+from app.agents.central_model_runtime import parse_central_generation_detailed
+from app.agents.central_question import analyze_central_question
 from app.agents.config import CentralAgentConfig
 from app.tools.registry import ToolRegistry
 from app.telemetry import GenerationMetric, RequestTelemetry
@@ -44,9 +47,14 @@ class FakeCentralRuntime:
     def __init__(self, outputs):
         self.outputs = deque(outputs)
         self.calls = []
+        self.cache_info = {
+            "central_cache_root": "/hf-cache/hub",
+            "central_cache_hit": True,
+            "central_cache_miss": False,
+        }
 
     def generate(self, **kwargs):
-        self.calls.append(kwargs)
+        self.calls.append(copy.deepcopy(kwargs))
         return self.outputs.popleft()
 
 
@@ -87,6 +95,49 @@ def test_central_tool_loop_calls_history_then_same_model_writes_final():
     assert result["answer_provenance"]["research_generation_calls"] == 0
     assert result["answer_provenance"]["evidence_generation_calls"] == 0
     assert result["answer_provenance"]["history_generation_calls"] == 0
+    assert result["central_debug"]["tool_schema_count"] == 1
+    assert result["central_debug"]["tools_exposed_to_model"] == ["search_history"]
+
+
+def test_vietnamese_comparison_parser_extracts_both_targets():
+    analysis = analyze_central_question("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
+
+    assert analysis.question_type == "comparison"
+    assert analysis.analytical is True
+    assert analysis.comparison_targets == ("Cách mạng Tháng Tám", "chiến thắng Điện Biên Phủ")
+
+
+def test_vietnamese_question_parser_recognizes_major_analytical_facets():
+    assert analyze_central_question("Vì sao nhà Trần thắng quân Nguyên?").question_type == "cause"
+    assert analyze_central_question("Sự kiện này có ý nghĩa lịch sử gì?").question_type == "significance"
+    assert analyze_central_question("Hệ quả của Hiệp định Genève là gì?").question_type == "consequence"
+    assert analyze_central_question("Đánh giá vai trò của Ngô Quyền.").question_type == "significance"
+
+
+def test_analytical_no_tool_final_gets_one_research_intervention():
+    history = FakeTool("search_history", [{
+        "chunk_id": "cmt8", "title": "Cách mạng Tháng Tám",
+        "text": "Cách mạng Tháng Tám giành chính quyền trên cả nước.",
+    }])
+    runtime = FakeCentralRuntime([
+        CentralGeneration(content="Hai sự kiện đều rất quan trọng."),
+        call("search_history", {"query": "Cách mạng Tháng Tám Điện Biên Phủ", "top_k": 6}),
+        CentralGeneration(content=(
+            "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ đều là mốc lớn. "
+            "Điểm giống nhau là đều làm thay đổi cục diện chính trị. "
+            "Điểm khác biệt là một bên là cách mạng giành chính quyền, một bên là thắng lợi quân sự. "
+            "Vì vậy ý nghĩa lịch sử của chúng nằm ở hai tầng khác nhau. [cmt8]"
+        )),
+    ])
+
+    result = agent(runtime, history).chat("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
+
+    assert len(runtime.calls) == 3
+    assert history.calls == 1
+    assert result["analysis"]["question_type"] == "comparison"
+    assert result["answer_provenance"]["analytical_no_tool_intervention_attempted"] is True
+    assert result["answer_provenance"]["analytical_no_tool_intervention_used"] is True
+    assert "search_history" in runtime.calls[1]["messages"][-1]["content"]
 
 
 def test_central_wikipedia_search_fetch_and_final_are_bounded_to_three_calls():
@@ -252,7 +303,40 @@ def test_extremely_short_analytical_answer_gets_only_one_repair():
 
     assert len(runtime.calls) == 3
     assert result["answer_provenance"]["repair_generation_used"] is True
+    assert result["answer_provenance"]["repair_reason"] == "analytical_answer_too_shallow"
     assert len(result["answer"].split()) > 200
+
+
+def test_deep_comparison_guard_repairs_missing_similarity_difference_and_citation():
+    evidence = FakeTool("search_history", [{"chunk_id": "cmp1", "text": "Bằng chứng về hai sự kiện."}])
+    repaired = (
+        "Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ đều có ý nghĩa lịch sử lớn. "
+        "Điểm giống nhau là chúng cùng tạo bước ngoặt chính trị cho Việt Nam. "
+        "Điểm khác biệt là Cách mạng Tháng Tám thuộc quá trình giành chính quyền, "
+        "trong khi chiến thắng Điện Biên Phủ là thắng lợi quân sự quyết định. "
+        "Vì vậy, tác động của mỗi sự kiện cần được nhìn trong bối cảnh riêng. [cmp1]"
+    )
+    runtime = FakeCentralRuntime([
+        call("search_history", {"query": "so sánh"}),
+        CentralGeneration(content="Hai sự kiện quan trọng."),
+        CentralGeneration(content=repaired),
+    ])
+
+    result = agent(runtime, evidence).chat("So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.")
+
+    assert len(runtime.calls) == 3
+    assert result["answer_provenance"]["repair_generation_used"] is True
+    assert result["source_ids"] == ["cmp1"]
+
+
+def test_simple_factual_question_can_stay_direct_and_concise():
+    runtime = FakeCentralRuntime([CentralGeneration(content="Ngô Quyền thắng quân Nam Hán năm 938.")])
+
+    result = agent(runtime).chat("Ngô Quyền thắng quân Nam Hán năm nào?")
+
+    assert len(runtime.calls) == 1
+    assert result["analysis"]["analytical"] is False
+    assert result["answer"] == "Ngô Quyền thắng quân Nam Hán năm 938."
 
 
 def test_central_request_telemetry_exposes_model_tokens_and_zero_role_calls():
@@ -279,6 +363,17 @@ def test_qwen_native_tool_call_tags_parse_into_canonical_call():
     assert content == ""
     assert calls[0].name == "search_history"
     assert calls[0].arguments == {"query": "Bạch Đằng", "top_k": 5}
+
+
+def test_malformed_qwen_tool_call_is_observable_without_exposing_thinking():
+    content, calls, failures, malformed = parse_central_generation_detailed(
+        '<tool_call>{"name":"search_history","arguments":</tool_call><think>hidden</think>'
+    )
+
+    assert content == ""
+    assert calls == ()
+    assert failures == 1
+    assert malformed
 
 
 def test_hidden_thinking_tags_are_never_exposed_as_final_content():
