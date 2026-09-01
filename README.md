@@ -2,21 +2,25 @@
 
 # 🏯 Vietnamese History Agentic RAG
 
-**Hybrid RAG · 3 LLM · Central Qwen3-8B · FastAPI · React · Modal**
+**Hybrid RAG · 3-role LLM pipeline · Central V2 Qwen3-8B · FastAPI · React · Modal**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Qwen](https://img.shields.io/badge/Qwen3--4B-shared%20base-6F42C1)
+![Central](https://img.shields.io/badge/Qwen3--8B-Central%20V2-8B5CF6)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
 ![Modal](https://img.shields.io/badge/Modal-GPU%20A100-00C7B7)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)
 ![Notebooks](https://img.shields.io/badge/Project%20notebooks-0-success)
 
-[🚀 Chạy nhanh](#-chạy-local) · [🧠 Train 3 LLM](#-train-ba-llm) · [☁️ Modal](#️-đưa-artifact-lên-modal-volume) · [🧪 Kiểm thử](#-kiểm-thử) · [🧯 Xử lý lỗi](#-xử-lý-lỗi)
+[🚀 Chạy nhanh](#-chạy-local) · [🧩 Central V2](#-central-v2-dataset-và-adapter) · [🧠 Train role models](#-train-ba-llm) · [☁️ Modal](#️-đưa-artifact-lên-modal-volume) · [🧪 Kiểm thử](#-kiểm-thử)
 
 </div>
 
 > [!IMPORTANT]
 > Git không chứa model weights, corpus deployment 58.603 chunks, FAISS hoặc BM25S index. `APP_MODE=api-only` chạy không cần artifact. `retrieval-only` và `full` cần build/export hoặc lấy artifact từ nơi lưu trữ của dự án.
+
+> [!NOTE]
+> Central V2 hiện chạy `Qwen/Qwen3-8B` base với `CENTRAL_AGENT_ADAPTER_PATH` để trống. Adapter Central V1 có thể còn được lưu làm baseline nhưng không nằm trong config/manifest/lock production. Adapter V2 tương lai chỉ được nạp khi cấu hình rõ `adapters/central-v2`.
 
 ## ✨ Tổng quan
 
@@ -37,29 +41,37 @@ Ba adapter `research`, `evidence`, `history` dùng chung đúng một frozen Qwe
 ## 🧭 Kiến trúc
 
 ```mermaid
-flowchart TD
-    U[User] --> R[LLM 1: Research Agent]
-    R --> T{Tool Registry}
-    T --> L[search_history]
-    T --> D[search_uploaded_documents]
-    T --> W[search_web]
-    T --> F[fetch_web_page]
-    T --> S[retrieve/inspect evidence]
-    L --> E[(Session Evidence Store)]
-    D --> E
-    W --> E
-    F --> E
-    S --> E
-    E --> C[LLM 2: Evidence Critic]
-    C -->|insufficient và còn budget| R
-    C --> H[LLM 3: History Answerer]
-    H --> G[Source / year / format guards]
+flowchart LR
+    U[User] --> M{Mode router}
+
+    M -->|hybrid| HR[Hybrid retrieval]
+    HR --> HA[History Answerer]
+    HA --> G[Source/year/format guards]
+
+    M -->|three_llm| R[Research Agent]
+    R --> TR[Tool Registry]
+    TR --> E[Evidence Critic]
+    E -->|one bounded retry| R
+    E --> H[History Answerer]
+    H --> G
+
+    M -->|central| P[Central V2 PREPARE]
+    P --> LG[INITIAL_GROUNDING: search_history]
+    LG --> S{Evidence sufficient?}
+    S -->|no| AC[ACTION: structured tool calls]
+    AC --> TE[TOOL_EXECUTION]
+    TE --> S
+    S -->|yes| SY[SYNTHESIS]
+    SY --> QR[Optional one QUALITY_REPAIR]
+    QR --> F[FINAL]
+
     G --> A[Grounded answer + citations]
+    F --> A
 ```
 
-Giới hạn mặc định: 6 agent steps, 3 web searches, 5 page fetches và tối đa một research retry sau critic. Evidence web chỉ nằm trong session, không tự ghi vào corpus lịch sử lâu dài.
+`three_llm` giữ giới hạn mặc định 6 agent steps, 3 web searches, 5 page fetches và tối đa một research retry sau critic. Evidence web chỉ nằm trong session, không tự ghi vào corpus lịch sử lâu dài.
 
-Central không gọi hoặc load Research, Evidence hay History adapter. Runtime 4B và 8B được lazy-load độc lập theo mode.
+Central V2 luôn gọi `search_history` ở host trước khi chấp nhận factual answer. Nếu local evidence thiếu, model có tối đa hai ACTION rounds dùng Qwen/Hermes structured function calls; tool errors trở thành bounded observations, các call độc lập có thể chạy song song, synthesis không còn expose tools và repair tối đa một lần. Central không gọi hoặc load Research, Evidence hay History adapter; các telemetry counter của ba role này luôn bằng 0 trong Central request. Runtime 4B và 8B được lazy-load độc lập theo mode và không có fallback `central → three_llm`.
 
 ## 🗂️ Cấu trúc repository
 
@@ -76,7 +88,7 @@ Chatbot_answering_vietnamese_history/
 │   ├── history_answerer/        # Instruction SFT + Phase 6 RAG-SFT + eval/merge
 │   ├── research_agent/          # Trajectory prep + Qwen3 QLoRA + eval
 │   ├── evidence_agent/          # Evidence dataset + Qwen3 QLoRA + eval
-│   ├── trajectory_dataset/      # Future central Qwen3-8B behavioral trajectories
+│   ├── trajectory_dataset/      # Central V2 Hermes + grounded UIT-ViQuAD2 trajectories
 │   └── scripts/                 # Corpus, index, benchmark, merge, export
 ├── scripts/                     # Modal Volume upload CLI
 ├── artifacts/                   # Contract artifact; weights/index thật bị gitignore
@@ -122,34 +134,30 @@ python -m pip install -r requirements-training.txt
 
 Không cần Jupyter hoặc `ipykernel`. Toàn bộ entry point là Python CLI.
 
-## 🧩 Qwen3-8B Central Agent Training Pipeline
+## 🧩 Central V2 dataset và adapter
 
-Pipeline ở [`training/trajectory_dataset/`](training/trajectory_dataset/) tạo training trajectory cho Central Qwen3-8B: chọn tool, truy vấn RAG, đọc observation, tìm lại khi thiếu bằng chứng và trả lời tiếng Việt có citation. Adapter đã được tích hợp vào runtime `central`; corpus hiện hữu vẫn là knowledge và không bị QLoRA sửa đổi.
+Pipeline ở [`training/trajectory_dataset/`](training/trajectory_dataset/) chuẩn bị behavioral SFT cho adapter Central V2 tương lai. Default mix chỉ dùng:
+
+- `NousResearch/hermes-function-calling-v1` — ba subset function-calling, không lấy JSON-mode.
+- `taidng/UIT-ViQuAD2.0` — chỉ các row lịch sử vượt deterministic filter; mọi row bắt đầu bằng `search_history`.
+
+Tỉ lệ khởi đầu nằm trong [`central_v2_mix.json`](training/trajectory_dataset/configs/central_v2_mix.json): Hermes 65%, grounded UIT-ViQuAD2 35%, không duplicate row để ép capacity. Stored JSONL giữ semantic `tools`, `assistant.tool_calls` và `tool` observations; Qwen chat template chỉ render ở preprocess với `enable_thinking=False`. System/user/tool-observation bị mask, assistant tool calls và final answers được supervise.
+
+Corpus runtime vẫn là knowledge source chính; QLoRA này dạy function calling, grounded synthesis và insufficient-evidence behavior, không thay thế RAG. Chưa có adapter V2 nào là dependency production mặc định.
 
 Hướng dẫn đầy đủ: [`training/trajectory_dataset/README.md`](training/trajectory_dataset/README.md). CLI chính:
 
-```powershell
-python -m training.trajectory_dataset.cli --help
-python -m training.trajectory_dataset.cli build-custom `
-  --corpus-path artifacts/vn_history_deployment/corpus `
-  --output-dir D:/vn-history/trajectory_dataset_v1 `
-  --retrieval-backend project `
-  --dry-run
-```
-
-Ví dụ Colab/Drive (đường dẫn chỉ là mẫu):
-
 ```bash
-python -m training.trajectory_dataset.cli build-all \
-  --mount-drive \
-  --corpus-path /content/drive/MyDrive/vn-history/artifacts/vn_history_deployment/corpus \
-  --output-dir /content/drive/MyDrive/vn-history/trajectory_dataset_v1 \
-  --max-samples-per-source 2000 \
-  --resume \
-  --dry-run
+python -m training.trajectory_dataset.cli --help
+python -m training.trajectory_dataset.cli normalize-public --source hermes_function_calling --help
+python -m training.trajectory_dataset.cli normalize-public --source uit_viquad2 --help
+python -m training.trajectory_dataset.cli mix --config training/trajectory_dataset/configs/central_v2_mix.json --help
+python -m training.trajectory_dataset.cli validate --help
+python -m training.trajectory_dataset.cli audit --help
+python -m training.trajectory_dataset.cli split --help
 ```
 
-Script train QLoRA Python-only là `training/train_qwen3_8b_agent.py`; hãy chạy `--dry-run` trước. Không có notebook, không tự mount Drive, không tự tải toàn bộ public dataset và không tự chạy training.
+Hai normalizer hỗ trợ `--input-jsonl` để test hoàn toàn offline. Workflow Colab đầy đủ tạo `central_v2/intermediate`, `mixed.jsonl`, `validated.jsonl`, ba final splits và reports; xem README chuyên sâu trước khi tải dataset thật. Trainer Python-only chạy bằng `python -m training.train_qwen3_8b_agent`; luôn dùng `--dry-run` trước.
 
 ## 🚀 Chạy local
 
@@ -222,6 +230,7 @@ DEFAULT_INFERENCE_MODE=central
 ```
 
 Central V2 mặc định chạy `Qwen/Qwen3-8B` base và không tự dùng `adapters/central`. Một adapter tương lai chỉ được gắn khi `CENTRAL_AGENT_ADAPTER_PATH` được cấu hình rõ ràng; nó phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`. Runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
+Sau khi train/export Central V2, chỉ cần đổi thành `CENTRAL_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/central-v2`; runtime sẽ validate metadata rồi attach PEFT, không cần refactor kiến trúc.
 Nếu muốn Central fail-fast khi base model chưa có trong cache, đặt thêm `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` sau khi đã seed/validate Hugging Face cache.
 Central tách timeout load model khỏi timeout suy luận: `CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS` bảo vệ lazy initialization Qwen3-8B, còn `CENTRAL_AGENT_TIMEOUT_SECONDS` chỉ áp dụng sau khi model đã sẵn sàng.
 
@@ -458,8 +467,8 @@ artifacts/vn_history_deployment/
 ├── adapters/research/
 ├── adapters/evidence/
 ├── adapters/history/
-├── adapters/central/             # optional retained V1 baseline, unreferenced
-├── adapters/central-v2/          # only when explicitly exported/configured
+├── adapters/central/             # có thể còn V1 baseline; không được tham chiếu
+├── adapters/central-v2/          # chỉ tồn tại khi explicit export adapter V2
 ├── retrieval/faiss/
 ├── retrieval/bm25s_index/
 ├── corpus/vn_history_rag_chunks_enriched.jsonl
@@ -513,7 +522,7 @@ python scripts/upload_modal_volume.py \
   --dry-run
 ```
 
-Upload/sync luôn ghi adapters, retrieval, corpus và config trước; `manifest.json` gần cuối và `artifact_lock.json` cuối cùng. Không có token nào trong source.
+Upload/sync luôn ghi adapters, retrieval, corpus và config trước; `manifest.json` gần cuối và `artifact_lock.json` cuối cùng. Base-only Central là hợp lệ với `central_adapter_present=false`; thư mục V1 còn tồn tại không làm nó thành dependency. Không có token nào trong source.
 Lưu ý: exact-sync dry-run phải đọc inventory Modal (hoặc dùng `--remote-inventory-json` đã lưu), nên validation hoàn toàn offline phải dùng `scripts/validate_artifact_bundle.py`.
 
 ### 3. Upload thật và kiểm tra
@@ -666,7 +675,7 @@ python -m compileall app training scripts tests
 python -m pytest -q
 ```
 
-Unit tests dùng fake model/tool, không tải Qwen 3B/4B. Kiểm tra notebook:
+Unit tests dùng fake model/tool và local fixtures, không tải Qwen weights hoặc public datasets. Kiểm tra notebook:
 
 ```bash
 find . -name "*.ipynb" -not -path "*/.venv/*"
@@ -687,7 +696,7 @@ Kết quả kỳ vọng cho source project là rỗng.
 | Phase 7 | evaluation và benchmark CLIs |
 | Phase 8 | `training.scripts.enrich_corpus` |
 | Phase 9 | `app.rag.retrieval`, `training.scripts.build_index`, `benchmark` |
-| Phase 10 | `training.scripts.export_artifacts`, Modal uploader; two base caches + four adapters |
+| Phase 10 | `training.scripts.export_artifacts`, Modal uploader; hai base cache + ba role adapters + optional Central V2 adapter |
 
 Không notebook nào là workflow bắt buộc và repository source không còn `.ipynb`.
 
@@ -702,6 +711,8 @@ Không notebook nào là workflow bắt buộc và repository source không còn
 | `/ready` báo thiếu artifact | So layout bằng `artifacts/README.md` và chạy Modal sanity. |
 | Modal không thấy model | Kiểm tra `modal volume ls vn-history-artifacts`; upload vào root, không lồng thêm `vn_history_deployment/`. |
 | Shared backend không start | Cả ba adapter path phải tồn tại, có tên role riêng và khai báo cùng Qwen3 base ID. |
+| Central vô tình đòi adapter V1 | Để `CENTRAL_AGENT_ADAPTER_PATH` rỗng; config/manifest/lock phải có `central_adapter_present=false`. |
+| Central V2 adapter không load | Dùng đường dẫn `adapters/central-v2` và kiểm tra `base_model_name_or_path=Qwen/Qwen3-8B`. |
 | Không có web result | `local-only` cố ý trả rỗng; cấu hình provider/key ở môi trường deploy. |
 | Import FastAPI/pytest lỗi | Cài `requirements.txt` và `requirements-training.txt` trong đúng virtualenv. |
 
