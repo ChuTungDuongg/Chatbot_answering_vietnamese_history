@@ -12,9 +12,8 @@ from training.trajectory_dataset.io_utils import atomic_write_json
 from training.trajectory_dataset.preprocess import build_canonical_sft_example
 
 from .config import build_lora_settings, build_qlora_settings, effective_train_batch_size
-from .constants import ADAPTER_FILES
+from .constants import ADAPTER_FILES, CHECKPOINT_PATTERN
 from .data import DatasetSplit, ResolvedPaths
-from .runtime import find_latest_checkpoint
 
 
 def load_tokenizer(tokenizer_id: str):
@@ -113,6 +112,133 @@ def copy_adapter_artifacts(source: Path, destination: Path) -> bool:
     return True
 
 
+def adapter_artifacts_exist(path: Path) -> bool:
+    return (path / "adapter_config.json").is_file() and any(
+        (path / name).is_file() for name in ("adapter_model.safetensors", "adapter_model.bin")
+    )
+
+
+def _clear_adapter_artifacts(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for name in ADAPTER_FILES:
+        candidate = path / name
+        if candidate.is_file():
+            candidate.unlink()
+
+
+class _FinalAdapterCaptureMixin:
+    """Save the last optimized PEFT state immediately before HF reloads the best model."""
+
+    def __init__(self, *args: Any, final_adapter_output: Path, **kwargs: Any) -> None:
+        self._final_adapter_output = Path(final_adapter_output)
+        self._final_adapter_saved = False
+        self._final_adapter_global_step: int | None = None
+        self._final_adapter_source: str | None = None
+        super().__init__(*args, **kwargs)
+
+    def _capture_final_adapter(self, source: str) -> None:
+        step = int(self.state.global_step)
+        should_save = bool(getattr(self.args, "should_save", True))
+        if should_save:
+            _clear_adapter_artifacts(self._final_adapter_output)
+        self.save_model(str(self._final_adapter_output), _internal_call=True)
+        if should_save and not adapter_artifacts_exist(self._final_adapter_output):
+            raise RuntimeError(
+                f"Trainer did not save valid adapter artifacts at final global step {step}: "
+                f"{self._final_adapter_output}"
+            )
+        self._final_adapter_saved = True
+        self._final_adapter_global_step = step
+        self._final_adapter_source = source
+
+    def _load_best_model(self):
+        # Transformers 4.57.6 invokes this inside _inner_training_loop before
+        # on_train_end and before returning from train(). At this exact point,
+        # self.model still contains the last optimizer update.
+        self._capture_final_adapter("in_memory_before_best_model_reload")
+        return super()._load_best_model()
+
+
+def final_state_preserving_trainer_class(base_trainer: type) -> type:
+    """Create the lazy Trainer subclass without importing Transformers at module import."""
+
+    class FinalStatePreservingTrainer(_FinalAdapterCaptureMixin, base_trainer):
+        pass
+
+    return FinalStatePreservingTrainer
+
+
+def _checkpoint_step(checkpoint: Path | None) -> int | None:
+    if checkpoint is None:
+        return None
+    match = CHECKPOINT_PATTERN.fullmatch(checkpoint.name)
+    return int(match.group(1)) if match else None
+
+
+def finalize_adapter_artifacts(
+    trainer: Any,
+    output_dir: Path,
+    *,
+    load_best_model_at_end: bool,
+) -> dict[str, Any]:
+    """Materialize and describe true-final and best adapter artifacts."""
+    final_adapter = output_dir / "final_adapter"
+    final_step = int(trainer.state.global_step)
+    captured = bool(getattr(trainer, "_final_adapter_saved", False))
+    captured_step = getattr(trainer, "_final_adapter_global_step", None)
+    final_source = getattr(trainer, "_final_adapter_source", None)
+    best_value = getattr(trainer.state, "best_model_checkpoint", None)
+    best_checkpoint = Path(best_value).resolve() if best_value else None
+
+    if not captured:
+        if load_best_model_at_end and best_checkpoint is not None:
+            raise RuntimeError(
+                "true final adapter was not captured before best-model reload; refusing to save "
+                "trainer.model as final_adapter"
+            )
+        _clear_adapter_artifacts(final_adapter)
+        trainer.save_model(str(final_adapter), _internal_call=True)
+        captured = True
+        captured_step = final_step
+        final_source = "in_memory_after_train_without_best_model_reload"
+    if captured_step != final_step:
+        raise RuntimeError(
+            f"final adapter step mismatch: captured {captured_step}, Trainer completed {final_step}"
+        )
+    if bool(getattr(trainer.args, "should_save", True)) and not adapter_artifacts_exist(final_adapter):
+        raise RuntimeError(f"final adapter artifacts are incomplete: {final_adapter}")
+
+    best_adapter = output_dir / "best_adapter"
+    best_step = _checkpoint_step(best_checkpoint)
+    if best_checkpoint is not None:
+        if not copy_adapter_artifacts(best_checkpoint, best_adapter):
+            raise RuntimeError(f"best checkpoint has no copyable adapter artifacts: {best_checkpoint}")
+        best_source = str(best_checkpoint)
+    else:
+        if not copy_adapter_artifacts(final_adapter, best_adapter):
+            raise RuntimeError("no best checkpoint exists and final adapter could not seed best_adapter")
+        best_source = "final_adapter_fallback_no_best_checkpoint"
+
+    return {
+        "status": "complete",
+        "final_global_step": final_step,
+        "final_adapter_source": str(final_source),
+        "final_adapter_path": str(final_adapter.resolve()),
+        "best_global_step": best_step,
+        "best_adapter_source": best_source,
+        "best_adapter_path": str(best_adapter.resolve()),
+        "load_best_model_at_end": bool(load_best_model_at_end),
+    }
+
+
+def print_adapter_metadata(metadata: dict[str, Any]) -> None:
+    print(f"FINAL_GLOBAL_STEP={metadata['final_global_step']}", flush=True)
+    print(f"FINAL_ADAPTER_SOURCE={metadata['final_adapter_source']}", flush=True)
+    best_step = metadata["best_global_step"]
+    print(f"BEST_GLOBAL_STEP={best_step if best_step is not None else 'NONE'}", flush=True)
+    print(f"BEST_ADAPTER_SOURCE={metadata['best_adapter_source']}", flush=True)
+
+
 def _save_json_metrics(path: Path, metrics: dict[str, Any]) -> None:
     atomic_write_json(path, {key: value for key, value in metrics.items() if value is not None})
 
@@ -197,7 +323,8 @@ def train(
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_threshold=args.early_stopping_threshold,
         ))
-    trainer = Trainer(
+    FinalStatePreservingTrainer = final_state_preserving_trainer_class(Trainer)
+    trainer = FinalStatePreservingTrainer(
         model=model,
         args=create_training_arguments(args, output_dir=paths.output_dir, precision=precision),
         train_dataset=train_dataset,
@@ -205,20 +332,28 @@ def train(
         processing_class=tokenizer,
         data_collator=AssistantOnlyCollator(tokenizer.pad_token_id),
         callbacks=callbacks,
+        final_adapter_output=paths.output_dir / "final_adapter",
     )
+    manifest["adapter_artifacts"] = {
+        "status": "training_in_progress",
+        "final_global_step": None,
+        "final_adapter_source": None,
+        "best_global_step": None,
+        "best_adapter_source": None,
+    }
+    atomic_write_json(paths.output_dir / "run_manifest.json", manifest)
     train_result = trainer.train(
         resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None,
     )
     _save_json_metrics(paths.output_dir / "train_metrics.json", dict(train_result.metrics))
-    latest_checkpoint = find_latest_checkpoint(paths.output_dir)
-    final_adapter = paths.output_dir / "final_adapter"
-    if latest_checkpoint is None or not copy_adapter_artifacts(latest_checkpoint, final_adapter):
-        trainer.save_model(str(final_adapter))
-    best_adapter = paths.output_dir / "best_adapter"
-    best_value = getattr(trainer.state, "best_model_checkpoint", None)
-    best_checkpoint = Path(best_value) if best_value else None
-    if best_checkpoint is None or not copy_adapter_artifacts(best_checkpoint, best_adapter):
-        trainer.save_model(str(best_adapter))
+    adapter_metadata = finalize_adapter_artifacts(
+        trainer,
+        paths.output_dir,
+        load_best_model_at_end=args.load_best_model_at_end,
+    )
+    manifest["adapter_artifacts"] = adapter_metadata
+    atomic_write_json(paths.output_dir / "run_manifest.json", manifest)
+    print_adapter_metadata(adapter_metadata)
     tokenizer.save_pretrained(paths.output_dir / "tokenizer")
     validation_metrics = with_perplexity(trainer.evaluate(validation_dataset), "eval_loss")
     _save_json_metrics(paths.output_dir / "validation_metrics.json", validation_metrics)

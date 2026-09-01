@@ -322,6 +322,13 @@ def test_manifest_serializes_hashes_hardware_batch_and_redacts_secrets(tmp_path:
     assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
     assert manifest["effective_train_batch_size"] == 16
     assert manifest["datasets"]["train"]["sha256"] == sha256_file(root / "train.jsonl")
+    assert manifest["adapter_artifacts"] == {
+        "status": "training_not_started",
+        "final_global_step": None,
+        "final_adapter_source": None,
+        "best_global_step": None,
+        "best_adapter_source": None,
+    }
     assert "must-not-leak" not in encoded and manifest["cli_arguments"]["api_token"] == "<redacted>"
 
 

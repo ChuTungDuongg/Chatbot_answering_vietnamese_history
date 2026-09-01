@@ -222,6 +222,13 @@ def build_run_manifest(
             "system_user_tool_observations": "masked",
             "preprocessor": "training.trajectory_dataset.preprocess.build_canonical_sft_example",
         },
+        "adapter_artifacts": {
+            "status": "training_not_started",
+            "final_global_step": None,
+            "final_adapter_source": None,
+            "best_global_step": None,
+            "best_adapter_source": None,
+        },
     }
 
 

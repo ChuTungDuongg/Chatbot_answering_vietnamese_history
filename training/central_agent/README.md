@@ -137,4 +137,4 @@ training_runs/<run-name>/
 └── test_metrics.json          # only when requested and a test split exists
 ```
 
-Only PEFT adapters and tokenizer/config metadata are saved; base Qwen weights are not duplicated. `final_adapter` is copied from the latest valid Trainer checkpoint when available, while `best_adapter` comes from the best checkpoint/in-memory best model.
+Only PEFT adapters and tokenizer/config metadata are saved; base Qwen weights are not duplicated. `final_adapter` is captured from the actual last optimized in-memory state, immediately before Transformers reloads the best checkpoint for `load_best_model_at_end`. `best_adapter` is copied from `state.best_model_checkpoint`; therefore the two adapters may intentionally differ. `run_manifest.json` records both global steps and artifact sources.
