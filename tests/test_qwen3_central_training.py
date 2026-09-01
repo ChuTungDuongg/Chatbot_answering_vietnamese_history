@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from training.common.qlora import PrecisionSettings
+from training.central_agent.engine import _tokenized_dataset
 from training.train_qwen3_8b_agent import (
     MANIFEST_SCHEMA_VERSION,
     _safe_cli_arguments,
@@ -351,6 +352,62 @@ def test_canonical_loss_masks_non_assistant_and_supervises_tool_call_and_final()
     audit = audit_tokenized_split(tokenizer, [row], max_seq_length=100_000)
     assert audit["supervision_invariants_ok"]
     assert audit["rows_zero_supervised_tokens"] == 0
+
+
+def test_preflight_rows_with_heterogeneous_metadata_reach_trainer_arrow_safely(monkeypatch):
+    tokenizer = CharacterTokenizer()
+    rows = [
+        canonical_row("heterogeneous-a", "group-a"),
+        canonical_row("heterogeneous-b", "group-b"),
+    ]
+    rows[0]["provenance"]["some_metadata"] = 168
+    rows[1]["provenance"]["some_metadata"] = "168"
+    rows[0]["provenance"]["mixed_flag"] = True
+    rows[1]["provenance"]["mixed_flag"] = "true"
+    rows[0]["provenance"]["mixed_shape"] = [1, 2]
+    rows[1]["provenance"]["mixed_shape"] = "1,2"
+    original_rows = copy.deepcopy(rows)
+
+    class StrictFeatureDataset:
+        expected_columns = ["input_ids", "attention_mask", "labels"]
+
+        def __init__(self, features):
+            self.features = copy.deepcopy(features)
+            self.column_names = list(self.expected_columns)
+
+        @classmethod
+        def from_list(cls, values):
+            assert all(list(value) == cls.expected_columns for value in values), (
+                "raw canonical trajectory fields reached the Arrow boundary"
+            )
+            assert all(
+                isinstance(value[column], list)
+                for value in values
+                for column in cls.expected_columns
+            )
+            return cls(values)
+
+        def __len__(self):
+            return len(self.features)
+
+        def __getitem__(self, index):
+            return self.features[index]
+
+    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(Dataset=StrictFeatureDataset))
+
+    preflight = audit_tokenized_split(tokenizer, rows, max_seq_length=100_000)
+    expected = [
+        build_canonical_sft_example(tokenizer, row, max_length=100_000)
+        for row in rows
+    ]
+    dataset = _tokenized_dataset(tokenizer, rows, max_seq_length=100_000)
+
+    assert preflight["preprocessing_errors"] == 0
+    assert preflight["supervision_invariants_ok"] is True
+    assert dataset.column_names == ["input_ids", "attention_mask", "labels"]
+    assert len(dataset) == len(rows) == 2
+    assert [dataset[index] for index in range(len(dataset))] == expected
+    assert rows == original_rows
 
 
 def test_dry_run_loads_neither_tokenizer_nor_model(tmp_path: Path, monkeypatch):

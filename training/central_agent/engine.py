@@ -73,14 +73,11 @@ def create_training_arguments(
 def _tokenized_dataset(tokenizer: Any, rows: list[dict[str, Any]], max_seq_length: int):
     from datasets import Dataset
 
-    def tokenize(row: dict[str, Any]) -> dict[str, list[int]]:
-        return build_canonical_sft_example(tokenizer, row, max_length=max_seq_length)
-
-    dataset = Dataset.from_list(rows)
-    return dataset.map(
-        tokenize, remove_columns=dataset.column_names,
-        desc="Canonical assistant-action tokenization",
-    )
+    features = [
+        build_canonical_sft_example(tokenizer, row, max_length=max_seq_length)
+        for row in rows
+    ]
+    return Dataset.from_list(features)
 
 
 def trainable_parameter_summary(model: Any) -> dict[str, int | float]:
