@@ -11,9 +11,13 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
   const isUser = message.role === "user";
   const sourceCount = message.sources?.length ?? 0;
   const canonicalMode = message.mode === "hybrid_rag"
-    ? "fast"
+    ? "hybrid"
     : message.mode === "agentic_rag"
-      ? "hybrid"
+      ? "three_llm"
+      : message.mode === "fast"
+        ? "hybrid"
+        : message.mode === "agent"
+          ? "central"
       : message.mode;
   const modeLabel = CHAT_MODES.find((item) => item.value === canonicalMode)?.label ?? "";
 

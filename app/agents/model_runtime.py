@@ -53,11 +53,12 @@ class SharedAgentModelRuntime:
         self,
         *,
         model_id: str,
-        research_adapter: str | Path,
-        evidence_adapter: str | Path,
+        research_adapter: str | Path | None = None,
+        evidence_adapter: str | Path | None = None,
         history_adapter: str | Path | None = None,
         dtype: str = "bfloat16",
         validate_adapter_metadata: bool = True,
+        forbid_cpu_disk_offload: bool = True,
     ):
         import torch
         from peft import PeftModel
@@ -67,12 +68,15 @@ class SharedAgentModelRuntime:
             raise ValueError(
                 f"active shared runtime requires {SHARED_BASE_MODEL_ID!r}, received {model_id!r}"
             )
-        adapter_paths: dict[RoleName, str | Path] = {
-            "research": research_adapter,
-            "evidence": evidence_adapter,
-        }
+        adapter_paths: dict[RoleName, str | Path] = {}
+        if research_adapter is not None:
+            adapter_paths["research"] = research_adapter
+        if evidence_adapter is not None:
+            adapter_paths["evidence"] = evidence_adapter
         if history_adapter is not None:
             adapter_paths["history"] = history_adapter
+        if not adapter_paths:
+            raise ValueError("Shared role runtime requires at least one role adapter.")
         if validate_adapter_metadata:
             for role, path in adapter_paths.items():
                 validate_role_adapter(role, path)
@@ -93,18 +97,14 @@ class SharedAgentModelRuntime:
             device_map="auto",
             trust_remote_code=True,
         )
-        self.model = PeftModel.from_pretrained(
-            base,
-            str(research_adapter),
-            adapter_name="research",
-        )
-        self.model.load_adapter(str(evidence_adapter), adapter_name="evidence")
-        if history_adapter is not None:
-            self.model.load_adapter(str(history_adapter), adapter_name="history")
+        first_role, first_path = next(iter(adapter_paths.items()))
+        self.model = PeftModel.from_pretrained(base, str(first_path), adapter_name=first_role)
+        for role, path in list(adapter_paths.items())[1:]:
+            self.model.load_adapter(str(path), adapter_name=role)
         self.model.eval()
         self.adapters = frozenset(adapter_paths)
         self._lock = threading.RLock()
-        self._log_model_placement()
+        self._log_model_placement(forbid_cpu_disk_offload=forbid_cpu_disk_offload)
 
     def _max_new_tokens(self, adapter: RoleName, requested: int | None) -> int:
         if adapter not in self.adapters:
@@ -295,7 +295,7 @@ class SharedAgentModelRuntime:
                 "peak_allocated_gb": None,
             }
 
-    def _log_model_placement(self) -> None:
+    def _log_model_placement(self, *, forbid_cpu_disk_offload: bool = True) -> None:
         device_map = getattr(self.model, "hf_device_map", None)
         device_counts: dict[str, int] = {}
         cpu_offload = False
@@ -324,6 +324,8 @@ class SharedAgentModelRuntime:
                 "QWEN_OFFLOAD_DETECTED",
                 extra={"cpu_offload": cpu_offload, "disk_offload": disk_offload},
             )
+            if forbid_cpu_disk_offload:
+                raise RuntimeError("Shared Qwen3 role runtime unexpectedly offloaded layers to CPU/disk.")
 
 
 class VLLMOpenAIBackend:

@@ -49,7 +49,7 @@ production build, vì vậy phải restart Vite sau khi thay `.env`.
 | [`src/services/api.js`](src/services/api.js) | Base URL, client header, REST calls, SSE parser | Backend contract thay đổi |
 | [`src/components/ChatSidebar.jsx`](src/components/ChatSidebar.jsx) | List/search/create/rename/delete và mobile navigation | Thay quản lý cửa sổ chat |
 | [`src/components/ChatInput.jsx`](src/components/ChatInput.jsx) | Composer, mode selector, submit/stop, picker, drag/drop | Thay input/upload interaction |
-| [`src/components/ModeSelector.jsx`](src/components/ModeSelector.jsx) | Compact Fast/Hybrid/Agent dropdown ở trái composer | Thay mode interaction |
+| [`src/components/ModeSelector.jsx`](src/components/ModeSelector.jsx) | Hybrid/3 LLM/Central Agent dropdown ở trái composer | Thay mode interaction |
 | [`src/config/chatModes.js`](src/config/chatModes.js) | Canonical mode values, labels và localStorage helper | Thay mode contract |
 | [`src/components/AttachmentTray.jsx`](src/components/AttachmentTray.jsx) | Attachment queue/status/delete | Thay document status UI |
 | [`src/components/ChatMessage.jsx`](src/components/ChatMessage.jsx) | Markdown message, copy và source action | Thay answer rendering |
@@ -68,7 +68,7 @@ Frontend lưu ba giá trị vào `localStorage`:
 |---|---|
 | `vn-history-client-id` | UUID gửi bằng header `X-Client-ID` |
 | `vn-history-theme` | `light` hoặc `dark` |
-| `vn-history-chat-mode` | `fast`, `hybrid` hoặc `agent` |
+| `vn-history-chat-mode-v2` | `hybrid`, `three_llm` hoặc `central` |
 
 Messages, sources, attachments và temporary chunks nằm trong backend SQLite; frontend không
 lưu lịch sử chat trong trình duyệt. Khi xóa browser storage, client nhận UUID mới và không còn

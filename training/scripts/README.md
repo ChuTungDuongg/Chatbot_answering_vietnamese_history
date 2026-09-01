@@ -8,7 +8,7 @@
 | `training.scripts.enrich_corpus` | Thêm year metadata, char length và history score mặc định. |
 | `training.scripts.build_index` | Build normalized E5 FAISS IP index và BM25S index. |
 | `training.scripts.merge_model` | Merge LoRA adapter vào đúng base model. |
-| `training.scripts.export_artifacts` | Xuất bundle ba model + retrieval cho runtime/Modal. |
+| `training.scripts.export_artifacts` | Xuất ba role adapters 4B + Central adapter 8B + retrieval. |
 | `training.scripts.benchmark` | Gọi API retrieval trên bộ question JSONL và đo latency. |
 
 ## 🔨 Build tuần tự
@@ -36,6 +36,8 @@ python -m training.scripts.export_artifacts \
   --model-dir outputs/history_answerer/merged \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
+  --history-agent outputs/history-answerer-full/adapter \
+  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 from training.scripts.export_artifacts import main
 
 
@@ -16,6 +16,12 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
         )
         (path / "adapter_model.safetensors").write_bytes(b"fixture")
         adapters[role] = path
+    central = tmp_path / "source-central"
+    central.mkdir()
+    (central / "adapter_config.json").write_text(
+        json.dumps({"base_model_name_or_path": CENTRAL_BASE_MODEL_ID}), encoding="utf-8",
+    )
+    (central / "adapter_model.safetensors").write_bytes(b"fixture-central")
     corpus = tmp_path / "corpus.jsonl"
     corpus.write_text('{"chunk_id":"c1","text":"x"}\n', encoding="utf-8")
     retrieval = tmp_path / "retrieval"
@@ -34,6 +40,7 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
         "--research-agent", str(adapters["research"]),
         "--evidence-agent", str(adapters["evidence"]),
         "--history-agent", str(adapters["history"]),
+        "--central-agent", str(central),
         "--corpus", str(corpus),
         "--retrieval-dir", str(retrieval),
         "--output-root", str(output),
@@ -43,6 +50,7 @@ def test_export_contains_three_adapters_and_no_base_weight_copy(tmp_path):
     assert manifest["base_weights_bundled"] is False
     assert set(manifest["roles"]) == {"research", "evidence", "history"}
     assert all((output / "adapters" / role / "adapter_config.json").is_file() for role in manifest["roles"])
+    assert (output / "adapters" / "central" / "adapter_config.json").is_file()
     assert (output / "artifact_lock.json").is_file()
     assert not (output / "stale.txt").exists()
     assert not (output / "adapters" / "research" / "checkpoint-1").exists()

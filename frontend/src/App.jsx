@@ -38,8 +38,9 @@ import "./App.css";
 const THEME_STORAGE_KEY = "vn-history-theme";
 const ACTIVE_STATUSES = new Set([
   "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
-  "fast_retrieval", "fast_answering", "hybrid_retrieval", "hybrid_answering",
-  "agentic_analyzing", "agentic_local_search", "agentic_external_check", "agentic_evidence_check", "agentic_answering",
+  "hybrid_retrieval", "hybrid_answering",
+  "three_llm_research", "three_llm_evidence", "three_llm_answering",
+  "central_analyzing", "central_tools", "central_answering",
 ]);
 const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };

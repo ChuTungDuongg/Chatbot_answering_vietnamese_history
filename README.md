@@ -2,12 +2,12 @@
 
 # 🏯 Vietnamese History Agentic RAG
 
-**Ba vai trò LLM · Hybrid Retrieval · Grounded Answer · FastAPI · React · Modal**
+**Hybrid RAG · 3 LLM · Central Qwen3-8B · FastAPI · React · Modal**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Qwen](https://img.shields.io/badge/Qwen3--4B-shared%20base-6F42C1)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
-![Modal](https://img.shields.io/badge/Modal-GPU%20L4-00C7B7)
+![Modal](https://img.shields.io/badge/Modal-GPU%20A100-00C7B7)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)
 ![Notebooks](https://img.shields.io/badge/Project%20notebooks-0-success)
 
@@ -20,7 +20,13 @@
 
 ## ✨ Tổng quan
 
-Hệ thống trả lời câu hỏi lịch sử Việt Nam bằng ba vai trò tách biệt:
+Hệ thống có ba mode user-facing tách biệt:
+
+1. **`hybrid`**: hybrid retrieval rồi một History Answerer tạo câu trả lời.
+2. **`three_llm`**: pipeline Research → Evidence → History dùng shared Qwen3-4B và ba adapter vai trò.
+3. **`central`**: một Qwen3-8B + Central adapter tự chọn công cụ, đọc observation và tự viết final answer.
+
+Pipeline `three_llm` giữ ba vai trò:
 
 1. **Research / Tool Agent** dùng Qwen3 và tool registry để tìm local corpus, tài liệu PDF/ảnh đã upload trong conversation, tìm web khi được cấu hình, đọc trang và truy vấn evidence trong session.
 2. **Evidence Critic / Compressor** dùng adapter Qwen3 riêng để lọc, phát hiện xung đột, nén evidence và chỉ được chọn ID đã tồn tại.
@@ -53,19 +59,14 @@ flowchart TD
 
 Giới hạn mặc định: 6 agent steps, 3 web searches, 5 page fetches và tối đa một research retry sau critic. Evidence web chỉ nằm trong session, không tự ghi vào corpus lịch sử lâu dài.
 
-### Hai chế độ agent controller
-
-| `AGENT_CONTROLLER` | Ý nghĩa |
-|---|---|
-| `model` | Chế độ 3-LLM đầy đủ; bắt buộc có Research và Evidence adapter. Modal dùng chế độ này. |
-| `deterministic` | Fallback local để kiểm tra API/retrieval khi chưa có hai adapter; không được xem là benchmark 3-LLM. |
+Central không gọi hoặc load Research, Evidence hay History adapter. Runtime 4B và 8B được lazy-load độc lập theo mode.
 
 ## 🗂️ Cấu trúc repository
 
 ```text
 Chatbot_answering_vietnamese_history/
 ├── app/                         # FastAPI, RAG runtime, agents, tools, memory
-│   ├── agents/                  # 3 role wrappers + orchestrator + shared Qwen3 runtime
+│   ├── agents/                  # 3-role runtime + standalone Central 8B runtime
 │   ├── tools/                   # Registry, local/web/fetch/evidence tools
 │   ├── rag/                     # E5 + FAISS + BM25S + RRF + reranker + generation
 │   ├── api/                     # Chat, SSE, retrieve, conversation endpoints
@@ -82,12 +83,12 @@ Chatbot_answering_vietnamese_history/
 ├── Dataset/                     # 1.000 RAG-SFT messages
 ├── frontend/                    # React 19 + Vite chat UI
 ├── tests/                       # Offline unit/smoke tests, không tải model lớn
-├── modal_app.py                 # Modal ASGI app, GPU L4, persistent Volumes
+├── modal_app.py                 # Modal ASGI app, GPU A100, persistent Volumes
 ├── requirements.txt             # Runtime dependencies
 └── requirements-training.txt    # Training/evaluation dependencies
 ```
 
-README chuyên sâu: [backend](app/README.md), [agents](app/agents/README.md), [tools](app/tools/README.md), [training](training/README.md), [artifacts](artifacts/README.md), [datasets](Dataset/README.md), [frontend](frontend/README.md), [scripts](scripts/README.md), [tests](tests/README.md), [Modal smoke tests](modal_test/README.md).
+README chuyên sâu: [backend](app/README.md), [agents](app/agents/README.md), [tools](app/tools/README.md), [training](training/README.md), [artifacts](artifacts/README.md), [datasets](Dataset/README.md), [frontend](frontend/README.md), [scripts](scripts/README.md), [tests](tests/README.md).
 
 ## 🔧 Cài đặt
 
@@ -123,7 +124,7 @@ Không cần Jupyter hoặc `ipykernel`. Toàn bộ entry point là Python CLI.
 
 ## 🧩 Qwen3-8B Central Agent Training Pipeline
 
-Pipeline mới ở [`training/trajectory_dataset/`](training/trajectory_dataset/) chuẩn bị **training trajectory về hành vi** cho một central Qwen3-8B trong tương lai: chọn tool, truy vấn RAG, đọc observation, tìm lại khi thiếu bằng chứng và trả lời tiếng Việt có citation. Corpus hiện hữu vẫn là knowledge; pipeline không đưa thẳng toàn bộ chunk vào QLoRA, không sửa corpus/index và chưa thay thế kiến trúc 3-agent đang chạy.
+Pipeline ở [`training/trajectory_dataset/`](training/trajectory_dataset/) tạo training trajectory cho Central Qwen3-8B: chọn tool, truy vấn RAG, đọc observation, tìm lại khi thiếu bằng chứng và trả lời tiếng Việt có citation. Adapter đã được tích hợp vào runtime `central`; corpus hiện hữu vẫn là knowledge và không bị QLoRA sửa đổi.
 
 Hướng dẫn đầy đủ: [`training/trajectory_dataset/README.md`](training/trajectory_dataset/README.md). CLI chính:
 
@@ -183,7 +184,6 @@ Runtime cần corpus, config, manifest, FAISS và BM25S đúng layout ở phần
 
 ```dotenv
 APP_MODE=full
-AGENT_CONTROLLER=model
 DEVICE=cuda
 DTYPE=bfloat16
 ARTIFACT_ROOT=./artifacts/vn_history_deployment
@@ -198,6 +198,23 @@ WEB_SEARCH_PROVIDER=local-only
 ```
 
 Chạy `uvicorn` như trên. Full mode cần GPU tương thích bitsandbytes; CPU không phù hợp để phục vụ ba model.
+
+Để khởi động deployment chỉ có Central (không cần ba adapter role 4B), dùng:
+
+```dotenv
+APP_MODE=full
+DEVICE=cuda
+LLM_BACKEND=transformers
+ENABLE_HYBRID_MODE=false
+ENABLE_THREE_LLM_MODE=false
+ENABLE_CENTRAL_MODE=true
+CENTRAL_AGENT_MODEL_ID=Qwen/Qwen3-8B
+CENTRAL_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/central
+RUNTIME_LOADING_STRATEGY=lazy
+DEFAULT_INFERENCE_MODE=central
+```
+
+Central adapter phải khai báo `base_model_name_or_path=Qwen/Qwen3-8B`; runtime từ chối adapter role 4B và không fallback sang `three_llm` khi Central không sẵn sàng.
 
 ### Frontend
 
@@ -413,13 +430,14 @@ Index builder dùng normalized E5 embeddings + `faiss.IndexFlatIP` và BM25S. Ru
 
 ## 📦 Export shared-base artifact
 
-Export ba adapter độc lập; base Qwen3 được cache riêng và không bị copy ba lần:
+Export ba adapter 4B và một Central adapter 8B; base weights được cache riêng:
 
 ```bash
 python -m training.scripts.export_artifacts \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
   --history-agent outputs/history-answerer-full/adapter \
+  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -432,6 +450,7 @@ artifacts/vn_history_deployment/
 ├── adapters/research/
 ├── adapters/evidence/
 ├── adapters/history/
+├── adapters/central/
 ├── retrieval/faiss/
 ├── retrieval/bm25s_index/
 ├── corpus/vn_history_rag_chunks_enriched.jsonl
@@ -471,9 +490,10 @@ Hoặc upload từng component:
 ```bash
 python scripts/upload_modal_volume.py \
   --volume vn-history-artifacts \
-  --history-model outputs/history_answerer/merged \
+  --history-adapter outputs/history-answerer-full/adapter \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
+  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --retrieval-dir artifacts/retrieval \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --config-dir artifacts/vn_history_deployment/config \
@@ -489,12 +509,11 @@ Bỏ `--dry-run`, chạy lại đúng lệnh, sau đó:
 
 ```bash
 modal volume ls vn-history-artifacts
-modal run modal_artifact_sanity.py
-modal run modal_runtime_sanity.py
-modal run full_modal_runtime_sanity.py
+modal run scripts/modal_artifact_sanity.py
+modal run scripts/modal_runtime_sanity.py
 ```
 
-Ba check lần lượt xác minh layout/count, retrieval và full generation. GPU checks có thể phát sinh chi phí.
+Hai check xác minh layout/count và retrieval. Các lệnh này là thao tác Modal và có thể phát sinh quota/chi phí.
 
 ## 🚢 Khởi động và deploy Modal
 
@@ -510,7 +529,7 @@ Production:
 modal deploy modal_app.py
 ```
 
-`modal_app.py` mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`, rồi load một shared Qwen3 base + ba adapter, embedding model, reranker, FAISS và BM25S theo lifecycle container. Không model nào được load lại theo từng request. Xem `docs/shared_qwen3_serving.md` cho Transformers/vLLM và caveat quantization.
+`modal_app.py` dùng A100, mount artifact ở `/artifacts`, HF cache ở `/hf-cache`, SQLite ở `/data`. Shared Qwen3-4B role runtime và Central Qwen3-8B runtime được cache/lazy-load riêng: mode đầu tiên chỉ khởi tạo model nó cần, không CPU/disk offload ngầm.
 
 Sau `modal serve`, lấy URL `https://...modal.run`, đặt vào `frontend/.env`:
 
@@ -537,10 +556,18 @@ Tavily:
 
 ```dotenv
 WEB_SEARCH_PROVIDER=tavily
-WEB_SEARCH_API_KEY=your-secret
+WEB_SEARCH_API_KEY=<tavily-key>
 ```
 
-Trên Modal, cấu hình secret qua Modal secret/environment management; không ghi key vào `modal_app.py`, `.env.example` hoặc Git. Page fetch có timeout, giới hạn 1 MB, kiểm tra content type, HTML cleaning và không crawl đệ quy.
+Trên Modal, không ghi key vào source. Tạo một Secret chứa `WEB_SEARCH_API_KEY`, rồi đặt trên máy chạy `modal deploy`:
+
+```powershell
+$env:WEB_SEARCH_PROVIDER="tavily"
+$env:MODAL_WEB_SEARCH_SECRET_NAME="vn-history-web-search"
+```
+
+Nếu không đặt hai biến này, production giữ `local-only` và lỗi web không làm hỏng Central request.
+Không ghi key vào `modal_app.py`, `.env.example` hoặc Git. Page fetch có timeout, giới hạn 1 MB, kiểm tra content type, HTML cleaning và không crawl đệ quy.
 
 ## 🔌 API
 
@@ -620,7 +647,7 @@ Kết quả kỳ vọng cho source project là rỗng.
 | Phase 7 | evaluation và benchmark CLIs |
 | Phase 8 | `training.scripts.enrich_corpus` |
 | Phase 9 | `app.rag.retrieval`, `training.scripts.build_index`, `benchmark` |
-| Phase 10 | `training.scripts.export_artifacts`, Modal uploader; shared base cache + ba adapters |
+| Phase 10 | `training.scripts.export_artifacts`, Modal uploader; two base caches + four adapters |
 
 Không notebook nào là workflow bắt buộc và repository source không còn `.ipynb`.
 
@@ -644,4 +671,4 @@ Không notebook nào là workflow bắt buộc và repository source không còn
 - T4/L4/A100 settings là điểm bắt đầu, không phải cam kết fit hoặc latency.
 - Web search hiện hỗ trợ `local-only` và Tavily; không có crawler recursive.
 - Tests offline xác minh contract và orchestration, không thay thế quality benchmark bằng model thật.
-- Research/Evidence adapters chỉ tạo ra hành vi 3-LLM khi `AGENT_CONTROLLER=model`; fallback deterministic chỉ để vận hành tối thiểu.
+- Research/Evidence adapters chỉ thuộc mode `three_llm`; Central không dùng output của chúng.

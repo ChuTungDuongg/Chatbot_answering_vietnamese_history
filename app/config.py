@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 from app.chat_modes import ChatMode, normalize_chat_mode
 
 
@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     vllm_base_url: str = "http://127.0.0.1:8001/v1"
     vllm_api_key: str | None = None
     history_model_path: Path | None = None
+    central_agent_model_id: str = CENTRAL_BASE_MODEL_ID
+    central_agent_adapter_path: Path | None = None
+    runtime_loading_strategy: Literal["lazy", "eager"] = "lazy"
+    enable_hybrid_mode: bool = True
+    enable_three_llm_mode: bool = True
+    enable_central_mode: bool = True
     max_agent_steps: int = 6
     max_wikipedia_searches: int = 2
     max_web_searches: int = 3
@@ -49,6 +55,15 @@ class Settings(BaseSettings):
     agent_enable_web: bool = True
     agent_enable_wikipedia: bool = True
     agent_enable_document_search: bool = True
+    central_agent_max_steps: int = 3
+    central_agent_max_new_tokens: int = 1536
+    central_agent_timeout_seconds: float = 120.0
+    central_agent_observation_char_budget: int = 12_000
+    central_agent_max_tool_results: int = 6
+    central_agent_enable_history: bool = True
+    central_agent_enable_documents: bool = True
+    central_agent_enable_wikipedia: bool = True
+    central_agent_enable_web: bool = True
 
     # ========================================================
     # Conversation storage
@@ -81,6 +96,7 @@ class Settings(BaseSettings):
         "research_agent_adapter_path",
         "evidence_agent_adapter_path",
         "history_agent_adapter_path",
+        "central_agent_adapter_path",
         "history_model_path",
         mode="before",
     )
@@ -173,6 +189,10 @@ class Settings(BaseSettings):
     def manifest_path(self) -> Path:
         return self.artifact_root / "manifest.json"
 
+    @property
+    def central_adapter_path(self) -> Path:
+        return self.central_agent_adapter_path or self.artifact_root / "adapters" / "central"
+
     # ========================================================
     # Validation helpers
     # ========================================================
@@ -191,12 +211,15 @@ class Settings(BaseSettings):
     def required_full_paths(self) -> list[Path]:
         paths = [*self.required_retrieval_paths()]
         if self.llm_backend == "transformers":
-            if self.research_agent_adapter_path is not None:
-                paths.append(self.research_agent_adapter_path)
-            if self.evidence_agent_adapter_path is not None:
-                paths.append(self.evidence_agent_adapter_path)
-            if self.history_agent_adapter_path is not None:
-                paths.append(self.history_agent_adapter_path)
+            if self.enable_hybrid_mode or self.enable_three_llm_mode:
+                if self.research_agent_adapter_path is not None and self.enable_three_llm_mode:
+                    paths.append(self.research_agent_adapter_path)
+                if self.evidence_agent_adapter_path is not None and self.enable_three_llm_mode:
+                    paths.append(self.evidence_agent_adapter_path)
+                if self.history_agent_adapter_path is not None:
+                    paths.append(self.history_agent_adapter_path)
+            if self.enable_central_mode:
+                paths.append(self.central_adapter_path)
         return paths
 
 

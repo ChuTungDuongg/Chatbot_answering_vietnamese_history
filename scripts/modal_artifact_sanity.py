@@ -15,11 +15,13 @@ volume = modal.Volume.from_name(
 ROOT = Path("/artifacts")
 EXPECTED_CORPUS_COUNT = 58603
 EXPECTED_SHARED_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+EXPECTED_CENTRAL_BASE = "Qwen/Qwen3-8B"
 ROLE_ADAPTERS = {
     "research": ROOT / "adapters" / "research",
     "evidence": ROOT / "adapters" / "evidence",
     "history": ROOT / "adapters" / "history",
 }
+CENTRAL_ADAPTER = ROOT / "adapters" / "central"
 EXPECTED_WEIGHT_HASHES = {
     "research": "0d36e09fb947a6b077ee493f3589a36bf68dba0403f7eac91f684d070d399086",
     "evidence": "39385ca7c82b57b5ff8c9a531b5359509ea185b15e5a0adb0724626c58ed7ff6",
@@ -82,6 +84,7 @@ def sanity_check():
         "research adapter directory": ROLE_ADAPTERS["research"],
         "evidence adapter directory": ROLE_ADAPTERS["evidence"],
         "history adapter directory": ROLE_ADAPTERS["history"],
+        "central adapter directory": CENTRAL_ADAPTER,
     }
 
     print("[1] REQUIRED PATHS")
@@ -116,6 +119,8 @@ def sanity_check():
                 failures.append(
                     f"Manifest shared base {manifest_base!r} != {EXPECTED_SHARED_BASE!r}"
                 )
+            if manifest.get("central", {}).get("expected_base_model_id") != EXPECTED_CENTRAL_BASE:
+                failures.append("Manifest Central base does not match Qwen3-8B")
 
             if manifest.get("base_weights_bundled") is not False:
                 failures.append("Manifest must declare base_weights_bundled=false")
@@ -150,6 +155,8 @@ def sanity_check():
             print("Base:", artifact_lock.get("shared_base_model_id"))
             if artifact_lock.get("shared_base_model_id") != EXPECTED_SHARED_BASE:
                 failures.append("Artifact lock shared base does not match Qwen3")
+            if artifact_lock.get("central_base_model_id") != EXPECTED_CENTRAL_BASE:
+                failures.append("Artifact lock Central base does not match Qwen3-8B")
         except Exception as exc:
             print("FAIL  artifact_lock.json could not be parsed:", exc)
             failures.append("Invalid artifact lock")
@@ -175,6 +182,8 @@ def sanity_check():
                 failures.append(
                     "Inference config must route research, evidence, and history roles"
                 )
+            if llm.get("central", {}).get("model_id") != EXPECTED_CENTRAL_BASE:
+                failures.append("Inference config Central base does not match Qwen3-8B")
         except Exception as exc:
             print("FAIL  inference_config.json could not be parsed:", exc)
             failures.append("Invalid inference config")
@@ -284,13 +293,13 @@ def sanity_check():
 
     for role, adapter_dir in ROLE_ADAPTERS.items():
         config_file = adapter_dir / "adapter_config.json"
-        weights = [adapter_dir / "adapter_model.safetensors"]
+        weight_file = adapter_dir / "adapter_model.safetensors"
 
         if not config_file.is_file():
             failures.append(f"Missing {role} adapter_config.json: {config_file}")
             continue
-        if not weights:
-            failures.append(f"Missing {role} adapter safetensors: {adapter_dir}")
+        if not weight_file.is_file():
+            failures.append(f"Missing {role} adapter safetensors: {weight_file}")
             continue
 
         try:
@@ -306,8 +315,8 @@ def sanity_check():
             )
             continue
 
-        total_bytes = sum(path.stat().st_size for path in weights if path.exists())
-        weight_hash = sha256_file(weights[0])
+        total_bytes = weight_file.stat().st_size
+        weight_hash = sha256_file(weight_file)
         expected_hash = EXPECTED_WEIGHT_HASHES[role]
         hash_status = "MATCH" if weight_hash == expected_hash else "MISMATCH"
         if hash_status != "MATCH":
@@ -324,9 +333,29 @@ def sanity_check():
                 failures.append(f"{role} remote hash does not match artifact lock")
         print(
             f"PASS  {role}: base={declared_base}, "
-            f"weights={len(weights)}, size={round(total_bytes / 1024**2, 2)} MB, "
+            f"weights=1, size={round(total_bytes / 1024**2, 2)} MB, "
             f"sha256={weight_hash}, status={hash_status}"
         )
+
+    central_config_file = CENTRAL_ADAPTER / "adapter_config.json"
+    central_weights = CENTRAL_ADAPTER / "adapter_model.safetensors"
+    if central_config_file.is_file() and central_weights.is_file():
+        central_config = json.loads(central_config_file.read_text(encoding="utf-8"))
+        central_base = str(central_config.get("base_model_name_or_path", "")).rstrip("/")
+        central_hash = sha256_file(central_weights)
+        if central_base != EXPECTED_CENTRAL_BASE:
+            failures.append(
+                f"central adapter base mismatch: {central_base!r} != {EXPECTED_CENTRAL_BASE!r}"
+            )
+        locked_hash = (artifact_lock or {}).get("central", {}).get("adapter_model_sha256")
+        if locked_hash and locked_hash != central_hash:
+            failures.append("central remote hash does not match artifact lock")
+        print(
+            f"PASS  central: base={central_base}, size={size_mb(central_weights)} MB, "
+            f"sha256={central_hash}"
+        )
+    else:
+        failures.append("Missing Central adapter config or weights")
 
     legacy_model = ROOT / "legacy" / "qwen25_history" / "model"
     if legacy_model.exists():

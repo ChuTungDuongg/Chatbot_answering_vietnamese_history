@@ -4,10 +4,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.agents.orchestrator import HybridRAGOrchestrator
 from app.api import routes
-from app.api.routes import _execute_chat, _resolve_inference_mode
+from app.api.routes import _execute_chat, _get_generation_runtime, _resolve_inference_mode
 from app.chat_modes import ChatMode
 from app.chat.store import ConversationStore
 from app.schemas import ChatRequest
@@ -87,8 +88,8 @@ def test_hybrid_rag_calls_retriever_and_history_without_research_or_evidence():
 
     result = hybrid.chat(question="Bạch Đằng năm 938 có ý nghĩa gì?", final_k=3)
 
-    assert result["inference_mode"] == "hybrid_rag"
-    assert result["answer_provenance"]["mode"] == "hybrid_rag"
+    assert result["inference_mode"] == "hybrid"
+    assert result["answer_provenance"]["mode"] == "hybrid"
     assert result["answer_provenance"]["research_generation_calls"] == 0
     assert result["answer_provenance"]["evidence_generation_calls"] == 0
     assert retriever.calls == [{"question": "Bạch Đằng năm 938 có ý nghĩa gì?", "final_k": 3}]
@@ -102,8 +103,9 @@ def test_chat_request_accepts_three_modes_and_normalizes_legacy_names():
 
     for mode in ChatMode:
         assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode=mode.value).mode == mode
-    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="hybrid_rag").mode == ChatMode.FAST
-    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="agentic_rag").mode == ChatMode.HYBRID
+    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="hybrid_rag").mode == ChatMode.HYBRID
+    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="agentic_rag").mode == ChatMode.THREE_LLM
+    assert ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="agent").mode == ChatMode.CENTRAL
     with pytest.raises(ValueError):
         ChatRequest(conversation_id=conversation_id, question="Hỏi?", mode="deterministic")
 
@@ -111,7 +113,7 @@ def test_chat_request_accepts_three_modes_and_normalizes_legacy_names():
 def test_omitted_mode_uses_configured_default(monkeypatch):
     monkeypatch.setattr(routes.settings, "default_inference_mode", "hybrid_rag")
 
-    assert _resolve_inference_mode(SimpleNamespace(mode=None)) == ChatMode.FAST
+    assert _resolve_inference_mode(SimpleNamespace(mode=None)) == ChatMode.HYBRID
 
 
 def test_request_summary_records_selected_mode(caplog, tmp_path):
@@ -144,6 +146,25 @@ def test_request_summary_records_selected_mode(caplog, tmp_path):
     with caplog.at_level("INFO"):
         result = _execute_chat(store, generator, service, owner_id, payload, "req-mode", "hybrid_rag")
 
-    assert result["inference_mode"] == ChatMode.FAST
+    assert result["inference_mode"] == ChatMode.HYBRID
     summaries = [record for record in caplog.records if record.message == "REQUEST_SUMMARY"]
-    assert getattr(summaries[0], "inference_mode") == ChatMode.FAST
+    assert getattr(summaries[0], "inference_mode") == ChatMode.HYBRID
+
+
+def test_central_unavailable_never_falls_back_to_three_llm():
+    service = SimpleNamespace(loaded=True, model=None, external_generation_backend=True)
+    state = SimpleNamespace(
+        rag_service=service,
+        chat_mode_router=None,
+        central_runtime=None,
+        three_llm_runtime=object(),
+        hybrid_runtime=object(),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=state))
+    payload = SimpleNamespace(mode="central")
+
+    with pytest.raises(HTTPException) as exc_info:
+        _get_generation_runtime(request, payload)
+
+    assert exc_info.value.status_code == 503
+    assert "runtime is not loaded" in exc_info.value.detail

@@ -21,7 +21,7 @@ Deployment tested: `qwen3-3f5f81301b0ca4ac`
 
 ## Cold Start
 
-Measured by `modal_l4_diagnostics.py` in a temporary L4 Modal function using the same Volume and shared Qwen runtime.
+Measured by a former temporary L4 diagnostic function using the same Volume and shared Qwen runtime (historical result; production now targets A100).
 
 Request-only run:
 

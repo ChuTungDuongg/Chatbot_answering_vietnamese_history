@@ -1,7 +1,7 @@
 import modal
 
 
-app = modal.App("vn-history-runtime-sanity")
+app = modal.App("vn-history-retrieval-runtime-sanity")
 
 artifacts = modal.Volume.from_name(
     "vn-history-artifacts",

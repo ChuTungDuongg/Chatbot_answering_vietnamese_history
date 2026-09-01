@@ -5,7 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.agents.model_registry import ROLE_MODELS, SHARED_BASE_MODEL_ID, registry_manifest, validate_role_adapter
+from app.agents.model_registry import (
+    CENTRAL_BASE_MODEL_ID,
+    CENTRAL_MODEL,
+    ROLE_MODELS,
+    SHARED_BASE_MODEL_ID,
+    registry_manifest,
+    validate_central_adapter,
+    validate_role_adapter,
+)
 
 
 LOCK_FILENAME = "artifact_lock.json"
@@ -71,6 +79,10 @@ def inference_config_payload() -> dict[str, Any]:
             "shared_base_model_id": SHARED_BASE_MODEL_ID,
             "tokenizer_model_id": SHARED_BASE_MODEL_ID,
             "role_models": {role: spec.model_name for role, spec in ROLE_MODELS.items()},
+            "central": {
+                "model_id": CENTRAL_BASE_MODEL_ID,
+                "adapter_path": CENTRAL_MODEL.adapter_path,
+            },
             "vllm_base_url": "http://127.0.0.1:8001/v1",
         },
         "retrieval": {
@@ -78,6 +90,7 @@ def inference_config_payload() -> dict[str, Any]:
             "reranker_model_id": "BAAI/bge-reranker-v2-m3",
         },
         "generation": {role: spec.generation for role, spec in ROLE_MODELS.items()},
+        "central_generation": CENTRAL_MODEL.generation,
     }
 
 
@@ -102,6 +115,8 @@ def _lock_payload_without_deployment_id(root: str | Path) -> dict[str, Any]:
     roles: dict[str, Any] = {}
     for role, spec in ROLE_MODELS.items():
         adapter_dir = root_path / spec.adapter_path
+        if not adapter_dir.exists():
+            continue
         validate_role_adapter(role, adapter_dir)
         config_path = adapter_dir / "adapter_config.json"
         model_path = adapter_dir / "adapter_model.safetensors"
@@ -115,6 +130,25 @@ def _lock_payload_without_deployment_id(root: str | Path) -> dict[str, Any]:
             "adapter_model_sha256": sha256_file(model_path),
             "adapter_model_size": model_path.stat().st_size,
         }
+
+    central_dir = root_path / CENTRAL_MODEL.adapter_path
+    central = None
+    if central_dir.exists():
+        validate_central_adapter(central_dir)
+        central_config_path = central_dir / "adapter_config.json"
+        central_model_path = central_dir / "adapter_model.safetensors"
+        if not central_model_path.is_file():
+            raise FileNotFoundError(f"Missing central adapter weights: {central_model_path}")
+        central_config = load_json(central_config_path)
+        central = {
+            "path": CENTRAL_MODEL.adapter_path,
+            "base_model_name_or_path": str(central_config.get("base_model_name_or_path") or ""),
+            "adapter_config_sha256": sha256_file(central_config_path),
+            "adapter_model_sha256": sha256_file(central_model_path),
+            "adapter_model_size": central_model_path.stat().st_size,
+        }
+    if not roles and central is None:
+        raise RuntimeError("Artifact lock requires at least one role or Central adapter.")
 
     corpus_path = root_path / CORPUS_RELATIVE_PATH
     faiss_path = root_path / FAISS_RELATIVE_PATH
@@ -130,6 +164,8 @@ def _lock_payload_without_deployment_id(root: str | Path) -> dict[str, Any]:
         ),
         "shared_base_model_id": SHARED_BASE_MODEL_ID,
         "roles": roles,
+        "central_base_model_id": CENTRAL_BASE_MODEL_ID if central is not None else None,
+        "central": central,
         "corpus": {
             "path": CORPUS_RELATIVE_PATH,
             "sha256": sha256_file(corpus_path),
@@ -181,6 +217,8 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
         raise RuntimeError("Deployment artifact_lock.json does not match artifact bytes/configs.")
     if actual_lock.get("shared_base_model_id") != SHARED_BASE_MODEL_ID:
         raise RuntimeError("Artifact lock shared base does not match canonical Qwen3.")
+    if actual_lock.get("central") is not None and actual_lock.get("central_base_model_id") != CENTRAL_BASE_MODEL_ID:
+        raise RuntimeError("Artifact lock Central base does not match canonical Qwen3-8B.")
 
     manifest = load_json(root_path / "manifest.json")
     inference_config = load_json(root_path / INFERENCE_CONFIG_RELATIVE_PATH)
@@ -198,4 +236,6 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
         raise RuntimeError("inference_config shared base does not match canonical Qwen3.")
     if inference_config.get("generation") != {role: spec.generation for role, spec in ROLE_MODELS.items()}:
         raise RuntimeError("inference_config generation budgets do not match registry.")
+    if inference_config.get("central_generation") != CENTRAL_MODEL.generation:
+        raise RuntimeError("inference_config Central generation budget does not match registry.")
     return actual_lock

@@ -25,8 +25,7 @@ class FakeRequest:
         self.app = SimpleNamespace(
             state=SimpleNamespace(
                 rag_service=FakeService(),
-                generator=None,
-                orchestrator=generator,
+                hybrid_runtime=generator,
             )
         )
         self.disconnected = False

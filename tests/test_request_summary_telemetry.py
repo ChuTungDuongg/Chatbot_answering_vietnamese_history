@@ -60,7 +60,7 @@ def test_request_summary_success_is_emitted_without_prompt(caplog, tmp_path):
     summaries = [record for record in caplog.records if record.message == "REQUEST_SUMMARY"]
     assert len(summaries) == 1
     assert getattr(summaries[0], "result") == "success"
-    assert getattr(summaries[0], "inference_mode") == "hybrid"
+    assert getattr(summaries[0], "inference_mode") == "three_llm"
     assert getattr(summaries[0], "deployment_id") == "qwen3-test"
     assert "VERY_PRIVATE_PROMPT" not in caplog.text
 

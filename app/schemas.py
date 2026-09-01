@@ -132,6 +132,7 @@ class SourceItem(BaseModel):
 
     attachment_id: UUID | None = None
     page_number: int | None = None
+    url: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 # ============================================================

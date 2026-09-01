@@ -12,6 +12,8 @@
 
 `SharedAgentModelRuntime` nạp Qwen3 base một lần ở NF4 4-bit, load ba adapter tên `research`, `evidence`, `history`, rồi chuyển đúng adapter dưới lock trước generation. Metadata base mismatch hoặc role chưa load bị từ chối. `VLLMOpenAIBackend` giữ cùng interface và ba model name nhưng không tự quản lý server.
 
+`CentralModelRuntime` là runtime riêng cho `Qwen/Qwen3-8B` + `adapters/central`. `CentralAgent` đưa native tool schemas vào Qwen chat template, chạy tối đa ba generation, chống tool call lặp và tự viết final answer. Nó không import/delegate sang `AgentOrchestrator`, `ResearchAgent`, `EvidenceCriticAgent` hoặc `HistoryAnswererAgent`. Hai runtime dùng `LazyRuntime` để không cùng khởi tạo khi chưa cần.
+
 ## 🔁 Orchestration
 
 ```text
@@ -25,10 +27,6 @@ Research run (max 6 steps)
 ```
 
 Research policy chỉ trả JSON action hoặc finish. Evidence policy chỉ trả structured JSON. Parser có tối đa một repair cho JSON không hợp lệ; Pydantic và candidate-ID validation chạy trước khi evidence tới History model. Attachment được prefetch bằng request scope nội bộ và cũng xuất hiện dưới dạng tool `search_uploaded_documents`; model không được nhìn thấy hoặc tự chọn owner/conversation ID.
-
-## 🛟 Fallback
-
-Khi `AGENT_CONTROLLER=deterministic`, Research chạy local search rồi web fallback nếu local rỗng; Evidence chọn các chunk không rỗng đầu tiên. Chế độ này hữu ích cho smoke test, không đại diện chất lượng của hai agent đã train.
 
 ## 🧪 Unit testing
 

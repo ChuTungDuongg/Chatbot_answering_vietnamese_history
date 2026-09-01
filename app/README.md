@@ -2,7 +2,7 @@
 
 [🏠 Project README](../README.md) · [🧠 Agents](agents/README.md) · [🧰 Tools](tools/README.md) · [📦 Artifacts](../artifacts/README.md)
 
-`app/` giữ API tương thích frontend hiện tại và nối Hybrid RAG vào orchestrator ba vai trò LLM.
+`app/` phục vụ ba kiến trúc độc lập: Hybrid trực tiếp, pipeline 3 LLM và Central Qwen3-8B.
 
 ## 🗂️ Module map
 
@@ -10,8 +10,8 @@
 app/
 ├── main.py                 # lifespan, service/model/tool/orchestrator cache
 ├── config.py               # Pydantic environment settings + artifact paths
-├── chat_modes.py           # Fast/Hybrid/Agent enum + legacy API aliases
-├── agents/                 # Research, Evidence, History, shared Qwen3 runtime
+├── chat_modes.py           # Hybrid/three_llm/central enum + legacy aliases
+├── agents/                 # 4B role runtimes + standalone Central 8B runtime
 ├── tools/                  # typed registry, request context và 6 tools
 ├── rag/
 │   ├── retrieval.py        # E5 + FAISS + BM25S + RRF + BGE reranker
@@ -52,11 +52,11 @@ app/
 
 | Mode | App path |
 |---|---|
-| `fast` | `FastChatService` → direct Hybrid retrieval/History answer path với tối đa 3 contexts. |
-| `hybrid` | Existing three-role pipeline: Hybrid retrieval → Research → Evidence → History. |
-| `agent` | `CentralAgent` chọn Fast cho câu hỏi đơn giản hoặc bounded three-role/tool path khi cần. |
+| `hybrid` | Hybrid retrieval → History Answerer; không Research/Evidence. |
+| `three_llm` | Research → Evidence → History trên shared Qwen3-4B role runtime. |
+| `central` | Qwen3-8B Central adapter tự chọn tool và tự viết final answer. |
 
-API cũ gửi `hybrid_rag` hoặc `agentic_rag` vẫn giữ đúng execution behavior cũ và được map lần lượt về `fast` và `hybrid`. `CentralAgent` là orchestration facade ở app layer, không phải model thứ tư.
+Alias cũ: `fast`/`hybrid_rag` → `hybrid`, `agentic_rag` → `three_llm`, `agent` → `central`. Central không có fallback sang 3 LLM.
 
 ## 🎚️ Runtime modes
 
@@ -64,7 +64,7 @@ API cũ gửi `hybrid_rag` hoặc `agentic_rag` vẫn giữ đúng execution beh
 |---|---|
 | `api-only` | FastAPI + SQLite; không corpus/model. |
 | `retrieval-only` | Corpus, E5, FAISS, BM25S, reranker. |
-| `full` | Retrieval + shared Qwen3 backend + three role adapters/orchestrator. |
+| `full` | Retrieval + các mode model đã bật; model runtime lazy-load theo request. |
 
 Trong `full`, `LLM_BACKEND=transformers` nạp một shared Qwen3 base 4-bit và ba PEFT adapters. `LLM_BACKEND=vllm` gọi endpoint OpenAI-compatible đã phục vụ đúng ba tên role. `deterministic` giữ API chạy khi chưa có adapter, nhưng không đại diện chất lượng 3-LLM.
 
@@ -77,12 +77,14 @@ DTYPE=bfloat16
 ARTIFACT_ROOT=./artifacts/vn_history_deployment
 LLM_BACKEND=transformers
 SHARED_BASE_MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
-AGENT_CONTROLLER=model
 RESEARCH_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
 RESEARCH_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/research
 EVIDENCE_AGENT_MODEL=Qwen/Qwen3-4B-Instruct-2507
 EVIDENCE_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/evidence
 HISTORY_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/history
+CENTRAL_AGENT_MODEL_ID=Qwen/Qwen3-8B
+CENTRAL_AGENT_ADAPTER_PATH=./artifacts/vn_history_deployment/adapters/central
+RUNTIME_LOADING_STRATEGY=lazy
 MAX_AGENT_STEPS=6
 MAX_WEB_SEARCHES=3
 MAX_PAGE_FETCHES=5

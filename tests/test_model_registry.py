@@ -8,10 +8,13 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.agents.model_runtime import VLLMOpenAIBackend
 from app.agents.model_registry import (
+    CENTRAL_BASE_MODEL_ID,
+    CENTRAL_MODEL,
     ROLE_MODELS,
     SHARED_BASE_MODEL_ID,
     registry_manifest,
     validate_role_adapter,
+    validate_central_adapter,
 )
 from training.history_answerer.merge_adapter import merge_lora_adapter
 
@@ -26,6 +29,8 @@ def test_all_active_roles_use_one_qwen3_base_and_unique_adapters():
     assert len({item.adapter_path for item in ROLE_MODELS.values()}) == 3
     manifest = registry_manifest()
     assert manifest["legacy_models"] == {}
+    assert manifest["central"]["expected_base_model_id"] == CENTRAL_BASE_MODEL_ID
+    assert CENTRAL_MODEL.adapter_path == "adapters/central"
 
 
 def test_active_settings_reject_legacy_merged_backend():
@@ -50,6 +55,38 @@ def test_matching_adapter_metadata_is_accepted(tmp_path):
         json.dumps({"base_model_name_or_path": SHARED_BASE_MODEL_ID}), encoding="utf-8"
     )
     assert validate_role_adapter("research", adapter) == SHARED_BASE_MODEL_ID
+
+
+def test_central_adapter_accepts_8b_and_rejects_4b_role_base(tmp_path):
+    adapter = tmp_path / "central"
+    adapter.mkdir()
+    config = adapter / "adapter_config.json"
+    config.write_text(json.dumps({"base_model_name_or_path": CENTRAL_BASE_MODEL_ID}), encoding="utf-8")
+    assert validate_central_adapter(adapter) == CENTRAL_BASE_MODEL_ID
+
+    config.write_text(json.dumps({"base_model_name_or_path": SHARED_BASE_MODEL_ID}), encoding="utf-8")
+    with pytest.raises(ValueError, match="central adapter/base mismatch"):
+        validate_central_adapter(adapter)
+
+
+def test_central_only_settings_do_not_require_any_4b_role_adapter(tmp_path):
+    root = tmp_path / "artifacts"
+    settings = Settings(
+        app_mode="full",
+        artifact_root=root,
+        enable_hybrid_mode=False,
+        enable_three_llm_mode=False,
+        enable_central_mode=True,
+        central_agent_adapter_path=root / "adapters" / "central",
+        research_agent_adapter_path=None,
+        evidence_agent_adapter_path=None,
+        history_agent_adapter_path=None,
+    )
+
+    required = settings.required_full_paths()
+
+    assert root / "adapters" / "central" in required
+    assert all(root / "adapters" / role not in required for role in ("research", "evidence", "history"))
 
 
 def test_merge_rejects_qwen25_adapter_for_qwen3_before_loading_weights(tmp_path):

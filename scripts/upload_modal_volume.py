@@ -48,13 +48,14 @@ class SyncPlan:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate and upload three Qwen3 role adapters plus retrieval artifacts to Modal Volume."
+        description="Validate and upload the three 4B role adapters, Central 8B adapter, and retrieval artifacts."
     )
     parser.add_argument("--volume", required=True, help="Existing Modal Volume name.")
     parser.add_argument("--history-model", help="Optional legacy Qwen2.5 benchmark model directory.")
     parser.add_argument("--history-adapter", help="Fresh Qwen3 History Answerer adapter directory.")
     parser.add_argument("--research-agent", help="Research Agent LoRA adapter directory.")
     parser.add_argument("--evidence-agent", help="Evidence Agent LoRA adapter directory.")
+    parser.add_argument("--central-agent", help="Qwen3-8B Central Agent LoRA adapter directory.")
     parser.add_argument("--retrieval-dir", help="Directory containing faiss/ and bm25s_index/.")
     parser.add_argument("--corpus", help="Enriched corpus JSONL file.")
     parser.add_argument("--config-dir", help="Directory containing inference/runtime config files.")
@@ -90,6 +91,7 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
             args.history_adapter,
             args.research_agent,
             args.evidence_agent,
+            getattr(args, "central_agent", None),
             args.retrieval_dir,
             args.corpus,
             args.config_dir,
@@ -111,6 +113,7 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
         "--history-adapter": args.history_adapter,
         "--research-agent": args.research_agent,
         "--evidence-agent": args.evidence_agent,
+        "--central-agent": args.central_agent,
         "--retrieval-dir": args.retrieval_dir,
         "--corpus": args.corpus,
         "--config-dir": args.config_dir,
@@ -124,6 +127,7 @@ def collect_uploads(args: argparse.Namespace) -> list[Upload]:
         Upload(_validated(args.history_adapter, label="history adapter", directory=True), "/adapters/history"),
         Upload(_validated(args.research_agent, label="research adapter", directory=True), "/adapters/research"),
         Upload(_validated(args.evidence_agent, label="evidence adapter", directory=True), "/adapters/evidence"),
+        Upload(_validated(args.central_agent, label="central adapter", directory=True), "/adapters/central"),
         Upload(_validated(args.retrieval_dir, label="retrieval directory", directory=True), "/retrieval"),
         Upload(_validated(args.corpus, label="corpus", directory=False), "/corpus/vn_history_rag_chunks_enriched.jsonl"),
         Upload(_validated(args.config_dir, label="config directory", directory=True), "/config"),
@@ -179,7 +183,7 @@ def load_remote_inventory(path: str | Path) -> dict[str, RemoteFile]:
 
 
 def fetch_remote_inventory() -> dict[str, RemoteFile]:
-    command = ["modal", "run", "modal_artifact_sanity.py", "--inventory-json-output"]
+    command = ["modal", "run", "scripts/modal_artifact_sanity.py", "--inventory-json-output"]
     completed = subprocess.run(command, check=False, capture_output=True, text=True, encoding="utf-8")
     if completed.returncode:
         raise RuntimeError(completed.stderr or completed.stdout or "Could not fetch Modal remote inventory.")

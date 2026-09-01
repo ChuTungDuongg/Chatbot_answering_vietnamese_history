@@ -22,6 +22,7 @@ python scripts/upload_modal_volume.py \
   --history-adapter outputs/history-answerer-full/adapter \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
+  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --retrieval-dir artifacts/retrieval \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --config-dir artifacts/vn_history_deployment/config \
@@ -29,13 +30,13 @@ python scripts/upload_modal_volume.py \
   --dry-run
 ```
 
-Remote destinations lần lượt là `/adapters/history`, `/adapters/research`, `/adapters/evidence`, `/retrieval`, `/corpus`, `/config` và `/manifest.json`. `--history-model` chỉ dành cho legacy Qwen2.5 baseline và đi vào `/legacy/qwen25_history/model`.
+Remote destinations gồm `/adapters/history`, `/adapters/research`, `/adapters/evidence`, `/adapters/central`, `/retrieval`, `/corpus`, `/config` và `/manifest.json`.
 
 ## ✅ Sau upload
 
 ```bash
 modal volume ls vn-history-artifacts
-modal run modal_artifact_sanity.py
+modal run scripts/modal_artifact_sanity.py
 modal serve modal_app.py
 ```
 

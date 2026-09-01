@@ -1,7 +1,10 @@
 import { BookOpen, ChevronDown, FileImage, FileText } from "lucide-react";
 
 function sourceLabel(source) {
-  return source.source_kind === "attachment" ? "Tài liệu của bạn" : "Kho sử liệu";
+  if (source.source_kind === "attachment") return "Tài liệu của bạn";
+  if (source.source_kind === "wikipedia") return "Wikipedia";
+  if (source.source_kind === "web") return "Nguồn web";
+  return "Kho sử liệu";
 }
 
 function RetrievedChunks({ sources }) {
@@ -15,6 +18,7 @@ function RetrievedChunks({ sources }) {
         const text = source.text ?? source.content ?? "";
         const score = source.final_retrieval_score;
         const rerankerScore = source.reranker_score;
+        const sourceUrl = /^https?:\/\//i.test(source.url ?? "") ? source.url : null;
         const isAttachment = source.source_kind === "attachment" || String(chunkId).startsWith("temp:");
         const isImage = /\.(png|jpe?g|webp)$/i.test(title);
         const SourceIcon = isAttachment ? (isImage ? FileImage : FileText) : BookOpen;
@@ -36,6 +40,9 @@ function RetrievedChunks({ sources }) {
 
             <div className="retrieved-details">
               <code className="chunk-id">{chunkId}</code>
+              {sourceUrl && (
+                <a href={sourceUrl} target="_blank" rel="noreferrer">Mở nguồn</a>
+              )}
 
               {(typeof score === "number" || typeof rerankerScore === "number") && (
                 <div className="score-row">

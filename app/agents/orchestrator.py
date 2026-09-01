@@ -101,7 +101,7 @@ def _scoped_response(
         "latency_sec": time.perf_counter() - started,
         "total_latency_sec": time.perf_counter() - started,
         "inference_mode": mode,
-        "agentic": mode == "agentic_rag",
+        "agentic": mode in {"three_llm", "central", "agentic_rag"},
         "answer_provenance": {
             "mode": mode,
             "source": "domain_gate",
@@ -153,7 +153,7 @@ class HybridRAGOrchestrator:
         scoped = _scoped_response(
             question=question,
             gate=gate,
-            mode="hybrid_rag",
+            mode="hybrid",
             started=started,
             answer_depth="standard",
         )
@@ -191,7 +191,7 @@ class HybridRAGOrchestrator:
         })
         tool_trace = [
             *retrieval.get("tool_trace", []),
-            "mode:hybrid_rag",
+            "mode:hybrid",
             "hybrid:retriever",
         ]
         result = self.answerer.answer(
@@ -205,16 +205,16 @@ class HybridRAGOrchestrator:
             request_id=request_id,
             answer_depth="standard",
             avoid_generic_source_prefix=True,
-            inference_mode="hybrid_rag",
+            inference_mode="hybrid",
         )
-        result["inference_mode"] = "hybrid_rag"
+        result["inference_mode"] = "hybrid"
         result["agentic"] = False
         result["retrieval"] = retrieval
         result["retrieval_latency_sec"] = retrieval_elapsed_ms / 1000
         result["total_latency_sec"] = time.perf_counter() - started
         provenance = result.setdefault("answer_provenance", {})
         provenance.update({
-            "mode": "hybrid_rag",
+            "mode": "hybrid",
             "research_generation_calls": 0,
             "evidence_generation_calls": 0,
             "history_input_evidence_count": len(result.get("history_debug", {}).get("input_evidence_ids", [])),
@@ -268,7 +268,7 @@ class AgentOrchestrator:
         scoped = _scoped_response(
             question=question,
             gate=gate,
-            mode="agentic_rag",
+            mode="three_llm",
             started=started,
             answer_depth="deep",
         )
@@ -366,12 +366,12 @@ class AgentOrchestrator:
                 request_id=request_id,
                 answer_depth="deep",
                 avoid_generic_source_prefix=True,
-                inference_mode="agentic_rag",
+                inference_mode="three_llm",
             )
         finally:
             self.research_agent.evidence_store.remove_session(session_id)
         result["agentic"] = True
-        result["inference_mode"] = "agentic_rag"
+        result["inference_mode"] = "three_llm"
         result["evidence_critique"] = critique.model_dump()
         telemetry = current_request_telemetry()
         result["research_debug"] = {
@@ -515,7 +515,7 @@ class AgentOrchestrator:
             else research_generation_calls + evidence_generation_calls + history_generation_calls
         )
         provenance.update({
-            "mode": "agentic_rag",
+            "mode": "three_llm",
             "evidence_status": critique.status,
             "selected_evidence_ids": critique.selected_ids,
             "research_steps": result["research_debug"]["steps"],

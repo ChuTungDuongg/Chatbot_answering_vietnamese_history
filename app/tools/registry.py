@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -77,12 +78,18 @@ class ToolRegistry:
             tool = self.get(name)
             parsed = tool.input_schema.model_validate(arguments)
             if context is None:
-                result = tool.run(parsed)
+                runner = tool.run
+                call_args = (parsed,)
             else:
                 run_with_context = getattr(tool, "run_with_context", None)
-                result = run_with_context(parsed, context) if callable(run_with_context) else tool.run(parsed)
-            if inspect.isawaitable(result):
-                result = await result
+                runner = run_with_context if callable(run_with_context) else tool.run
+                call_args = (parsed, context) if callable(run_with_context) else (parsed,)
+            if inspect.iscoroutinefunction(runner):
+                result = await runner(*call_args)
+            else:
+                result = await asyncio.to_thread(runner, *call_args)
+                if inspect.isawaitable(result):
+                    result = await result
             count = len(result) if hasattr(result, "__len__") else None
             logger.info(
                 "agent_tool_call",

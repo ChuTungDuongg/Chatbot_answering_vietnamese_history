@@ -693,7 +693,7 @@ class HistoryAnswererAgent:
         first_quality_issues: list[str],
         question: str,
     ) -> bool:
-        if inference_mode != "agentic_rag":
+        if inference_mode not in {"three_llm", "agentic_rag"}:
             return False
         if answer_depth != "deep" or question_type not in {"analysis", "cause", "significance", "compare"}:
             return False

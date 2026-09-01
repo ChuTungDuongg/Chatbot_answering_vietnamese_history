@@ -108,7 +108,7 @@ NO.
 
 ## Post-Sync Sanity
 
-`modal_artifact_sanity.py` passed after sync:
+`scripts/modal_artifact_sanity.py` passed after sync:
 
 - Deployment ID: `qwen3-3f5f81301b0ca4ac`
 - Artifact lock present: yes

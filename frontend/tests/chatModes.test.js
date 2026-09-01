@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   CHAT_MODES,
   CHAT_MODE_STORAGE_KEY,
+  LEGACY_CHAT_MODE_STORAGE_KEY,
   ChatMode,
   persistChatMode,
   readStoredChatMode,
@@ -20,29 +21,40 @@ function memoryStorage(initial = {}) {
 }
 
 
-test("mode contract exposes exactly Fast, Hybrid, Agent", () => {
+test("mode contract exposes exactly Hybrid, 3 LLM, Central Agent", () => {
   assert.deepEqual(CHAT_MODES.map(({ value, label }) => ({ value, label })), [
-    { value: "fast", label: "Fast" },
     { value: "hybrid", label: "Hybrid" },
-    { value: "agent", label: "Agent" },
+    { value: "three_llm", label: "3 LLM" },
+    { value: "central", label: "Central Agent" },
   ]);
   assert.deepEqual(CHAT_MODES.map((item) => item.description), [
-    "Nhanh, phản hồi trực tiếp",
-    "Kết hợp hệ thống 3 mô hình hiện tại",
-    "Central Agent tự chọn công cụ và nguồn",
+    "Hybrid retrieval + một mô hình trả lời",
+    "Research + Evidence + History Answerer",
+    "Qwen3-8B tự nghiên cứu và gọi công cụ",
   ]);
 });
 
 
-test("selected mode persists and invalid storage falls back to Fast", () => {
+test("selected mode persists and invalid storage falls back to Hybrid", () => {
   const storage = memoryStorage();
-  assert.equal(readStoredChatMode(storage), ChatMode.FAST);
-  persistChatMode(ChatMode.AGENT, storage);
-  assert.equal(storage.getItem(CHAT_MODE_STORAGE_KEY), ChatMode.AGENT);
-  assert.equal(readStoredChatMode(storage), ChatMode.AGENT);
+  assert.equal(readStoredChatMode(storage), ChatMode.HYBRID);
+  persistChatMode(ChatMode.CENTRAL, storage);
+  assert.equal(storage.getItem(CHAT_MODE_STORAGE_KEY), ChatMode.CENTRAL);
+  assert.equal(readStoredChatMode(storage), ChatMode.CENTRAL);
 
   const invalid = memoryStorage({ [CHAT_MODE_STORAGE_KEY]: "unknown" });
-  assert.equal(readStoredChatMode(invalid), ChatMode.FAST);
+  assert.equal(readStoredChatMode(invalid), ChatMode.HYBRID);
+});
+
+
+test("legacy localStorage values migrate without changing old execution meaning", () => {
+  const oldHybrid = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "hybrid" });
+  const oldFast = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "fast" });
+  const oldAgent = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "agent" });
+
+  assert.equal(readStoredChatMode(oldHybrid), ChatMode.THREE_LLM);
+  assert.equal(readStoredChatMode(oldFast), ChatMode.HYBRID);
+  assert.equal(readStoredChatMode(oldAgent), ChatMode.CENTRAL);
 });
 
 

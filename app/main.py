@@ -7,16 +7,17 @@ from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.agents.evidence_agent import EvidenceCriticAgent
 from app.agents.central_agent import CentralAgent
-from app.agents.config import AgentConfig
+from app.agents.central_model_runtime import CentralModelRuntime
+from app.agents.config import AgentConfig, CentralAgentConfig
 from app.agents.history_answerer import HistoryAnswererAgent
+from app.agents.lazy_runtime import LazyRuntime
 from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.model_registry import SHARED_BASE_MODEL_ID, validate_central_adapter
 from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
 from app.agents.research_agent import ResearchAgent
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
-from app.telemetry import log_event
 from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.rag.retrieval import HybridRetriever
 from app.schemas import HealthResponse, ReadyResponse
@@ -43,14 +44,14 @@ async def lifespan(app: FastAPI):
 
     retriever = None
     generator = None
-    orchestrator = None
-    hybrid_orchestrator = None
-    agent_model_runtime = None
+    three_llm_runtime = None
+    hybrid_runtime = None
+    role_model_runtime = None
+    central_model_runtime = None
     attachment_service = None
     temporary_retriever = None
     research_runtime = None
-    central_agent = None
-    fast_service = None
+    central_runtime = None
     chat_mode_router = None
 
     try:
@@ -74,50 +75,65 @@ async def lifespan(app: FastAPI):
             if retriever is None:
                 raise RuntimeError("Full mode requires the retrieval runtime.")
 
-            if settings.uses_shared_backend:
+            needs_role_runtime = settings.enable_hybrid_mode or settings.enable_three_llm_mode
+            if needs_role_runtime and settings.uses_shared_backend:
                 if settings.shared_base_model_id != SHARED_BASE_MODEL_ID:
                     raise ValueError("Active shared backend must use the canonical Qwen3 base model ID.")
                 if settings.llm_backend == "transformers":
-                    if any(path is None for path in (
-                        settings.research_agent_adapter_path,
-                        settings.evidence_agent_adapter_path,
-                        settings.history_agent_adapter_path,
+                    if settings.history_agent_adapter_path is None:
+                        raise ValueError("Hybrid/three_llm Transformers runtime requires the History adapter path.")
+                    if settings.enable_three_llm_mode and any(path is None for path in (
+                        settings.research_agent_adapter_path, settings.evidence_agent_adapter_path,
                     )):
-                        raise ValueError("Shared Transformers backend requires Research, Evidence, and History adapter paths.")
-                    assert settings.research_agent_adapter_path is not None
-                    assert settings.evidence_agent_adapter_path is not None
-                    assert settings.history_agent_adapter_path is not None
-                    agent_model_runtime = SharedAgentModelRuntime(
-                        model_id=settings.shared_base_model_id,
-                        research_adapter=settings.research_agent_adapter_path,
-                        evidence_adapter=settings.evidence_agent_adapter_path,
-                        history_adapter=settings.history_agent_adapter_path,
-                        dtype=settings.dtype,
-                    )
-                    service._log_gpu_memory_stage("qwen_base_loaded")
-                    service._log_gpu_memory_stage("adapters_loaded")
-                    log_event(
-                        "MODEL_PLACEMENT",
-                        embedder_device=str(getattr(getattr(service.embedder, "device", None), "type", None)),
-                        reranker_device=str(getattr(service.reranker, "device", None)),
+                        raise ValueError("three_llm requires Research and Evidence adapter paths.")
+                    role_model_runtime = LazyRuntime(
+                        lambda: SharedAgentModelRuntime(
+                            model_id=settings.shared_base_model_id,
+                            research_adapter=(
+                                settings.research_agent_adapter_path if settings.enable_three_llm_mode else None
+                            ),
+                            evidence_adapter=(
+                                settings.evidence_agent_adapter_path if settings.enable_three_llm_mode else None
+                            ),
+                            history_adapter=settings.history_agent_adapter_path,
+                            dtype=settings.dtype,
+                        ),
+                        name="qwen3-4b-role-runtime",
                     )
                 else:
-                    agent_model_runtime = VLLMOpenAIBackend(
+                    role_model_runtime = VLLMOpenAIBackend(
                         base_url=settings.vllm_base_url,
                         api_key=settings.vllm_api_key,
                         tokenizer_id=settings.shared_base_model_id,
                     )
-                service.tokenizer = agent_model_runtime.tokenizer
-                service.external_generation_backend = True
-            else:
-                raise ValueError("Full production mode requires the shared Qwen3 role backend.")
+            elif needs_role_runtime:
+                raise ValueError("Hybrid/three_llm production modes require the shared Qwen3 role backend.")
+
+            if settings.enable_central_mode:
+                if settings.llm_backend != "transformers":
+                    raise ValueError("The standalone Central PEFT runtime currently requires LLM_BACKEND=transformers.")
+                validate_central_adapter(settings.central_adapter_path)
+                central_model_runtime = LazyRuntime(
+                    lambda: CentralModelRuntime(
+                        model_id=settings.central_agent_model_id,
+                        adapter_path=settings.central_adapter_path,
+                        dtype=settings.dtype,
+                        device=settings.device,
+                    ),
+                    name="qwen3-8b-central-runtime",
+                )
+
+            if settings.runtime_loading_strategy == "eager":
+                if isinstance(role_model_runtime, LazyRuntime):
+                    role_model_runtime.get()
+                if isinstance(central_model_runtime, LazyRuntime):
+                    central_model_runtime.get()
+            service.external_generation_backend = bool(role_model_runtime or central_model_runtime)
 
             if research_runtime is None:
                 raise RuntimeError("Full mode requires the Research retrieval runtime.")
 
-            if agent_model_runtime is None:
-                raise RuntimeError("Shared backend did not initialize the role model runtime.")
-            answerer = HistoryAnswererAgent(model_runtime=agent_model_runtime)
+            answerer = HistoryAnswererAgent(model_runtime=role_model_runtime) if role_model_runtime is not None else None
 
             agent_config = AgentConfig(
                 max_steps=settings.max_agent_steps,
@@ -132,14 +148,23 @@ async def lifespan(app: FastAPI):
             evidence_store = SessionEvidenceStore()
             tool_registry = ToolRegistry()
             tool_registry.register(SearchHistoryTool(retriever))
-            if agent_config.enable_document_search and temporary_retriever is not None:
+            documents_enabled = agent_config.enable_document_search or (
+                settings.enable_central_mode and settings.central_agent_enable_documents
+            )
+            wikipedia_enabled = agent_config.enable_wikipedia or (
+                settings.enable_central_mode and settings.central_agent_enable_wikipedia
+            )
+            web_enabled = agent_config.enable_web or (
+                settings.enable_central_mode and settings.central_agent_enable_web
+            )
+            if documents_enabled and temporary_retriever is not None:
                 tool_registry.register(SearchUploadedDocumentsTool(temporary_retriever))
             tool_registry.register(RetrieveEvidenceTool(evidence_store))
             tool_registry.register(InspectEvidenceTool(evidence_store))
-            if agent_config.enable_wikipedia:
+            if wikipedia_enabled:
                 tool_registry.register(SearchWikipediaTool())
                 tool_registry.register(FetchWikipediaPageTool())
-            if agent_config.enable_web:
+            if web_enabled:
                 tool_registry.register(
                     SearchWebTool(
                         build_web_search_provider(
@@ -150,47 +175,70 @@ async def lifespan(app: FastAPI):
                 )
                 tool_registry.register(FetchPageTool())
 
-            orchestrator = AgentOrchestrator(
-                research_agent=ResearchAgent(
-                    registry=tool_registry,
-                    evidence_store=evidence_store,
+            if settings.enable_three_llm_mode:
+                assert role_model_runtime is not None and answerer is not None
+                three_llm_runtime = AgentOrchestrator(
+                    research_agent=ResearchAgent(
+                        registry=tool_registry,
+                        evidence_store=evidence_store,
+                        retrieval_runtime=research_runtime,
+                        model_runtime=role_model_runtime,
+                        max_steps=agent_config.max_steps,
+                        max_wikipedia_searches=settings.max_wikipedia_searches,
+                        max_web_searches=settings.max_web_searches,
+                        max_page_fetches=settings.max_page_fetches,
+                    ),
+                    evidence_agent=EvidenceCriticAgent(model_runtime=role_model_runtime),
+                    answerer=answerer,
+                )
+            if settings.enable_hybrid_mode:
+                assert answerer is not None
+                hybrid_runtime = FastChatService(HybridRAGOrchestrator(
+                    retriever=retriever,
                     retrieval_runtime=research_runtime,
-                    model_runtime=agent_model_runtime,
-                    max_steps=agent_config.max_steps,
-                    max_wikipedia_searches=settings.max_wikipedia_searches,
-                    max_web_searches=settings.max_web_searches,
-                    max_page_fetches=settings.max_page_fetches,
-                ),
-                evidence_agent=EvidenceCriticAgent(model_runtime=agent_model_runtime),
-                answerer=answerer,
-            )
-            hybrid_orchestrator = HybridRAGOrchestrator(
-                retriever=retriever,
-                retrieval_runtime=research_runtime,
-                answerer=answerer,
-            )
-            fast_service = FastChatService(hybrid_orchestrator)
-            central_agent = CentralAgent(
-                orchestrator,
-                fast_service=fast_service,
-                config=agent_config,
-            )
+                    answerer=answerer,
+                ))
+            if settings.enable_central_mode:
+                assert central_model_runtime is not None
+                central_runtime = CentralAgent(
+                    model_runtime=central_model_runtime,
+                    tool_registry=tool_registry,
+                    config=CentralAgentConfig(
+                        max_steps=settings.central_agent_max_steps,
+                        max_new_tokens=settings.central_agent_max_new_tokens,
+                        max_tool_results=settings.central_agent_max_tool_results,
+                        observation_char_budget=settings.central_agent_observation_char_budget,
+                        timeout_seconds=settings.central_agent_timeout_seconds,
+                        enable_history=settings.central_agent_enable_history,
+                        enable_documents=settings.central_agent_enable_documents,
+                        enable_wikipedia=settings.central_agent_enable_wikipedia,
+                        enable_web=settings.central_agent_enable_web,
+                    ),
+                    has_uploaded_documents=lambda owner, conversation: any(
+                        item.get("status") == "ready" and int(item.get("chunk_count") or 0) > 0
+                        for item in chat_store.list_attachments(owner, conversation)
+                    ),
+                )
             chat_mode_router = ChatModeRouter(
-                fast=fast_service,
-                hybrid=orchestrator,
-                agent=central_agent,
+                hybrid=hybrid_runtime,
+                three_llm=three_llm_runtime,
+                central=central_runtime,
             )
 
         app.state.rag_service = service
         app.state.retriever = retriever
         app.state.generator = generator
-        app.state.agentic_orchestrator = orchestrator
-        app.state.hybrid_orchestrator = hybrid_orchestrator
-        app.state.orchestrator = orchestrator
-        app.state.central_agent = central_agent
-        app.state.fast_service = fast_service
+        app.state.hybrid_runtime = hybrid_runtime
+        app.state.three_llm_runtime = three_llm_runtime
+        app.state.central_runtime = central_runtime
+        app.state.agentic_orchestrator = three_llm_runtime
+        app.state.hybrid_orchestrator = getattr(hybrid_runtime, "hybrid_service", None)
+        app.state.orchestrator = three_llm_runtime
+        app.state.central_agent = central_runtime
+        app.state.fast_service = hybrid_runtime
         app.state.chat_mode_router = chat_mode_router
-        app.state.agent_model_runtime = agent_model_runtime
+        app.state.agent_model_runtime = role_model_runtime
+        app.state.central_model_runtime = central_model_runtime
         app.state.chat_store = chat_store
         app.state.attachment_service = attachment_service
         app.state.temporary_retriever = temporary_retriever
@@ -198,6 +246,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         app.state.agent_model_runtime = None
+        app.state.central_model_runtime = None
         service.shutdown()
 
 
@@ -209,7 +258,7 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description=(
-        "Vietnamese History Agentic Hybrid RAG API using a shared Qwen3 base, multilingual E5, FAISS, BM25S, "
+        "Vietnamese History RAG API with isolated Hybrid, three-LLM Qwen3-4B, and Central Qwen3-8B modes; "
         "Reciprocal Rank Fusion, cross-encoder reranking, conversation memory, temporary "
         "document retrieval and grounded-generation guards."
     ),
@@ -238,15 +287,13 @@ async def root():
         "mode": settings.app_mode,
         "docs": "/docs",
         "features": {
-            "chat_modes": ["fast", "hybrid", "agent"],
+            "chat_modes": ["hybrid", "three_llm", "central"],
             "conversations": True,
             "conversation_memory": settings.should_load_model,
             "attachment_retrieval": settings.should_load_retrieval,
-            "central_agent": bool(getattr(app.state, "central_agent", None)),
-            "fast": bool(getattr(app.state, "fast_service", None)),
-            "hybrid": bool(getattr(app.state, "orchestrator", None)),
-            "agentic_rag": bool(getattr(app.state, "orchestrator", None)),
-            "hybrid_rag": bool(getattr(app.state, "hybrid_orchestrator", None)),
+            "hybrid": bool(getattr(app.state, "hybrid_runtime", None)),
+            "three_llm": bool(getattr(app.state, "three_llm_runtime", None)),
+            "central": bool(getattr(app.state, "central_runtime", None)),
         },
     }
 

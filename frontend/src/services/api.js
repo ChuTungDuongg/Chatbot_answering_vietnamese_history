@@ -144,7 +144,7 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
 export async function streamChat({
   conversationId,
   question,
-  mode = ChatMode.FAST,
+  mode = ChatMode.HYBRID,
   finalK = 6,
   debug = false,
   onEvent,

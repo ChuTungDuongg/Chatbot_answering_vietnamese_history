@@ -15,8 +15,10 @@ from app.artifact_contract import (
     write_artifact_lock,
 )
 from app.agents.model_registry import (
+    CENTRAL_MODEL,
     ROLE_MODELS,
     registry_manifest,
+    validate_central_adapter,
     validate_role_adapter,
 )
 
@@ -99,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--research-agent", required=True, help="Research Agent adapter directory.")
     parser.add_argument("--evidence-agent", required=True, help="Evidence Agent adapter directory.")
     parser.add_argument("--history-agent", required=True, help="Fresh Qwen3 History Answerer adapter directory.")
+    parser.add_argument("--central-agent", required=True, help="Qwen3-8B Central Agent adapter directory.")
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--retrieval-dir", required=True)
     parser.add_argument("--output-root", default="artifacts/vn_history_deployment")
@@ -120,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         for role, source in adapter_sources.items():
             validate_role_adapter(role, source)
             _copy_adapter(source, tmp_root / ROLE_MODELS[role].adapter_path)
+        validate_central_adapter(args.central_agent)
+        _copy_adapter(args.central_agent, tmp_root / CENTRAL_MODEL.adapter_path)
         if args.model_dir:
             legacy_dir = tmp_root / "legacy" / "qwen25_history" / "benchmark_only_model"
             _copy(args.model_dir, legacy_dir)

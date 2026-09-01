@@ -10,10 +10,10 @@ from app.config import settings
 from app.services.rag_service import RAGService
 
 
-def _request_for(service, *, orchestrator=None, generator=None):
+def _request_for(service, *, hybrid_runtime=None, generator=None):
     state = SimpleNamespace(
         rag_service=service,
-        orchestrator=orchestrator,
+        hybrid_runtime=hybrid_runtime,
         generator=generator,
     )
     return SimpleNamespace(app=SimpleNamespace(state=state))
@@ -40,21 +40,21 @@ def _loaded_retrieval_service() -> RAGService:
 
 def test_generation_gate_accepts_shared_external_backend():
     service = _generation_service(model=None, external_backend=True)
-    orchestrator = object()
+    hybrid_runtime = object()
 
     resolved_service, runtime = _get_generation_runtime(
-        _request_for(service, orchestrator=orchestrator)
+        _request_for(service, hybrid_runtime=hybrid_runtime)
     )
 
     assert resolved_service is service
-    assert runtime is orchestrator
+    assert runtime is hybrid_runtime
 
 
 def test_generation_gate_rejects_missing_model_and_external_backend():
     service = _generation_service(model=None, external_backend=False)
 
     with pytest.raises(HTTPException) as exc_info:
-        _get_generation_runtime(_request_for(service, orchestrator=object()))
+        _get_generation_runtime(_request_for(service, hybrid_runtime=object()))
 
     assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert exc_info.value.detail == "Generation model is not ready."
@@ -62,14 +62,14 @@ def test_generation_gate_rejects_missing_model_and_external_backend():
 
 def test_generation_gate_accepts_legacy_local_model():
     service = _generation_service(model=object(), external_backend=False)
-    generator = object()
+    hybrid_runtime = object()
 
     resolved_service, runtime = _get_generation_runtime(
-        _request_for(service, generator=generator)
+        _request_for(service, hybrid_runtime=hybrid_runtime)
     )
 
     assert resolved_service is service
-    assert runtime is generator
+    assert runtime is hybrid_runtime
 
 
 def test_generation_gate_still_requires_runtime():

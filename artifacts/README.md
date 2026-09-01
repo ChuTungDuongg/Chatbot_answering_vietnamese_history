@@ -11,7 +11,8 @@ artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
 ├── adapters/
 │   ├── research/                      # Qwen3 Research LoRA
 │   ├── evidence/                      # Qwen3 Evidence LoRA
-│   └── history/                       # fresh Qwen3 History LoRA
+│   ├── history/                       # fresh Qwen3 History LoRA
+│   └── central/                       # Qwen3-8B Central Agent LoRA
 ├── retrieval/
 │   ├── faiss/chunks.index
 │   ├── faiss/manifest.json
@@ -24,7 +25,7 @@ artifacts/vn_history_deployment/       # local ARTIFACT_ROOT
 └── EXPORT_SUCCESS.txt
 ```
 
-Trên Modal, Volume được mount trực tiếp ở `/artifacts`. Shared Qwen3 base tải/cache một lần ở `/hf-cache`; artifact không chứa ba bản sao base weights.
+Trên Modal, Volume được mount trực tiếp ở `/artifacts`. Qwen3-4B role base và Qwen3-8B Central base tải/cache ở `/hf-cache`; bundle chỉ chứa adapters.
 
 ## 🧱 Artifact theo mode
 
@@ -33,10 +34,14 @@ Trên Modal, Volume được mount trực tiếp ở `/artifacts`. Shared Qwen3 
 | `api-only` | Không artifact. |
 | `retrieval-only` | corpus, config, manifest, FAISS, BM25S. |
 | `full` + `legacy-merged` | retrieval artifacts + legacy History model (baseline only). |
-| `full` + `transformers` | retrieval artifacts + ba Qwen3 adapters. |
+| `full` + `transformers`, mọi mode bật | retrieval artifacts + ba role adapters 4B + Central adapter 8B. |
+| `full` + `transformers`, chỉ `central` | retrieval artifacts + Central adapter 8B; không cần ba role adapters 4B. |
+| `full` + `transformers`, chỉ `hybrid` | retrieval artifacts + History adapter 4B. |
+| `full` + `transformers`, chỉ `three_llm` | retrieval artifacts + ba role adapters 4B. |
 | `full` + `vllm` | retrieval artifacts + endpoint đã phục vụ ba role names. |
 
 Cả Research, Evidence và History adapter phải khai báo cùng `Qwen/Qwen3-4B-Instruct-2507`; exporter/runtime fail sớm khi metadata lệch base.
+Central adapter phải khai báo riêng `Qwen/Qwen3-8B`; adapter 4B bị từ chối.
 
 ## 🏗️ Tạo bundle
 
@@ -45,6 +50,7 @@ python -m training.scripts.export_artifacts \
   --research-agent outputs/research_agent \
   --evidence-agent outputs/evidence_agent \
   --history-agent outputs/history-answerer-full/adapter \
+  --central-agent outputs/qwen3-8b-agent-v1/final_adapter \
   --corpus artifacts/corpus/vn_history_rag_chunks_enriched.jsonl \
   --retrieval-dir artifacts/retrieval \
   --output-root artifacts/vn_history_deployment
@@ -66,12 +72,11 @@ Bỏ `--dry-run` khi danh sách lệnh đúng. CLI validate local path trước 
 
 ```bash
 modal volume ls vn-history-artifacts
-modal run modal_artifact_sanity.py
-modal run modal_runtime_sanity.py
-modal run full_modal_runtime_sanity.py  # legacy Qwen2.5 layout only
+modal run scripts/modal_artifact_sanity.py
+modal run scripts/modal_runtime_sanity.py
 ```
 
-Artifact sanity kiểm tra layout, manifest/corpus count, index và ba model roles. Runtime sanity có thể tải model/GPU và phát sinh chi phí.
+Artifact sanity kiểm tra layout, hai base contracts, corpus/index và bốn adapters. Runtime sanity kiểm tra retrieval; mọi lệnh Modal có thể phát sinh quota/chi phí.
 
 ## 🔒 Quy tắc
 
@@ -79,4 +84,3 @@ Artifact sanity kiểm tra layout, manifest/corpus count, index và ba model rol
 - Không sửa manifest để né validation.
 - Không force-add `.safetensors`, `.index`, corpus lớn hoặc SQLite vào Git.
 - Upload config mới cần restart/redeploy container; runtime không hot-reload config.
-- `modal_fix.py` và `full_modal_runtime_sanity.py` chỉ dành cho legacy merged-Qwen2.5 layout.

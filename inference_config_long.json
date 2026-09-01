@@ -92,7 +92,7 @@
   "deployment": {
     "api_version": "v1",
     "framework": "FastAPI",
-    "recommended_gpu": "NVIDIA L4 24GB",
+    "recommended_gpu": "NVIDIA A100",
     "faiss_device": "cpu",
     "bm25_device": "cpu"
   }

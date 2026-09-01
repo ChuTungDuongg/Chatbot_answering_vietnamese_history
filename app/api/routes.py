@@ -85,6 +85,7 @@ def _source_to_api(
         source_kind=_source_kind(chunk or {"chunk_id": source_id}),
         attachment_id=chunk.get("attachment_id") if chunk else None,
         page_number=chunk.get("page_number") if chunk else None,
+        url=chunk.get("url") if chunk else None,
     )
 
 
@@ -171,25 +172,16 @@ def _get_generation_runtime(
     selected_mode = normalize_chat_mode(selected_mode, default=ChatMode.HYBRID)
     mode_router = getattr(request.app.state, "chat_mode_router", None)
     if mode_router is not None:
-        runtime = mode_router.runtime_for(selected_mode)
-    elif selected_mode == ChatMode.FAST:
-        runtime = (
-            getattr(request.app.state, "fast_service", None)
-            or getattr(request.app.state, "hybrid_orchestrator", None)
-        )
+        try:
+            runtime = mode_router.runtime_for(selected_mode)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     elif selected_mode == ChatMode.HYBRID:
-        runtime = (
-            getattr(request.app.state, "agentic_orchestrator", None)
-            or getattr(request.app.state, "orchestrator", None)
-        )
+        runtime = getattr(request.app.state, "hybrid_runtime", None)
+    elif selected_mode == ChatMode.THREE_LLM:
+        runtime = getattr(request.app.state, "three_llm_runtime", None)
     else:
-        runtime = (
-            getattr(request.app.state, "central_agent", None)
-            or getattr(request.app.state, "agentic_orchestrator", None)
-            or getattr(request.app.state, "orchestrator", None)
-        )
-    generator = getattr(request.app.state, "generator", None)
-    runtime = runtime or generator
+        runtime = getattr(request.app.state, "central_runtime", None)
 
     if runtime is None:
         raise HTTPException(
@@ -375,8 +367,9 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             "is_ood": retrieval.get("is_ood", False),
             "max_dense": retrieval.get("max_dense"),
         },
-        "research": research if result.get("inference_mode") in {ChatMode.HYBRID, ChatMode.AGENT, "agentic_rag"} else {},
-        "evidence": evidence if result.get("inference_mode") in {ChatMode.HYBRID, ChatMode.AGENT, "agentic_rag"} else {},
+        "research": research if result.get("inference_mode") in {ChatMode.THREE_LLM, "agentic_rag"} else {},
+        "evidence": evidence if result.get("inference_mode") in {ChatMode.THREE_LLM, "agentic_rag"} else {},
+        "central": result.get("central_debug") if result.get("inference_mode") == ChatMode.CENTRAL else {},
         "history": {
             **history,
             "invalid_source_ids": result.get("invalid_source_ids", []),
@@ -696,23 +689,22 @@ async def chat_stream(
         stream_started = time.perf_counter()
         task: asyncio.Task | None = None
 
-        if selected_mode == ChatMode.AGENT:
+        if selected_mode == ChatMode.CENTRAL:
             status_messages = [
-                ("agentic_analyzing", "Đang phân tích câu hỏi..."),
-                ("agentic_local_search", "Đang tìm trong kho sử liệu..."),
-                ("agentic_external_check", "Đang kiểm tra thêm nguồn ngoài..."),
-                ("agentic_evidence_check", "Đang đối chiếu bằng chứng..."),
-                ("agentic_answering", "Đang soạn câu trả lời..."),
+                ("central_analyzing", "Central Agent đang phân tích câu hỏi..."),
+                ("central_tools", "Central Agent đang thu thập bằng chứng..."),
+                ("central_answering", "Central Agent đang tổng hợp câu trả lời..."),
             ]
-        elif selected_mode == ChatMode.HYBRID:
+        elif selected_mode == ChatMode.THREE_LLM:
             status_messages = [
-                ("hybrid_retrieval", "Đang truy xuất kho sử liệu..."),
-                ("hybrid_answering", "Đang soạn câu trả lời..."),
+                ("three_llm_research", "Research Agent đang thu thập bằng chứng..."),
+                ("three_llm_evidence", "Evidence Agent đang kiểm tra bằng chứng..."),
+                ("three_llm_answering", "History Answerer đang soạn câu trả lời..."),
             ]
         else:
             status_messages = [
-                ("fast_retrieval", "Đang tìm nhanh trong kho sử liệu..."),
-                ("fast_answering", "Đang chuẩn bị câu trả lời..."),
+                ("hybrid_retrieval", "Đang tìm trong kho sử liệu..."),
+                ("hybrid_answering", "Đang chuẩn bị câu trả lời..."),
             ]
         yield _sse("status", {"stage": status_messages[0][0], "message": status_messages[0][1], "mode": selected_mode})
 

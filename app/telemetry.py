@@ -50,6 +50,8 @@ class RequestTelemetry:
     external_results_count: int = 0
     tool_calls: int = 0
     tool_calls_by_type: dict[str, int] = field(default_factory=dict)
+    central_tool_ms: float = 0.0
+    central_external_results_count: int = 0
     domain_gate_result: str | None = None
     domain_gate_reason: str | None = None
     history_anchor: float | None = None
@@ -150,6 +152,22 @@ class RequestTelemetry:
         return sum(1 for item in self.generation_metrics if item.adapter == "evidence")
 
     @property
+    def central_model_calls(self) -> int:
+        return sum(1 for item in self.generation_metrics if item.adapter == "central")
+
+    @property
+    def central_generation_ms(self) -> float:
+        return sum(item.generation_ms for item in self.generation_metrics if item.adapter == "central")
+
+    @property
+    def central_input_tokens(self) -> int:
+        return sum(item.input_tokens for item in self.generation_metrics if item.adapter == "central")
+
+    @property
+    def central_output_tokens(self) -> int:
+        return sum(item.output_tokens for item in self.generation_metrics if item.adapter == "central")
+
+    @property
     def total_input_tokens(self) -> int:
         return sum(item.input_tokens for item in self.generation_metrics)
 
@@ -195,6 +213,15 @@ class RequestTelemetry:
             "external_results_count": self.external_results_count,
             "tool_calls": self.tool_calls,
             "tool_calls_by_type": self.tool_calls_by_type,
+            "central_model_calls": self.central_model_calls,
+            "central_tool_calls": self.tool_calls if self.inference_mode == "central" else 0,
+            "central_tool_calls_by_type": self.tool_calls_by_type if self.inference_mode == "central" else {},
+            "central_generation_ms": self.central_generation_ms,
+            "central_tool_ms": self.central_tool_ms,
+            "central_total_latency_ms": (time.perf_counter() - self.started) * 1000 if self.inference_mode == "central" else 0.0,
+            "central_input_tokens": self.central_input_tokens,
+            "central_output_tokens": self.central_output_tokens,
+            "central_external_results_count": self.central_external_results_count,
             "domain_gate_result": self.domain_gate_result,
             "domain_gate_reason": self.domain_gate_reason,
             "history_anchor": self.history_anchor,
@@ -283,6 +310,7 @@ class RequestTelemetry:
                 "research": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "research"),
                 "evidence": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "evidence"),
                 "history": sum(item.generation_ms for item in self.generation_metrics if item.adapter == "history"),
+                "central": self.central_generation_ms,
             },
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,

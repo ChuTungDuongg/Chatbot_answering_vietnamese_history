@@ -7,16 +7,16 @@ from typing import Any
 class ChatMode(str, Enum):
     """Canonical user-facing application modes."""
 
-    FAST = "fast"
     HYBRID = "hybrid"
-    AGENT = "agent"
+    THREE_LLM = "three_llm"
+    CENTRAL = "central"
 
 
 LEGACY_CHAT_MODE_ALIASES: dict[str, ChatMode] = {
-    # Preserve the exact old execution paths: hybrid_rag was the direct,
-    # single-answerer path; agentic_rag was the three-role pipeline.
-    "hybrid_rag": ChatMode.FAST,
-    "agentic_rag": ChatMode.HYBRID,
+    "fast": ChatMode.HYBRID,
+    "hybrid_rag": ChatMode.HYBRID,
+    "agentic_rag": ChatMode.THREE_LLM,
+    "agent": ChatMode.CENTRAL,
 }
 
 
