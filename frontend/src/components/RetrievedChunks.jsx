@@ -1,4 +1,5 @@
-import { BookOpen, ChevronDown, FileImage, FileText } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 
 function sourceLabel(source) {
   if (source.source_kind === "attachment") return "Tài liệu của bạn";
@@ -7,30 +8,30 @@ function sourceLabel(source) {
   return "Kho sử liệu";
 }
 
-function RetrievedChunks({ sources }) {
+function RetrievedChunks({ sources, activeIndex }) {
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const selected = rootRef.current?.querySelector(`[data-source-index="${activeIndex}"]`);
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
   if (!sources?.length) return null;
 
   return (
-    <div className="retrieved-list">
+    <div className="retrieved-list" ref={rootRef}>
       {sources.map((source, index) => {
         const chunkId = source.chunk_id ?? source.id ?? `chunk-${index}`;
         const displayIndex = source.display_index ?? index + 1;
         const title = source.title ?? "Nguồn chưa có tiêu đề";
         const text = source.text ?? source.content ?? "";
-        const score = source.final_retrieval_score;
-        const rerankerScore = source.reranker_score;
         const sourceUrl = /^https?:\/\//i.test(source.url ?? "") ? source.url : null;
-        const isAttachment = source.source_kind === "attachment" || String(chunkId).startsWith("temp:");
-        const isImage = /\.(png|jpe?g|webp)$/i.test(title);
-        const SourceIcon = isAttachment ? (isImage ? FileImage : FileText) : BookOpen;
 
         return (
-          <details className="retrieved-card" key={chunkId}>
+          <details className={`retrieved-card ${activeIndex === displayIndex ? "is-highlighted" : ""}`} key={chunkId} data-source-index={displayIndex} open={activeIndex === displayIndex || undefined}>
             <summary className="retrieved-summary">
-              <SourceIcon className="retrieved-type-icon" />
+              <span className="source-index" aria-hidden="true">{displayIndex}</span>
               <span className="retrieved-summary-main">
                 <span className="retrieved-source-type">{sourceLabel(source)}</span>
-                <strong>[{displayIndex}] {title}</strong>
+                <strong><span className="sr-only">[{displayIndex}] </span>{title}</strong>
                 <span className="retrieved-meta">
                   {source.page_number ? `Trang ${source.page_number}` : `Nguồn ${displayIndex}`}
                   {source.cited ? " · Được trích dẫn" : ""}
@@ -41,14 +42,7 @@ function RetrievedChunks({ sources }) {
 
             <div className="retrieved-details">
               {sourceUrl && (
-                <a href={sourceUrl} target="_blank" rel="noreferrer">Mở nguồn</a>
-              )}
-
-              {(typeof score === "number" || typeof rerankerScore === "number") && (
-                <div className="score-row">
-                  {typeof score === "number" && <span>Final {score.toFixed(3)}</span>}
-                  {typeof rerankerScore === "number" && <span>Rerank {rerankerScore.toFixed(3)}</span>}
-                </div>
+                <a href={sourceUrl} target="_blank" rel="noreferrer">Đọc nguồn gốc <ArrowUpRight aria-hidden="true" /></a>
               )}
 
               {text ? (

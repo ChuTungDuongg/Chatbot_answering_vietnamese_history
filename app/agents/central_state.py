@@ -13,6 +13,7 @@ class CentralPhase(str, Enum):
     ACTION = "action"
     TOOL_EXECUTION = "tool_execution"
     SYNTHESIS = "synthesis"
+    CITATION_REPAIR = "citation_repair"
     QUALITY_REPAIR = "quality_repair"
     FINAL = "final"
 
@@ -22,7 +23,8 @@ _ALLOWED_TRANSITIONS = {
     CentralPhase.INITIAL_GROUNDING: {CentralPhase.ACTION, CentralPhase.SYNTHESIS, CentralPhase.FINAL},
     CentralPhase.ACTION: {CentralPhase.TOOL_EXECUTION, CentralPhase.SYNTHESIS, CentralPhase.FINAL},
     CentralPhase.TOOL_EXECUTION: {CentralPhase.ACTION, CentralPhase.SYNTHESIS, CentralPhase.FINAL},
-    CentralPhase.SYNTHESIS: {CentralPhase.QUALITY_REPAIR, CentralPhase.FINAL},
+    CentralPhase.SYNTHESIS: {CentralPhase.CITATION_REPAIR, CentralPhase.QUALITY_REPAIR, CentralPhase.FINAL},
+    CentralPhase.CITATION_REPAIR: {CentralPhase.QUALITY_REPAIR, CentralPhase.FINAL},
     CentralPhase.QUALITY_REPAIR: {CentralPhase.FINAL},
     CentralPhase.FINAL: set(),
 }
@@ -76,6 +78,17 @@ class CentralAgentState:
     retrieval_candidates: list[dict[str, Any]] = field(default_factory=list)
     retrieval_filter_events: list[dict[str, Any]] = field(default_factory=list)
     evidence_debug: dict[str, Any] = field(default_factory=dict)
+    reliability: dict[str, Any] = field(default_factory=lambda: {
+        "model_was_cold": False, "model_load_wait_ms": 0.0,
+        "model_load_overlap_enabled": False, "model_load_overlap_ms_saved_estimate": 0.0,
+        "retrieval_queries_planned": [], "retrieval_queries_executed": [], "retrieval_queries_skipped": [],
+        "retrieval_query_skip_reasons": {}, "retrieval_wall_ms": 0.0,
+        "citation_normalization_used": False, "citation_alignment_used": False,
+        "citation_alignment_ms": 0.0, "citation_alignment_success": False,
+        "citation_alignment_confidence_by_paragraph": {}, "citation_repair_used": False,
+        "citation_repair_tokens": 0, "citation_repair_ms": 0.0,
+        "full_quality_repair_used": False, "final_failure_reason": None,
+    })
     grounding_risk_checks: list[dict[str, Any]] = field(default_factory=list)
 
     def transition(self, next_phase: CentralPhase) -> None:

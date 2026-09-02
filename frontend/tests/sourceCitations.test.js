@@ -12,15 +12,23 @@ test("rendered answer and source panel use display indices while debug retains r
     const rawId = "hf_wikipedia_điện_biên_phủ_0001_internal";
     const sources = [{ chunk_id: rawId, source_id: rawId, display_index: 3, title: "Chiến dịch Điện Biên Phủ", text: "Bằng chứng.", source_kind: "history" }];
     const panel = renderToStaticMarkup(React.createElement(RetrievedChunks, { sources }));
-    assert.match(panel, /\[3\] Chiến dịch Điện Biên Phủ/);
+    assert.match(panel.replace(/<[^>]*>/g, ""), /\[3\] Chiến dịch Điện Biên Phủ/);
     assert.doesNotMatch(panel, /hf_wikipedia/);
     const message = { role: "assistant", mode: "central", content: "Năm [1954]. [3]", sources, debug_trace: { sources } };
     const answer = renderToStaticMarkup(React.createElement(ChatMessage, { message }));
-    assert.match(answer, /\[1954\]\. \[3\]/);
+    assert.match(answer.replace(/<[^>]*>/g, ""), /\[1954\]\. \[3\]/);
+    assert.match(answer, /class="citation"/);
     assert.match(answer, /1 nguồn/);
     assert.doesNotMatch(answer, /hf_wikipedia/);
     const debug = renderToStaticMarkup(React.createElement(ChatMessage, { message, enableDebugTrace: true }));
     assert.match(debug, /hf_wikipedia/);
+    const validationFailure = renderToStaticMarkup(React.createElement(ChatMessage, { message: {
+      role: "assistant", status: "done", content: "Đã tìm thấy tư liệu phù hợp, nhưng câu trả lời chưa vượt qua bước kiểm tra chất lượng và trích dẫn. Bạn có thể thử lại.",
+    } }));
+    assert.match(validationFailure, /Câu trả lời chưa vượt qua kiểm tra/);
+    assert.doesNotMatch(validationFailure, /Chưa đủ tư liệu để trả lời chắc chắn/);
+    const cold = renderToStaticMarkup(React.createElement(ChatMessage, { message: { role: "assistant", status: "central_loading", content: "" } }));
+    assert.match(cold, /Đang khởi động mô hình/);
   } finally {
     await server.close();
   }

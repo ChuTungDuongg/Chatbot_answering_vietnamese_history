@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  BookOpenText,
-  Landmark,
   Moon,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
-  ScrollText,
   Sun,
-  Swords,
   Trash2,
   X,
 } from "lucide-react";
@@ -18,7 +14,8 @@ import ChatInput from "./components/ChatInput";
 import ChatMessage from "./components/ChatMessage";
 import ChatSidebar, { SidebarOpenButton } from "./components/ChatSidebar";
 import LogoMark from "./components/LogoMark";
-import RetrievedChunks from "./components/RetrievedChunks";
+import EmptyState from "./components/EmptyState";
+import SourcesDrawer from "./components/SourcesDrawer";
 import StatusIndicator from "./components/StatusIndicator";
 import {
   createConversation,
@@ -33,6 +30,7 @@ import {
 } from "./services/api";
 import { shouldShowDebugTrace } from "./services/debugTrace";
 import { persistChatMode, readStoredChatMode } from "./config/chatModes";
+import { useChatScroll } from "./hooks/useChatScroll";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "vn-history-theme";
@@ -40,30 +38,13 @@ const ACTIVE_STATUSES = new Set([
   "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
   "hybrid_retrieval", "hybrid_answering",
   "three_llm_research", "three_llm_evidence", "three_llm_answering",
-  "central_analyzing", "central_tools", "central_answering",
+  "central_loading", "central_analyzing", "central_tools", "central_answering",
 ]);
 const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_FILES_PER_UPLOAD = 5;
 const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
-const SUGGESTIONS = [
-  {
-    icon: Landmark,
-    label: "Một bước ngoặt lịch sử",
-    question: "Chiến thắng Bạch Đằng năm 938 có ý nghĩa như thế nào?",
-  },
-  {
-    icon: ScrollText,
-    label: "Một triều đại",
-    question: "Nguyên nhân nào dẫn đến sự suy yếu của nhà Trần?",
-  },
-  {
-    icon: Swords,
-    label: "So sánh sự kiện",
-    question: "So sánh Cách mạng Tháng Tám và chiến thắng Điện Biên Phủ.",
-  },
-];
 
 function getInitialTheme() {
   const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -117,6 +98,7 @@ function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 840);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [activeSourceIndex, setActiveSourceIndex] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -133,7 +115,7 @@ function App() {
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   const abortControllerRef = useRef(null);
-  const bottomRef = useRef(null);
+  const { scrollerRef, contentRef, onScroll, followLatest } = useChatScroll(messages, status);
   const isRunning = ACTIVE_STATUSES.has(status);
   const isUploading = pendingUploads.length > 0;
 
@@ -150,10 +132,6 @@ function App() {
   useEffect(() => {
     persistChatMode(inferenceMode);
   }, [inferenceMode]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: status === "streaming" ? "auto" : "smooth" });
-  }, [messages, status]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -207,6 +185,7 @@ function App() {
     try {
       const payload = await getConversation(conversationId);
       const detail = normalizeConversationDetail(payload);
+      followLatest();
       setActiveConversationId(conversationId);
       setMessages(detail.messages);
       setAttachments(detail.attachments);
@@ -341,6 +320,9 @@ function App() {
       created_at: new Date().toISOString(),
     };
 
+    // Creating the first conversation resets idle; keep the pending request visible.
+    followLatest();
+    setStatus("processing");
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     const controller = new AbortController();
@@ -529,13 +511,24 @@ function App() {
     }
   };
 
-  const showMessageSources = (message) => {
+  const showMessageSources = (message, index = null) => {
     if (!message.sources?.length) return;
     setSources(message.sources);
+    setActiveSourceIndex(index);
     setSourcesOpen(true);
   };
 
   const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
+  const isEmpty = !isLoadingConversation && messages.length === 0;
+  const composer = (
+    <div className="composer-content">
+      <AttachmentTray attachments={attachments} pendingUploads={pendingUploads} onDelete={handleDeleteAttachment} disabled={isRunning} />
+      <ChatInput question={question} onQuestionChange={setQuestion} onSubmit={handleSubmit}
+        onStop={() => abortControllerRef.current?.abort()} onFilesSelected={handleFilesSelected}
+        mode={inferenceMode} onModeChange={setInferenceMode} isRunning={isRunning} isUploading={isUploading} />
+      <p className="composer-disclaimer">Lịch sử cần được nhìn từ nhiều nguồn. Hãy đối chiếu tư liệu khi cần.</p>
+    </div>
+  );
 
   return (
     <div className="app-shell">
@@ -556,31 +549,33 @@ function App() {
 
       {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Đóng thanh bên" />}
 
-      <section className="chat-workspace">
+      <section className={`chat-workspace ${isEmpty ? "is-empty" : ""}`}>
         <header className="chat-header">
           <div className="chat-header-main">
             {!sidebarOpen && <SidebarOpenButton onClick={() => setSidebarOpen(true)} />}
+            {!sidebarOpen && <LogoMark className="header-logo" />}
             <div className="chat-title">
-              <h1>{activeConversation?.title || "Cuộc trò chuyện mới"}</h1>
+              <h1>{activeConversation?.title || "Sử Việt AI"}</h1>
               <span>
                 {attachments.length > 0 ? (
                   <><Paperclip /> {attachments.length} tài liệu</>
                 ) : (
-                  "Vietnamese History RAG"
+                  "Không gian tìm hiểu lịch sử"
                 )}
               </span>
             </div>
           </div>
 
           <div className="chat-header-actions">
-            <button type="button" className="icon-button" onClick={toggleTheme} title="Đổi giao diện">
+            <button type="button" className="icon-button" onClick={toggleTheme} title="Đổi giao diện" aria-label={`Chuyển sang giao diện ${theme === "dark" ? "sáng" : "tối"}`}>
               {theme === "dark" ? <Sun /> : <Moon />}
             </button>
             <button
               type="button"
               className={`source-toggle ${sourcesOpen ? "is-active" : ""}`}
-              onClick={() => setSourcesOpen((current) => !current)}
+              onClick={() => { setActiveSourceIndex(null); setSourcesOpen((current) => !current); }}
               title="Nguồn tham khảo"
+              aria-expanded={sourcesOpen}
             >
               {sourcesOpen ? <PanelRightClose /> : <PanelRightOpen />}
               <span>Nguồn</span>
@@ -589,40 +584,23 @@ function App() {
           </div>
         </header>
 
-        <main className="thread-scroll">
-          <div className="thread-content">
+        <main className="thread-scroll" id="conversation" aria-label="Cuộc trò chuyện" ref={scrollerRef} onScroll={onScroll}>
+          <div className="thread-content" ref={contentRef}>
             {isLoadingConversation && <div className="thread-loading"><i /><i /><i /></div>}
 
-            {!isLoadingConversation && messages.length === 0 && (
-              <section className="welcome-state">
-                <LogoMark className="welcome-logo" />
-                <h2>Hỏi chuyện sử Việt</h2>
-                <p>Bạn muốn tìm hiểu nhân vật, sự kiện hay giai đoạn nào?</p>
-
-                <div className="suggestion-grid">
-                  {SUGGESTIONS.map(({ icon: Icon, label, question: suggestion }) => (
-                    <button type="button" key={label} onClick={() => setQuestion(suggestion)}>
-                      <Icon />
-                      <span>{label}</span>
-                      <small>{suggestion}</small>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
+            {isEmpty && <EmptyState onSuggestion={setQuestion}>{composer}</EmptyState>}
 
             {!isLoadingConversation && messages.map((message) => (
               <ChatMessage
                 key={message.id}
                 message={message}
                 isStreaming={message.role === "assistant" && message.status === "streaming"}
-                onShowSources={() => showMessageSources(message)}
+                onShowSources={(index) => showMessageSources(message, index)}
                 enableDebugTrace={SHOW_DEBUG_TRACE}
               />
             ))}
 
-            <StatusIndicator status={status} />
-            <div ref={bottomRef} />
+            <StatusIndicator status={messages.at(-1)?.role === "assistant" && !messages.at(-1)?.content ? null : status} />
           </div>
         </main>
 
@@ -634,54 +612,10 @@ function App() {
           </div>
         )}
 
-        <footer className="composer-shell">
-          <div className="composer-content">
-            <AttachmentTray
-              attachments={attachments}
-              pendingUploads={pendingUploads}
-              onDelete={handleDeleteAttachment}
-              disabled={isRunning}
-            />
-            <ChatInput
-              question={question}
-              onQuestionChange={setQuestion}
-              onSubmit={handleSubmit}
-              onStop={() => abortControllerRef.current?.abort()}
-              onFilesSelected={handleFilesSelected}
-              mode={inferenceMode}
-              onModeChange={setInferenceMode}
-              isRunning={isRunning}
-              isUploading={isUploading}
-            />
-            <p className="composer-disclaimer">Sử Việt AI có thể mắc lỗi. Hãy đối chiếu phần nguồn khi cần độ chính xác cao.</p>
-          </div>
-        </footer>
+        {!isEmpty && <footer className="composer-shell">{composer}</footer>}
       </section>
 
-      <aside className={`source-drawer ${sourcesOpen ? "is-open" : ""}`} aria-label="Nguồn tham khảo">
-        <div className="source-drawer-header">
-          <div>
-            <span>Bằng chứng RAG</span>
-            <h2>Nguồn tham khảo</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={() => setSourcesOpen(false)} title="Đóng nguồn"><X /></button>
-        </div>
-
-        <div className="source-drawer-body">
-          {sources.length > 0 ? (
-            <RetrievedChunks sources={sources} />
-          ) : (
-            <div className="source-empty">
-              <BookOpenText />
-              <strong>Chưa có nguồn được chọn</strong>
-              <span>Nguồn của câu trả lời sẽ xuất hiện tại đây.</span>
-            </div>
-          )}
-
-        </div>
-      </aside>
-
-      {sourcesOpen && <button className="source-backdrop" onClick={() => setSourcesOpen(false)} aria-label="Đóng nguồn" />}
+      <SourcesDrawer isOpen={sourcesOpen} sources={sources} activeIndex={activeSourceIndex} onClose={() => setSourcesOpen(false)} />
 
       {conversationToDelete && (
         <div className="dialog-backdrop" role="presentation">

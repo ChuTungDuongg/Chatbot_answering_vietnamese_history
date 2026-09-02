@@ -191,6 +191,8 @@ frontend/.env.*.local
 
 frontend/.vite/
 frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
 
 # =========================
 # npm

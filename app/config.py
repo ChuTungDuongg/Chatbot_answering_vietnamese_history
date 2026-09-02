@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     central_repair_max_new_tokens: int = 1024
     central_repair_min_new_tokens: int = 192
     central_repair_token_margin: int = 96
+    central_citation_repair_max_new_tokens: int = 128
+    central_citation_alignment_threshold: float = 0.88
+    central_citation_alignment_margin: float = 0.08
+    central_citation_full_rewrite_fallback: bool = False
+    central_model_load_retrieval_overlap: bool = True
+    central_evidence_excerpt_chars: int = 1600
+    central_history_char_budget: int = 2400
+    central_history_max_messages: int = 4
     central_biography_max_sources: int = 4
     central_biography_min_exact_hits: int = 2
     central_analytical_retrieval_candidates: int = 10

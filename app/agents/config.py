@@ -37,6 +37,14 @@ class CentralAgentConfig:
     repair_max_new_tokens: int = 1024
     repair_min_new_tokens: int = 192
     repair_token_margin: int = 96
+    citation_repair_max_new_tokens: int = 128
+    citation_alignment_threshold: float = 0.88
+    citation_alignment_margin: float = 0.08
+    citation_full_rewrite_fallback: bool = False
+    model_load_retrieval_overlap: bool = True
+    evidence_excerpt_chars: int = 1600
+    history_char_budget: int = 2400
+    history_max_messages: int = 4
     biography_max_sources: int = 4
     biography_min_exact_hits: int = 2
     reranker_tail_gap_ratio: float = 0.75
@@ -79,6 +87,12 @@ class CentralAgentConfig:
             raise ValueError("Central final/repair token budgets must be at least 128.")
         if self.repair_min_new_tokens < 1 or self.repair_token_margin < 0:
             raise ValueError("Central repair minimum must be positive and margin nonnegative.")
+        if not 32 <= self.citation_repair_max_new_tokens <= 256:
+            raise ValueError("Central citation repair must use 32–256 tokens.")
+        if not 0.75 <= self.citation_alignment_threshold <= 1 or not 0 <= self.citation_alignment_margin <= 0.25:
+            raise ValueError("Invalid conservative citation alignment thresholds.")
+        if not 600 <= self.evidence_excerpt_chars <= 3200 or self.history_char_budget < 0 or self.history_max_messages < 0:
+            raise ValueError("Invalid Central evidence/history bounds.")
         if not 1 <= self.biography_max_sources <= 10 or not 1 <= self.biography_min_exact_hits <= 10:
             raise ValueError("Central biography evidence bounds must be between 1 and 10.")
         if not 0.5 < self.reranker_tail_gap_ratio <= 1:

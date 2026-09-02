@@ -56,17 +56,17 @@ function ChatSidebar({
   };
 
   return (
-    <aside className={`chat-sidebar ${isOpen ? "is-open" : ""}`} aria-label="Lịch sử trò chuyện">
+    <aside className={`chat-sidebar ${isOpen ? "is-open" : ""}`} aria-label="Lịch sử trò chuyện" inert={!isOpen} aria-hidden={!isOpen}>
       <div className="sidebar-brand-row">
         <div className="sidebar-brand">
           <LogoMark />
           <span>
             <strong>Sử Việt AI</strong>
-            <small>History RAG</small>
+            <small>Một góc nhìn về quá khứ</small>
           </span>
         </div>
 
-        <button type="button" className="icon-button sidebar-close" onClick={onClose} title="Đóng thanh bên">
+        <button type="button" className="icon-button sidebar-close" onClick={onClose} title="Đóng thanh bên" aria-label="Đóng thanh bên">
           <PanelLeftClose className="desktop-close-icon" />
           <X className="mobile-close-icon" />
         </button>
@@ -191,7 +191,7 @@ function ChatSidebar({
 
 export function SidebarOpenButton({ onClick }) {
   return (
-    <button type="button" className="icon-button sidebar-open-button" onClick={onClick} title="Mở thanh bên">
+    <button type="button" className="icon-button sidebar-open-button" onClick={onClick} title="Mở thanh bên" aria-label="Mở thanh bên">
       <Menu />
     </button>
   );

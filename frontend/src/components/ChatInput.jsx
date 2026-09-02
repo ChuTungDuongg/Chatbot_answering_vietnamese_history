@@ -67,13 +67,24 @@ function ChatInput({
     >
       <input
         ref={fileInputRef}
-        className="sr-only"
+        hidden
         type="file"
         accept={ACCEPTED_FILES}
         multiple
         onChange={handleFileInput}
       />
 
+      <textarea
+        ref={textareaRef}
+        value={question}
+        onChange={(event) => onQuestionChange(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Hỏi về lịch sử Việt Nam..."
+        aria-label="Nội dung câu hỏi"
+        rows={2}
+      />
+
+      <div className="composer-toolbar">
       <div className="composer-leading-actions">
         <ModeSelector mode={mode} onModeChange={onModeChange} disabled={isRunning} />
         <button
@@ -87,16 +98,6 @@ function ChatInput({
           {isUploading ? <LoaderCircle className="spin" /> : <Paperclip />}
         </button>
       </div>
-
-      <textarea
-        ref={textareaRef}
-        value={question}
-        onChange={(event) => onQuestionChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Hỏi về lịch sử Việt Nam hoặc tài liệu đã tải lên"
-        aria-label="Nội dung câu hỏi"
-        rows={1}
-      />
 
       {isRunning ? (
         <button
@@ -119,8 +120,9 @@ function ChatInput({
           <ArrowUp />
         </button>
       )}
+      </div>
 
-      {isDragging && <div className="composer-drop-label">Thả tài liệu để OCR</div>}
+      {isDragging && <div className="composer-drop-label">Thả tài liệu để cùng tìm hiểu</div>}
     </form>
   );
 }

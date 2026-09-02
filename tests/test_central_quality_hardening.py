@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 
 import pytest
 
-from app.agents.central_agent import INSUFFICIENT_EVIDENCE_ANSWER
+from app.agents.central_agent import INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
 from app.agents.central_citations import check_citations, expand_citations
 from app.agents.central_evidence import build_evidence_packet, render_evidence_packet, select_evidence
 from app.agents.central_grounding import grounding_risks
@@ -196,7 +196,7 @@ def test_biography_context_cap_packet_fields_and_duplicate_ids():
     assert debug["retrieval_filter_reasons"] == {"biography_context_limit": 3}
     packet = build_evidence_packet(selected + selected)
     assert [item.alias for item in packet] == ["S1", "S2", "S3"]
-    assert set(asdict(packet[0])) == {"alias", "real_source_id", "title", "source_kind", "text", "comparison_target", "comparison_targets", "viewpoint_sensitive"}
+    assert set(asdict(packet[0])) == {"alias", "real_source_id", "title", "source_kind", "text", "comparison_target", "comparison_targets", "viewpoint_sensitive", "viewpoint_annotations", "entity_aliases"}
     assert "reranker" not in render_evidence_packet(packet)
 
 
@@ -303,9 +303,9 @@ def test_guard_ignores_generic_words_citations_and_duration():
 
 @pytest.mark.parametrize("first,second,expected_status,calls", [
     ("Nguyễn Cao Kỳ là sĩ quan. [ s1 ]", None, "ok", 1),
-    ("Nguyễn Cao Kỳ là sĩ quan.", "Nguyễn Cao Kỳ là sĩ quan. [S1]", "ok", 2),
-    ("Nguyễn Cao Kỳ là sĩ quan.", "Nguyễn Cao Kỳ là sĩ quan.", "insufficient_evidence", 2),
-    ("Nguyễn Cao Kỳ là sĩ quan. [S99]", "Nguyễn Cao Kỳ là sĩ quan. [source_1]", "insufficient_evidence", 2),
+    ("Nguyễn Cao Kỳ (1930–2011) là một sĩ quan không quân và chính khách.", None, "ok", 1),
+    ("Nguyễn Cao Kỳ là sĩ quan.", "Nguyễn Cao Kỳ là sĩ quan.", "answer_validation_failed", 2),
+    ("Nguyễn Cao Kỳ là sĩ quan. [S99]", "Nguyễn Cao Kỳ là sĩ quan. [source_1]", "answer_validation_failed", 2),
 ])
 def test_repair_is_bounded_and_normalization_never_invents_a_citation(first, second, expected_status, calls):
     outputs = [CentralGeneration(content=first, output_tokens=100)]
@@ -317,12 +317,13 @@ def test_repair_is_bounded_and_normalization_never_invents_a_citation(first, sec
     assert result["status"] == expected_status
     assert all(call["tools"] == [] for call in runtime.calls)
     if calls == 2:
-        assert runtime.calls[1]["stage"] == "quality_repair"
-        assert runtime.calls[1]["max_new_tokens"] == 196
+        citation_only = "[S99]" not in first
+        assert runtime.calls[1]["stage"] == ("citation_repair" if citation_only else "quality_repair")
+        assert runtime.calls[1]["max_new_tokens"] == (128 if citation_only else 196)
     else:
-        assert result["central_debug"]["repair_avoided_reason"] == "citation_normalized"
-    if expected_status == "insufficient_evidence":
-        assert result["answer"] == INSUFFICIENT_EVIDENCE_ANSWER
+        assert result["central_debug"]["repair_avoided_reason"] == ("citation_normalized" if "[" in first else "host_citation_alignment")
+    if expected_status == "answer_validation_failed":
+        assert result["answer"] == FAILURE_ANSWERS["answer_validation_failed"]
         assert result["source_ids"] == []
 
 
@@ -335,7 +336,7 @@ def test_dynamic_repair_budget_is_bounded(tokens, cap, expected):
 def test_disabled_repair_keeps_risk_visible_without_returning_contamination():
     runtime = FakeCentralRuntime([CentralGeneration(content="Lê Đại Hành lập Đại Cồ Việt năm 968. [S1]")])
     result = build_agent(runtime, FakeTool("search_history", bach_dang_rows()), config=CentralAgentConfig(repair_max_generations=0)).chat(BACH_DANG_QUESTION)
-    assert result["status"] == "insufficient_evidence"
+    assert result["status"] == "answer_validation_failed"
     assert "unsupported_evidence_claim" in result["analysis"]["answer_quality_issues"]
     assert result["unsupported_years"] == ["968"]
     assert "Lê Đại Hành" in result["unsupported_named_claims"]

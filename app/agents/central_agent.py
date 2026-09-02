@@ -9,8 +9,12 @@ from typing import Any
 
 from app.agents.central_citations import check_citations, expand_citations, citation_display_map
 from app.agents.central_evidence import SynthesisEvidence, build_evidence_packet, render_evidence_packet, select_evidence, select_synthesis_evidence
-from app.agents.central_analytical import annotate_evidence, coverage_report, coverage_select, evidence_targets, target_mentions
-from app.agents.central_grounding import grounding_risks
+from app.agents.central_analytical import annotate_evidence, coverage_report, coverage_select, evidence_targets, target_mentions, strong_evidence, normalize_entity
+from app.agents.central_compaction import compact_history
+from app.agents.central_citation_recovery import PURE_CITATION_ISSUES, align_citations, apply_citation_mapping, citation_repair_messages
+from app.agents.central_grounding import grounding_risks, entity_alias_matches
+from app.agents.central_relationships import (RELATION_CAVEAT, has_relation_caveat, relationship_answer_issues,
+                                             relationship_contract, annotate_relationship)
 from app.agents.central_model_runtime import CentralGeneration, CentralLLMBackend, CentralToolCall
 from app.agents.central_policy import CentralRequestPolicy, HistoryGroundingPolicy
 from app.agents.central_prompt import BIOGRAPHY_CONTRACT, CENTRAL_SYSTEM_PROMPT, REPAIR_CONTRACT, SYNTHESIS_CONTRACT, COMPARISON_CONTRACT, VIEWPOINT_CONTRACT
@@ -26,10 +30,22 @@ INSUFFICIENT_EVIDENCE_ANSWER = (
     "Mình chưa tìm thấy đủ bằng chứng đáng tin cậy để trả lời câu hỏi này. "
     "Bạn có thể bổ sung tài liệu hoặc làm rõ giai đoạn, nhân vật hay sự kiện cần hỏi."
 )
+FAILURE_ANSWERS = {
+    "answer_validation_failed": "Đã tìm thấy tư liệu phù hợp, nhưng câu trả lời chưa vượt qua bước kiểm tra chất lượng và trích dẫn. Bạn có thể thử lại.",
+    "generation_timeout": "Quá trình tổng hợp câu trả lời đã hết thời gian. Bạn có thể thử lại.",
+    "model_load_failed": "Chưa thể khởi động mô hình trả lời. Bạn có thể thử lại sau.",
+    "tool_failed": "Chưa thể hoàn tất việc tra cứu tư liệu do lỗi công cụ. Bạn có thể thử lại.",
+    "evidence_insufficient": INSUFFICIENT_EVIDENCE_ANSWER,
+}
+
+
+class ModelLoadFailure(RuntimeError):
+    """Readiness failure, including its separate timeout, never evidence failure."""
 
 
 class CentralAgent:
     """A bounded, grounded state machine backed only by the Central model."""
+    supports_request_progress = True
 
     def __init__(
         self,
@@ -45,7 +61,8 @@ class CentralAgent:
         self.config = config or CentralAgentConfig()
         self.has_uploaded_documents = has_uploaded_documents
         self.request_policy = request_policy or HistoryGroundingPolicy()
-        self.max_history_messages = 6
+        self.max_history_messages = self.config.history_max_messages
+        self._schema_cache: dict[frozenset[str], list[dict[str, Any]]] = {}
 
     def _allowed_tools(self, owner_id: str | None, conversation_id: str | None) -> set[str]:
         names = set(self.tool_registry.names())
@@ -104,6 +121,12 @@ class CentralAgent:
         ensure_ready = getattr(self.model_runtime, "ensure_ready", None)
         return ensure_ready() if callable(ensure_ready) else self.model_runtime
 
+    def can_overlap_model_load_and_retrieval(self) -> bool:
+        if not self.config.model_load_retrieval_overlap or "search_history" not in self.tool_registry.names():
+            return False
+        capability = getattr(self.tool_registry.get("search_history"), "can_overlap_model_load_and_retrieval", None)
+        return bool(capability()) if callable(capability) else False
+
     def _runtime_snapshot(self) -> dict[str, Any]:
         runtime = self.model_runtime
         instance = getattr(runtime, "_instance", None)
@@ -120,6 +143,7 @@ class CentralAgent:
             "central_adapter_loaded": False,
             "central_adapter_path": None,
             "central_adapter_source": "none",
+            "attention_backend": "unknown",
         }
         if target is not None:
             adapter_path = getattr(target, "adapter_path", None)
@@ -130,6 +154,7 @@ class CentralAgent:
                 "central_adapter_path": str(adapter_path) if adapter_path else None,
                 "central_adapter_source": str(getattr(target, "adapter_source", "peft" if adapter_path else "none")),
                 "model_placement": dict(getattr(target, "placement", {}) or {}),
+                "attention_backend": getattr(target, "attention_backend", "unknown"),
             })
             snapshot.update(dict(getattr(target, "cache_info", {}) or {}))
         return snapshot
@@ -145,6 +170,7 @@ class CentralAgent:
     ) -> CentralGeneration:
         if progress is not None:
             progress["timeout_stage"] = f"generation_{stage}"
+            progress["stage"] = "central_tools" if stage == "action" else "central_answering"
 
         def invoke() -> CentralGeneration:
             return self.model_runtime.generate(
@@ -155,7 +181,13 @@ class CentralAgent:
                 deadline=state.deadline_monotonic,
             )
 
-        generation = await asyncio.to_thread(invoke)
+        remaining = state.remaining_seconds
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        # The outer cold-request budget includes initialization. Generation must
+        # still obey the same post-load deadline as an already-ready request,
+        # including runtimes that do not implement cooperative stopping.
+        generation = await asyncio.wait_for(asyncio.to_thread(invoke), timeout=remaining)
         state.model_calls += 1
         state.generation_ms += generation.generation_ms
         state.input_tokens += generation.input_tokens
@@ -183,6 +215,7 @@ class CentralAgent:
         grounding_targets: dict[str, str] | None = None,
         progress: dict[str, Any] | None = None,
     ) -> None:
+        batch_started = time.perf_counter()
         state.messages.append(self._assistant_tool_message(calls))
         prepared: list[tuple[CentralToolCall, dict[str, Any], str | None, int | None]] = []
         pending: list[tuple[str, dict[str, Any]]] = []
@@ -214,6 +247,8 @@ class CentralAgent:
 
         if progress is not None and pending:
             progress["timeout_stage"] = "tool_execution"
+            if progress.get("stage") != "central_loading":
+                progress["stage"] = "central_tools"
         executed = await asyncio.gather(*(execute(name, arguments) for name, arguments in pending)) if pending else []
         if executed:
             state.tool_ms += max(item[3] for item in executed)
@@ -251,6 +286,9 @@ class CentralAgent:
                              "citable": call.name != "search_wikipedia",
                              **({"comparison_target": comparison_target, "comparison_targets": [comparison_target]} if comparison_target else {})}
                             for row in rows]
+                    if state.question_analysis.relation_requested:
+                        role = "primary_subject" if target == state.question_analysis.subject else "related_entity" if target in state.question_analysis.related_entities else "relationship"
+                        rows = [{**row, "retrieval_entity_role": role} for row in rows]
                     state.retrieval_candidates.extend(rows)
                     filtered, filter_debug = select_evidence(rows, state.question_analysis, self.config, target=comparison_target)
                     state.retrieval_filter_events.append({"tool": call.name, "comparison_target": comparison_target, **filter_debug})
@@ -315,9 +353,11 @@ class CentralAgent:
                 "name": call.name,
                 "content": observation,
             })
+        if trace_phase != CentralPhase.INITIAL_GROUNDING.value:
+            state.reliability["retrieval_wall_ms"] += (time.perf_counter() - batch_started) * 1000
 
     def _retrieval_limit(self, state: CentralAgentState, tool_name: str) -> int:
-        if tool_name == "search_history" and state.question_analysis.question_type in {"cause", "comparison"}:
+        if tool_name == "search_history" and (state.question_analysis.question_type in {"cause", "comparison"} or state.question_analysis.relation_requested):
             return self.config.analytical_retrieval_candidates
         return min(10, self.config.max_tool_results)
 
@@ -325,7 +365,7 @@ class CentralAgent:
         if not state.grounding_required or "search_history" not in state.allowed_tools:
             return (), {}
         plan = plan_analytical_queries(state.question_analysis, self.config.analytical_query_variants)
-        if state.question_analysis.comparison_targets:
+        if state.question_analysis.comparison_targets or state.question_analysis.relation_requested:
             state.target_specific_queries = plan
         state.retrieval_query_variants = list(dict.fromkeys(query for queries in plan.values() for query in queries))
         calls: list[CentralToolCall] = []
@@ -334,11 +374,54 @@ class CentralAgent:
             for query in queries:
                 call_id = f"central_ground_{len(calls) + 1:02d}"
                 arguments = {"query": query, "top_k": self._retrieval_limit(state, "search_history")}
-                if state.question_analysis.question_type in {"cause", "comparison"}:
+                if state.question_analysis.question_type in {"cause", "comparison"} or state.question_analysis.relation_requested:
                     arguments["candidate_pool"] = True
                 calls.append(CentralToolCall(call_id, "search_history", arguments))
                 target_by_call[call_id] = target
         return tuple(calls), target_by_call
+
+    def _target_plan_adequate(self, state, target) -> bool:
+        rows = list(state.source_by_id.values())
+        if state.question_analysis.question_type == "cause":
+            rows = select_synthesis_evidence(rows, state.question_analysis, self.config)
+        if state.question_analysis.comparison_targets:
+            rows = [row for row in rows if target in evidence_targets(row)]
+        strong = {normalize_entity(str(row.get("text") or "")): row for row in rows
+                  if strong_evidence(row, min_chars=self.config.strong_evidence_min_chars)}
+        minimum = max(2, self.config.comparison_min_strong_sources) if state.question_analysis.comparison_targets else 3
+        if len(strong) < minimum or not any(row.get("overview_anchor") for row in strong.values()):
+            return False
+        dims = {dim for row in strong.values() for dim in row.get("evidence_dimensions", [])}
+        requested = set(state.question_analysis.facets) - {"cause"}
+        if not requested <= dims:
+            return False
+        if state.question_analysis.question_type == "cause":
+            sufficient, _ = coverage_report(list(strong.values()), rows, state.question_analysis, self.config)
+            return sufficient
+        return len(dims) >= 2
+
+    async def _initial_grounding(self, state, context, progress):
+        calls, targets = self._initial_grounding_calls(state)
+        state.reliability["retrieval_queries_planned"] = [call.arguments["query"] for call in calls]
+        grouped: dict[str, list[CentralToolCall]] = {}
+        for call in calls:
+            grouped.setdefault(targets[call.id], []).append(call)
+        for depth in range(max((len(group) for group in grouped.values()), default=0)):
+            pending = []
+            for target, group in grouped.items():
+                if depth >= len(group):
+                    continue
+                call = group[depth]
+                query = call.arguments["query"]
+                if depth and self._target_plan_adequate(state, target):
+                    state.reliability["retrieval_queries_skipped"].append(query)
+                    state.reliability["retrieval_query_skip_reasons"][query] = "canonical_target_dimensions_and_diversity_covered"
+                else:
+                    pending.append(call)
+                    state.reliability["retrieval_queries_executed"].append(query)
+            if pending:
+                await self._execute_tool_calls(state, tuple(pending), context=context,
+                    trace_phase=CentralPhase.INITIAL_GROUNDING.value, grounding_targets=targets, progress=progress)
 
     def _evidence_sufficient(self, state: CentralAgentState) -> bool:
         state.selected_sources = select_synthesis_evidence(list(state.source_by_id.values()), state.question_analysis, self.config)
@@ -401,6 +484,33 @@ class CentralAgent:
             await self._execute_tool_calls(state, tuple(calls), context=context, trace_phase="wikipedia_search", grounding_targets=targets, progress=progress)
             await self._fetch_wikipedia_results(state, context, progress)
 
+    async def _relationship_fallback(self, state, context, progress):
+        # Identity and co-occurrence local queries already ran in initial grounding.
+        # One external search and bounded canonical fetches need no LLM decision.
+        state.reliability.setdefault("relation_fallback_used", False)
+        if state.evidence_debug.get("direct_relation_evidence_count") or not {"search_wikipedia", "fetch_wikipedia_page"} <= state.allowed_tools:
+            return
+        state.reliability["relation_fallback_used"] = True
+        query = " ".join([state.question_analysis.subject, *state.question_analysis.related_entities])
+        call = CentralToolCall("central_relation_wiki", "search_wikipedia", {"query": query, "language": "vi", "top_k": self.config.max_tool_results})
+        await self._execute_tool_calls(state, (call,), context=context, trace_phase="relationship_search", progress=progress)
+        candidates = [annotate_relationship(row, state.question_analysis) for row in state.wikipedia_search_results]
+        canonical = [row for row in candidates if row["canonical_entities"]]
+        direct = [row for row in candidates if row["direct_relation_spans"]]
+        calls, seen = [], set()
+        for row in [*direct[:1], *canonical]:
+            metadata = row.get("metadata") or {}
+            page = metadata.get("page_id") or row.get("page_id") or row.get("title")
+            if not page or str(page) in seen:
+                continue
+            seen.add(str(page))
+            calls.append(CentralToolCall(f"central_relation_fetch_{len(calls)}", "fetch_wikipedia_page", {
+                "page_id_or_title": str(page), "language": metadata.get("language", "vi"), "max_chars": 6000}))
+            if len(calls) == 3:
+                break
+        if calls:
+            await self._execute_tool_calls(state, tuple(calls), context=context, trace_phase="relationship_fetch", progress=progress)
+
     def _prepare_synthesis(self, state: CentralAgentState) -> list[SynthesisEvidence]:
         self._evidence_sufficient(state)
         selected = state.selected_sources
@@ -428,6 +538,8 @@ class CentralAgent:
             "biography_exact_title_hits": sum(event["biography_exact_title_hits"] for event in state.retrieval_filter_events),
             "evidence_input_chars": len(rendered),
             "evidence_source_count": len(packet),
+            "evidence_chars_before_compaction": sum(row.get("evidence_chars_before_compaction", len(row.get("text", ""))) for row in selected),
+            "evidence_chars_after_compaction": sum(len(item.text) for item in packet),
             "citation_aliases": {item.alias: item.real_source_id for item in packet},
             "citation_display_map": display_map,
             "target_specific_queries": state.target_specific_queries,
@@ -437,12 +549,16 @@ class CentralAgent:
             "entity_disambiguation_filter_reasons": dict(entity_reasons),
             "chronology_downranked_count": sum(bool(row.get("chronology_downranked")) for row in state.source_by_id.values()),
         })
+        for side in ("before", "after"):
+            state.evidence_debug[f"evidence_tokens_estimated_{side}"] = (state.evidence_debug[f"evidence_chars_{side}_compaction"] + 2) // 3
         telemetry = current_request_telemetry()
         if telemetry is not None:
             telemetry.central_quality.update(state.evidence_debug)
         instruction = SYNTHESIS_CONTRACT + "\n" + VIEWPOINT_CONTRACT
         if state.question_analysis.question_type == "biography":
             instruction += "\n" + BIOGRAPHY_CONTRACT
+        if state.question_analysis.relation_requested:
+            instruction += "\n" + relationship_contract(state.question_analysis, state.evidence_debug)
         if len(state.question_analysis.comparison_targets) >= 2:
             instruction += "\n" + COMPARISON_CONTRACT
         # Discard action observations, including rejected rows and long source IDs.
@@ -451,12 +567,19 @@ class CentralAgent:
         return packet
 
     def _check_answer(self, state: CentralAgentState, packet: list[SynthesisEvidence], *, stage: str):
+        # Every pass derives a fresh result from this answer. Earlier stage risks
+        # remain only in the diagnostic history, never in the current issue lists.
+        if state.question_analysis.relation_requested and state.evidence_debug.get("partial_answer") and state.final_answer.strip() and not has_relation_caveat(state.final_answer):
+            state.final_answer = state.final_answer.rstrip() + "\n\n" + RELATION_CAVEAT
         citations = check_citations(state.final_answer, packet)
+        state.reliability["citation_normalization_used"] |= citations.normalized
         state.final_answer = citations.answer
         state.invalid_source_ids = citations.invalid
         risks = grounding_risks(citations.answer, state.question, packet)
         state.grounding_risk_checks.append({"stage": stage, **risks})
         issues: list[str] = []
+        if not citations.answer.strip():
+            issues.append("empty_answer")
         if risks["unsupported_named_claims"] or risks["unsupported_years"]:
             issues.append("unsupported_evidence_claim")
         if not citations.source_ids:
@@ -469,11 +592,22 @@ class CentralAgent:
             issues.append("comparison_citation_target_mismatch")
         if citations.unattributed_viewpoints:
             issues.append("unattributed_viewpoint")
-        state.evidence_debug["citation_target_mismatches"] = citations.target_mismatches
+        state.evidence_debug.update({
+            "answer_validation_stage": stage,
+            "citation_target_mismatches": citations.target_mismatches,
+            "viewpoint_attribution_issues": citations.viewpoint_issues,
+            "uncited_factual_paragraphs": citations.uncited_paragraphs,
+            "invalid_citation_aliases": citations.invalid,
+            "entity_alias_matches": entity_alias_matches(citations.answer, packet),
+            **risks,
+        })
         issues.extend(analytical_answer_issues(
             analysis=state.question_analysis, answer=citations.answer,
             source_ids=citations.source_ids, evidence_available=bool(packet),
         ))
+        relation_issues = relationship_answer_issues(citations.answer, state.question_analysis, packet)
+        state.evidence_debug["relationship_answer_issues"] = relation_issues
+        issues.extend(relation_issues)
         return list(dict.fromkeys(issues)), citations
 
     def _repair_budget(self, generation: CentralGeneration, answer: str) -> int:
@@ -493,10 +627,16 @@ class CentralAgent:
         request_id: str | None,
         started: float,
         progress: dict[str, Any] | None,
+        model_ready_task: asyncio.Task | None = None,
     ) -> dict[str, Any]:
         allowed_tools = self._allowed_tools(owner_id, conversation_id)
-        schemas = qwen_tool_schemas(self.tool_registry, allowed_tools)
+        schema_key = frozenset(allowed_tools)
+        if schema_key not in self._schema_cache:
+            self._schema_cache[schema_key] = qwen_tool_schemas(self.tool_registry, allowed_tools)
+        schemas = self._schema_cache[schema_key]
         analysis = analyze_central_question(question)
+        history_debug = {}
+        history = compact_history(question, history, max_messages=self.config.history_max_messages, char_budget=self.config.history_char_budget, debug=history_debug)
         decision = self.request_policy.grounding_for(question)
         state = CentralAgentState(
             question=question,
@@ -509,6 +649,11 @@ class CentralAgent:
             grounding_reason=decision.reason,
             deadline_monotonic=time.monotonic() + self.config.timeout_seconds,
         )
+        if progress is not None:
+            progress["state"] = state
+            state.reliability.update(progress.get("readiness", {}))
+        state.evidence_debug.update(history_input_chars=sum(len(item["content"]) for item in history), history_input_turns=len(history))
+        state.evidence_debug.update(history_debug)
         context = ToolExecutionContext(
             owner_id=owner_id,
             conversation_id=conversation_id,
@@ -517,24 +662,33 @@ class CentralAgent:
         )
 
         state.transition(CentralPhase.INITIAL_GROUNDING)
-        initial_calls, targets = self._initial_grounding_calls(state)
-        if initial_calls:
-            await self._execute_tool_calls(
-                state,
-                initial_calls,
-                context=context,
-                trace_phase=CentralPhase.INITIAL_GROUNDING.value,
-                grounding_targets=targets,
-                progress=progress,
-            )
+        retrieval_started = time.perf_counter()
+        await self._initial_grounding(state, context, progress)
+        state.reliability["retrieval_wall_ms"] = (time.perf_counter() - retrieval_started) * 1000
+        if model_ready_task is not None:
+            wait_started = time.perf_counter()
+            progress["timeout_stage"] = "model_initialization"
+            try:
+                await asyncio.shield(model_ready_task)
+            finally:
+                wait_ms = (time.perf_counter() - wait_started) * 1000
+                state.deadline_monotonic += wait_ms / 1000
+                state.reliability.update(progress["readiness"])
+                state.reliability["model_load_wait_ms"] = wait_ms
+            state.reliability["model_load_overlap_ms_saved_estimate"] = min(
+                state.reliability["retrieval_wall_ms"], progress["readiness"].get("model_initialization_wall_ms", 0.0))
+            progress["stage"] = "central_tools"
 
         sufficient = self._evidence_sufficient(state)
+        if analysis.relation_requested:
+            await self._relationship_fallback(state, context, progress)
+            sufficient = self._evidence_sufficient(state)
         if not sufficient and analysis.comparison_targets:
             await self._comparison_fallback(state, context, progress)
             sufficient = self._evidence_sufficient(state)
         # Comparison retrieval is fully deterministic and bounded. Exhausting its
         # search/fetch plan returns insufficient evidence, not a speculative answer.
-        if not sufficient and not analysis.comparison_targets and schemas and self.config.max_action_rounds > 0:
+        if not sufficient and not analysis.comparison_targets and not analysis.relation_requested and schemas and self.config.max_action_rounds > 0:
             state.transition(CentralPhase.ACTION)
             for round_index in range(self.config.max_action_rounds):
                 state.messages.append({"role": "user", "content": (
@@ -589,10 +743,40 @@ class CentralAgent:
                 state.final_answer = generation.content.strip()
 
             quality_issues, citations = self._check_answer(state, packet, stage="synthesis")
-            if quality_issues and self.config.repair_max_generations:
+            if quality_issues and set(quality_issues) <= PURE_CITATION_ISSUES and not generation.generation_hit_time_limit:
+                alignment_started = time.perf_counter()
+                state.reliability["citation_alignment_used"] = True
+                state.final_answer, confidence = align_citations(state.final_answer, packet, self.config)
+                state.reliability["citation_alignment_confidence_by_paragraph"] = confidence
+                state.reliability["citation_alignment_ms"] = (time.perf_counter() - alignment_started) * 1000
+                quality_issues, citations = self._check_answer(state, packet, stage="citation_alignment")
+                state.reliability["citation_alignment_success"] = not quality_issues
+                if not quality_issues:
+                    state.repair_avoided_reason = "host_citation_alignment"
+                elif set(quality_issues) <= PURE_CITATION_ISSUES and self.config.repair_max_generations:
+                    state.transition(CentralPhase.CITATION_REPAIR)
+                    state.reliability["citation_repair_used"] = True
+                    original_messages = state.messages
+                    state.messages = citation_repair_messages(state.final_answer, packet)
+                    mapping = await self._generate(state, stage="citation_repair", tools=[],
+                        max_new_tokens=self.config.citation_repair_max_new_tokens, progress=progress)
+                    state.messages = original_messages
+                    state.reliability.update(citation_repair_used=True, citation_repair_tokens=mapping.output_tokens,
+                                             citation_repair_ms=mapping.generation_ms)
+                    if not mapping.tool_calls and not mapping.generation_hit_time_limit:
+                        state.final_answer = apply_citation_mapping(state.final_answer, mapping.content, packet, self.config)
+                    quality_issues, citations = self._check_answer(state, packet, stage="citation_repair")
+                    if not quality_issues:
+                        state.repair_avoided_reason = "citation_mapping"
+            generation_timed_out = any(metric["generation_hit_time_limit"] for metric in state.generation_metrics)
+            pure_citation_failure = bool(quality_issues) and set(quality_issues) <= PURE_CITATION_ISSUES
+            if quality_issues and self.config.repair_max_generations and not generation_timed_out and (
+                not pure_citation_failure or self.config.citation_full_rewrite_fallback
+            ):
                 state.repair_attempted = True
                 state.repair_reason = quality_issues[0]
                 state.repair_budget = self._repair_budget(generation, state.final_answer)
+                state.reliability["full_quality_repair_used"] = True
                 state.transition(CentralPhase.QUALITY_REPAIR)
                 state.messages.extend([
                     {"role": "assistant", "content": state.final_answer},
@@ -601,6 +785,10 @@ class CentralAgent:
                         "content": (
                             REPAIR_CONTRACT + "\nLỗi cần sửa: " + ", ".join(quality_issues) + "."
                             "\nRủi ro: " + json.dumps(state.grounding_risk_checks[-1], ensure_ascii=False)
+                            + "\nTên không được hỗ trợ: " + json.dumps(state.grounding_risk_checks[-1].get("unsupported_named_claims", []), ensure_ascii=False)
+                            + ". Xóa hoàn toàn các tên này và khẳng định tùy chọn liên quan nếu gói bằng chứng không hỗ trợ. Không thay bằng một dữ kiện thiếu căn cứ khác."
+                            + "\nCác khẳng định cần bỏ, trung lập hóa hoặc quy thuộc: "
+                            + json.dumps(citations.viewpoint_issues, ensure_ascii=False)
                         ),
                     },
                 ])
@@ -612,19 +800,22 @@ class CentralAgent:
                     progress=progress,
                 )
                 state.repair_used = True
+                state.reliability["full_quality_repair_used"] = True
                 if repaired.content.strip() and not repaired.tool_calls:
                     state.final_answer = repaired.content.strip()
                 quality_issues, citations = self._check_answer(state, packet, stage="quality_repair")
             elif not quality_issues:
-                state.repair_avoided_reason = "citation_normalized" if citations.normalized else "valid_first_synthesis"
+                state.repair_avoided_reason = state.repair_avoided_reason or ("citation_normalized" if state.reliability["citation_normalization_used"] else "valid_first_synthesis")
             else:
-                state.repair_avoided_reason = "repair_disabled"
-            if any(issue in quality_issues for issue in (
+                state.repair_avoided_reason = "generation_deadline" if generation_timed_out else "citation_recovery_exhausted" if pure_citation_failure and self.config.repair_max_generations else "repair_disabled"
+            if any(metric["generation_hit_time_limit"] for metric in state.generation_metrics) or any(issue in quality_issues for issue in (
                 "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases", "uncited_factual_paragraphs",
                 "comparison_citation_target_mismatch", "comparison_target_missing", "unattributed_viewpoint",
                 "comparison_similarity_missing", "comparison_difference_missing",
+                "empty_answer",
+                "unsupported_relationship_claim", "relationship_primary_identity_missing",
             )):
-                # A second failure cannot trigger a third call or pass as a grounded answer.
+                # Recovery is bounded; persistent failures never pass as grounded answers.
                 state.final_answer = ""
             else:
                 state.final_answer = expand_citations(state.final_answer, packet)
@@ -635,11 +826,22 @@ class CentralAgent:
             if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
                 state.transition(CentralPhase.FINAL)
 
-        status = "ok" if state.final_answer else "insufficient_evidence"
+        failure_reason = None
         if not state.final_answer:
-            state.final_answer = INSUFFICIENT_EVIDENCE_ANSWER
+            if any(metric["generation_hit_time_limit"] for metric in state.generation_metrics):
+                failure_reason = "generation_timeout"
+            elif state.evidence_debug["evidence_sufficient"]:
+                failure_reason = "answer_validation_failed"
+            elif state.tool_trace and any(row.get("error") and row["error"] != "duplicate_tool_call_prevented" for row in state.tool_trace):
+                failure_reason = "tool_failed"
+            else:
+                failure_reason = "evidence_insufficient"
+            state.final_answer = FAILURE_ANSWERS[failure_reason]
+        state.reliability["final_failure_reason"] = failure_reason
+        status = "insufficient_evidence" if failure_reason == "evidence_insufficient" else failure_reason or "ok"
         final_risks = state.grounding_risk_checks[-1] if state.grounding_risk_checks else {}
         quality_debug = {
+            **state.reliability,
             **state.evidence_debug,
             **analysis.telemetry(),
             "repair_reason": state.repair_reason,
@@ -716,6 +918,7 @@ class CentralAgent:
             "question": question,
             "answer": state.final_answer,
             "status": status,
+            "final_failure_reason": failure_reason,
             "source_ids": source_ids,
             "source_chunks": state.selected_sources,
             "model_source_ids": source_ids,
@@ -775,9 +978,17 @@ class CentralAgent:
         timeout_stage: str,
         started: float,
         analysis: Any,
+        progress: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
     ) -> dict[str, Any]:
         elapsed_ms = (time.perf_counter() - started) * 1000
         runtime = self._runtime_snapshot()
+        failure_reason = failure_reason or ("model_load_failed" if timeout_stage == "model_initialization" else "tool_failed" if timeout_stage == "tool_execution" else "generation_timeout")
+        state = (progress or {}).get("state")
+        reliability = {**(progress or {}).get("readiness", {}), **(state.reliability if state else {}),
+                       "final_failure_reason": failure_reason}
+        if state:
+            reliability.update(state.evidence_debug)
         telemetry = current_request_telemetry()
         model_calls = telemetry.central_model_calls if telemetry is not None else 0
         provenance = {
@@ -785,6 +996,7 @@ class CentralAgent:
             "source": "central_timeout",
             "timeout_stage": timeout_stage,
             **runtime,
+            **reliability,
             "central_model_calls": model_calls,
             "research_generation_calls": 0,
             "evidence_generation_calls": 0,
@@ -793,8 +1005,9 @@ class CentralAgent:
         }
         return {
             "question": question,
-            "answer": INSUFFICIENT_EVIDENCE_ANSWER,
-            "status": "insufficient_evidence",
+            "answer": FAILURE_ANSWERS[failure_reason],
+            "status": failure_reason,
+            "final_failure_reason": failure_reason,
             "source_ids": [],
             "source_chunks": [],
             "retrieval": {"question": question, "final_context": [], "tool_trace": []},
@@ -804,11 +1017,12 @@ class CentralAgent:
                 **analysis.telemetry(),
             },
             "tool_trace": [],
-            "central_debug": {"tools": [], "timeout_stage": timeout_stage, **runtime},
+            "central_debug": {"tools": [], "timeout_stage": timeout_stage, **runtime, **reliability},
             "agentic": True,
             "inference_mode": "central",
             "answer_provenance": provenance,
             "performance_debug": {
+                **reliability,
                 "timeout_stage": timeout_stage,
                 "central_model_calls": model_calls,
                 "central_total_latency_ms": elapsed_ms,
@@ -824,20 +1038,33 @@ class CentralAgent:
         question = str(kwargs.get("question") or "").strip()
         started = time.perf_counter()
         analysis = analyze_central_question(question)
+        cold = not self._runtime_snapshot()["central_model_ready"]
+        overlap = cold and self.can_overlap_model_load_and_retrieval()
+        progress: dict[str, Any] = kwargs.get("request_progress") if kwargs.get("request_progress") is not None else {}
+        progress.update({"timeout_stage": "agent_budget", "stage": "central_loading" if cold else "central_tools", "readiness": {
+            "model_was_cold": cold, "model_load_wait_ms": 0.0,
+            "model_load_overlap_enabled": overlap, "model_load_overlap_ms_saved_estimate": 0.0,
+        }})
+        async def initialize():
+            load_started = time.perf_counter()
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self._ensure_model_ready), timeout=self.config.model_load_timeout_seconds)
+                if progress.get("stage") == "central_loading":
+                    progress["stage"] = "central_tools"
+            except Exception as exc:
+                raise ModelLoadFailure(str(exc)) from exc
+            finally:
+                progress["readiness"]["model_initialization_wall_ms"] = (time.perf_counter() - load_started) * 1000
+                if not overlap:
+                    progress["readiness"]["model_load_wait_ms"] = progress["readiness"]["model_initialization_wall_ms"]
+        readiness_task = asyncio.create_task(initialize()) if cold else None
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._ensure_model_ready),
-                timeout=self.config.model_load_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            return self._timeout_result(
-                question=question,
-                timeout_stage="model_initialization",
-                started=started,
-                analysis=analysis,
-            )
-        progress: dict[str, Any] = {"timeout_stage": "agent_budget"}
-        try:
+            if readiness_task is not None and not overlap:
+                progress["timeout_stage"] = "model_initialization"
+                await readiness_task
+                progress["readiness"]["model_load_wait_ms"] = progress["readiness"]["model_initialization_wall_ms"]
+                progress["stage"] = "central_tools"
+            progress["timeout_stage"] = "agent_budget"
             return await asyncio.wait_for(
                 self._run(
                     question=question,
@@ -847,16 +1074,28 @@ class CentralAgent:
                     request_id=kwargs.get("request_id"),
                     started=started,
                     progress=progress,
+                    model_ready_task=readiness_task if overlap else None,
                 ),
-                timeout=self.config.timeout_seconds,
+                timeout=self.config.timeout_seconds + (self.config.model_load_timeout_seconds if overlap else 0),
             )
+        except ModelLoadFailure:
+            return self._timeout_result(question=question, timeout_stage="model_initialization", started=started,
+                analysis=analysis, progress=progress, failure_reason="model_load_failed")
         except asyncio.TimeoutError:
             return self._timeout_result(
                 question=question,
                 timeout_stage=str(progress.get("timeout_stage") or "agent_budget"),
                 started=started,
                 analysis=analysis,
+                progress=progress,
             )
+        finally:
+            if readiness_task is not None and not readiness_task.done():
+                readiness_task.cancel()
+            if readiness_task is not None:
+                # Retrieve exceptions even if retrieval was cancelled first. The
+                # LazyRuntime lock still protects an in-flight loader thread.
+                await asyncio.gather(readiness_task, return_exceptions=True)
 
     def chat(
         self,
@@ -866,6 +1105,7 @@ class CentralAgent:
         owner_id: str | None = None,
         conversation_id: str | None = None,
         request_id: str | None = None,
+        request_progress: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del final_k
         return asyncio.run(self.run(
@@ -874,4 +1114,5 @@ class CentralAgent:
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
+            request_progress=request_progress,
         ))

@@ -24,6 +24,14 @@ class SearchHistoryTool:
     def __init__(self, retriever: Any):
         self.retriever = retriever
 
+    def can_overlap_model_load_and_retrieval(self) -> bool:
+        # RAGService loads both models onto settings.device. Inspect the already
+        # loaded objects without invoking loaders; unknown/same-CUDA stays serial.
+        service = getattr(self.retriever, "service", None)
+        devices = [str(getattr(getattr(service, name, None), "device", "unknown"))
+                   for name in ("embedder", "reranker")]
+        return all(device == "cpu" for device in devices)
+
     def run(self, arguments: SearchHistoryInput) -> list[dict[str, Any]]:
         analysis_fn = getattr(self.retriever, "analyze_question", None)
         analysis = analysis_fn(arguments.query) if callable(analysis_fn) else {}

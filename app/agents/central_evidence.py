@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -8,6 +9,10 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from app.agents.central_question import CentralQuestionAnalysis
+from app.agents.central_viewpoints import annotate_viewpoints
+from app.agents.central_compaction import excerpt_evidence
+from app.agents.central_relationships import select_relationship_evidence, mentions
+from app.agents.central_entity_aliases import evidence_aliases
 from app.agents.config import CentralAgentConfig
 from app.agents.central_analytical import (
     annotate_evidence, coverage_select, evidence_targets, strong_evidence, entity_consistency, normalize_entity,
@@ -43,6 +48,17 @@ def select_evidence(
     removes only a separated low tail (at least two stronger anchors). An absolute
     floor is opt-in for explicitly calibrated probability scores.
     """
+    if analysis.relation_requested:
+        annotated = [annotate_evidence(row, analysis) for row in rows]
+        kept = [row for row in annotated if row["covered_entities"]]
+        if compare_scores:
+            kept.sort(key=lambda row: _score(row, "reranker_score") if _score(row, "reranker_score") is not None else float("-inf"), reverse=True)
+            kept = [{**row, "retrieval_rank": rank} for rank, row in enumerate(kept, 1)]
+        dropped = len(rows) - len(kept)
+        return kept, {"retrieval_candidates_before_filter": len(rows), "retrieval_candidates_after_filter": len(kept),
+            "retrieval_filtered_count": dropped, "retrieval_filter_reasons": {"unrequested_biography_entity": dropped} if dropped else {},
+            "entity_disambiguation_filtered_count": dropped, "entity_disambiguation_filter_reasons": {},
+            "biography_entity": analysis.subject, "biography_exact_title_hits": sum(bool(row["canonical_entities"]) for row in kept)}
     if analysis.question_type in {"cause", "comparison"} and (target or analysis.event or analysis.subject):
         annotated = [annotate_evidence(row, analysis, target) for row in rows]
         reasons = Counter(row["entity_filter_reason"] or "analytical_target_mismatch"
@@ -129,7 +145,11 @@ def select_evidence(
 
 
 def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysis, config: CentralAgentConfig) -> list[dict[str, Any]]:
-    if analysis.comparison_targets:
+    if analysis.relation_requested:
+        previews = [{**row, "text": excerpt_evidence(str(row.get("text") or ""), analysis, config.evidence_excerpt_chars),
+                     "evidence_chars_before_compaction": len(str(row.get("text") or ""))} for row in rows]
+        selected = select_relationship_evidence(previews, analysis, config.biography_max_sources)
+    elif analysis.comparison_targets:
         groups = []
         for target in analysis.comparison_targets:
             group, _ = select_evidence([row for row in rows if target in evidence_targets(row)], analysis, config, compare_scores=False, target=target)
@@ -154,16 +174,30 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
     else:
         filtered, _ = select_evidence(rows, analysis, config, compare_scores=False)
         selected = [annotate_evidence(row, analysis) for row in filtered]
+        if analysis.question_type == "cause":
+            # Rank the excerpt that synthesis can actually receive, not the
+            # dimensions aggregated over a larger source that will be discarded.
+            selected = [annotate_evidence({**row,
+                "text": excerpt_evidence(str(row.get("text") or ""), analysis, config.evidence_excerpt_chars),
+                "evidence_chars_before_compaction": len(str(row.get("text") or "")),
+            }, analysis) for row in selected]
+            selected = [row for row in selected if row["text"]]
         if analysis.question_type in {"cause", "significance", "consequence", "evaluation"}:
+            strong = [row for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
+            if len(strong) >= 3:
+                selected = strong
             selected = coverage_select(selected, analysis, config.analytical_max_sources)
         else:
             selected = selected[:config.max_tool_results]
     # Source admission is independent of action-observation consumption. Share the
     # synthesis character budget fairly, then re-annotate exactly what the model sees.
-    per_source = min(3200, max(0, config.synthesis_char_budget // max(1, len(selected)) - 200))
+    per_source = min(config.evidence_excerpt_chars, max(0, config.synthesis_char_budget // max(1, len(selected)) - 200))
     bounded = []
     for row in selected:
-        item = {**row, "text": str(row.get("text") or "")[:per_source]}
+        original = str(row.get("text") or "")
+        item = {**row, "text": excerpt_evidence(original, analysis, per_source), "evidence_chars_before_compaction": row.get("evidence_chars_before_compaction", len(original))}
+        if not item["text"]:
+            continue
         if analysis.comparison_targets:
             # Merging versions or truncating text must not confer another target's
             # support on a source that no longer contains that evidence.
@@ -185,10 +219,21 @@ class SynthesisEvidence:
     comparison_target: str | None = None
     comparison_targets: tuple[str, ...] = ()
     viewpoint_sensitive: bool = False
+    viewpoint_annotations: tuple[dict[str, Any], ...] = ()
+    entity_aliases: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self):
         if self.comparison_target and not self.comparison_targets:
             object.__setattr__(self, "comparison_targets", (self.comparison_target,))
+        # Derive from the exact visible text, not a legacy source-wide flag or stale
+        # annotations that may refer to text discarded by the packet budget.
+        annotations = tuple(annotate_viewpoints(self.text))
+        object.__setattr__(self, "viewpoint_annotations", annotations)
+        object.__setattr__(self, "viewpoint_sensitive", bool(annotations))
+        # A truncated-away identity cannot confer aliases through stale metadata.
+        aliases = [pair for pair in self.entity_aliases if mentions(f"{self.title} {self.text}", pair["name"])
+                   and (pair["origin"] == "selected_entity_metadata" or mentions(self.text, pair["alias"]))]
+        object.__setattr__(self, "entity_aliases", tuple(aliases or evidence_aliases(self.text, self.title)))
 
 
 def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEvidence]:
@@ -205,6 +250,7 @@ def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEviden
             title=str(row.get("title") or ""), source_kind=str(row.get("source_kind") or "history"), text=text,
             comparison_target=row.get("comparison_target"), comparison_targets=tuple(evidence_targets(row)),
             viewpoint_sensitive=bool(row.get("viewpoint_sensitive")),
+            entity_aliases=tuple(evidence_aliases(text, str(row.get("title") or ""), row.get("metadata"))),
         ))
     return packet
 
@@ -212,7 +258,11 @@ def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEviden
 def render_evidence_packet(packet: list[SynthesisEvidence]) -> str:
     # Real IDs stay on the host. No ranks, retrieval scores, or old tool observations.
     def render(item):
-        note = "\nviewpoint_sensitive=true; phải quy thuộc quan điểm cho nguồn" if item.viewpoint_sensitive else ""
+        spans = [{"type": a["type"], "excerpt": a["text"][:140], "attribution_hint": a["attribution_hint"]}
+                 for a in item.viewpoint_annotations if a["requires_attribution"]]
+        note = "\nviewpoint_annotations: " + json.dumps(spans[:6], ensure_ascii=False) if spans else ""
+        if item.entity_aliases:
+            note += "\nentity_aliases: " + json.dumps(item.entity_aliases, ensure_ascii=False)
         return f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}{note}\ntext: {item.text}"
     targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
     if targets:

@@ -479,6 +479,7 @@ def _execute_chat(
     payload: ChatRequest,
     request_id: str,
     selected_mode: InferenceMode,
+    request_progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_mode = normalize_chat_mode(selected_mode)
     telemetry = RequestTelemetry(
@@ -516,6 +517,7 @@ def _execute_chat(
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
+            **({"request_progress": request_progress} if selected_mode == ChatMode.CENTRAL and getattr(generator, "supports_request_progress", False) else {}),
         )
         result["inference_mode"] = selected_mode
         result.setdefault("answer_provenance", {})["mode"] = selected_mode
@@ -718,6 +720,7 @@ async def chat_stream(
     async def event_stream():
         stream_started = time.perf_counter()
         task: asyncio.Task | None = None
+        request_progress: dict[str, Any] = {}
 
         if selected_mode == ChatMode.CENTRAL:
             status_messages = [
@@ -748,6 +751,7 @@ async def chat_stream(
                 payload,
                 request_id,
                 selected_mode,
+                request_progress,
             )
         )
         task.add_done_callback(_consume_task_exception)
@@ -763,11 +767,19 @@ async def chat_stream(
                         int((time.perf_counter() - stream_started) // 8),
                         len(status_messages) - 1,
                     )
+                    stage, message = status_messages[status_index]
+                    if selected_mode == ChatMode.CENTRAL:
+                        stage = request_progress.get("stage", "central_analyzing")
+                        message = {
+                            "central_loading": "Đang khởi động mô hình...",
+                            "central_tools": "Đang tìm tư liệu...",
+                            "central_answering": "Đang tổng hợp câu trả lời...",
+                        }.get(stage, "Đang chuẩn bị câu hỏi...")
                     yield _sse(
                         "status",
                         {
-                            "stage": status_messages[status_index][0],
-                            "message": status_messages[status_index][1],
+                            "stage": stage,
+                            "message": message,
                             "mode": selected_mode,
                         },
                     )

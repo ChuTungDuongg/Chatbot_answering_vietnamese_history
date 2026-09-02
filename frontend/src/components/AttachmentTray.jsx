@@ -36,11 +36,11 @@ function AttachmentTray({ attachments, pendingUploads, onDelete, disabled }) {
             <span className="attachment-copy">
               <strong>{filename}</strong>
               <small>
-                {isProcessing && "Đang OCR và tạo corpus"}
+                {isProcessing && "Đang đọc tài liệu..."}
                 {isFailed && (item.error || "Xử lý thất bại")}
                 {!isProcessing && !isFailed && (
                   <>
-                    {item.chunk_count ? `${item.chunk_count} chunks` : "Sẵn sàng"}
+                    Sẵn sàng để tra cứu
                     {item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : ""}
                   </>
                 )}

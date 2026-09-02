@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from app.agents.central_question import CentralQuestionAnalysis, _ascii_fold_vietnamese
+from app.agents.central_viewpoints import annotate_viewpoints
+from app.agents.central_relationships import annotate_relationship, relationship_coverage
 
 
 def normalize_entity(value: str) -> str:
@@ -42,12 +44,25 @@ DIMENSION_CUES = {
 }
 CAUSE_DIMENSIONS = {"military", "strategy", "political", "economic", "domestic", "international", "opponent"}
 _CAUSAL = ("nguyen nhan", "vi", "do", "dan den", "khien", "suy yeu", "khung hoang", "that bai", "thanh cong")
+_CAUSE_LINK = re.compile(r"\b(?:nguyen nhan|nho|boi vi|gop phan|dan den|khien|tao dieu kien|lien quan den|tac dong den|lam suy yeu|lam giam)\b|\b(?:thanh cong|thang loi|that bai|suy yeu|sup do)\b.{0,45}\b(?:do|vi|boi)\b")
+_CAUSE_CONDITIONS = re.compile(r"\b(?:chuan bi|to chuc|lanh dao|thoi co|co hoi|huy dong|phoi hop|ung ho|doan ket|khoang trong quyen luc|tuong quan luc luong|boi canh|dieu kien|khung hoang|ap luc|tham nhung|thieu hut)\b")
+_CAUSE_DISTRACTIONS = re.compile(r"\b(?:bai tho|tho ca|tien doan|du doan|loi sam|le ky niem|tuong niem|hau chien|hau qua|giai doan sau)\b|\bsau (?:khi )?(?:gianh chinh quyen|thang loi|thanh cong|cuoc cach mang|cuoc khoi nghia)\b")
 _PLACE_PREFIX = re.compile(r"^(?:duong|quang truong|tuong dai|khu di tich|bao tang|le ky niem|du lich|thanh pho)\b")
-_VIEWPOINT = re.compile(r'"[^"\n]{8,}"|“[^”\n]{8,}”|\b(?:lu tay sai|chung ta|chung toi|ta nhat dinh|bon de quoc|phan dong|nguy quan|nguy quyen)\b', re.I)
+_ARTIFACT = re.compile(r"\b(?:bai hat|ca khuc|nhac pham|tac pham am nhac|duong pho|nha ga|ga tau|quang truong|tuong dai|quan thuoc|phuong thuoc|le ky niem)\b")
 
 
 def viewpoint_sensitive(text: str) -> bool:
-    return bool(_VIEWPOINT.search(_ascii_fold_vietnamese(text)))
+    return bool(annotate_viewpoints(text))
+
+
+def cause_sentence_relevance(text: str) -> int:
+    """Small ranking preference, not a new sufficiency threshold or fact table."""
+    folded = normalize_entity(text)
+    if _CAUSE_DISTRACTIONS.search(folded):
+        return -1
+    if _CAUSE_LINK.search(folded):
+        return 2
+    return 1 if _CAUSE_CONDITIONS.search(folded) else 0
 
 
 def entity_consistency(row: dict[str, Any], target: str, *, person: bool = False) -> tuple[bool, bool, str | None]:
@@ -67,6 +82,17 @@ def entity_consistency(row: dict[str, Any], target: str, *, person: bool = False
         associated = canonical or target_mentions(text, target) or target_mentions(raw_title, target)
     if not person:
         metadata = row.get("metadata") or {}
+        # An event mention in a song/station/commemorative page does not establish
+        # causal evidence. Explicit questions about the artifact keep that page.
+        if not canonical and not _ARTIFACT.search(normalize_entity(target)):
+            lead = normalize_entity(text[:350])
+            place_title = re.match(r"^(?:Quận|Huyện|Phường|Ga|Trạm)\s", raw_title, re.I)
+            explicit_place_target = re.match(r"^(?:Quận|Huyện|Phường|Ga|Trạm)\s", target, re.I)
+            artifact_kind = str(metadata.get("page_type") or metadata.get("entity_type") or "").casefold() in {
+                "song", "music composition", "street", "square", "monument", "station", "district", "commemoration",
+            }
+            if _ARTIFACT.search(title) or re.search(r"\bla (?:mot |ten mot )?" + _ARTIFACT.pattern, lead) or (place_title and not explicit_place_target) or artifact_kind:
+                return False, False, "event_incidental_artifact"
         scope = normalize_entity(str(metadata.get("country") or metadata.get("domain_scope") or ""))
         if ("trung quoc" in title or scope in {"trung quoc", "china"}) and "trung quoc" not in normalize_entity(target):
             return False, False, "foreign_entity_scope"
@@ -88,7 +114,18 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
     folded = f" {normalize_entity(text)} "
     target = target or row.get("comparison_target") or analysis.event or analysis.subject
     associated, overview, reason = entity_consistency(row, target, person=analysis.question_type == "biography") if target else (True, False, None)
-    dimensions = [dim for dim, cues in DIMENSION_CUES.items() if any(f" {cue} " in folded for cue in cues)]
+    cause_score, cause_downranked = 0, False
+    dimension_text = folded
+    if analysis.question_type == "cause":
+        sentences = [s for s in re.split(r"[.!?;\n]", text) if s.strip()]
+        relevance = [(s, cause_sentence_relevance(s)) for s in sentences]
+        # Do not turn a poem/aftermath's vocabulary into causal coverage. Other
+        # requested facets still retain those sentences as ordinary evidence.
+        if not set(analysis.facets) & {"result", "significance", "consequence"}:
+            dimension_text = " " + normalize_entity(" ".join(s for s, score in relevance if score >= 0)) + " "
+            cause_downranked = sum(score < 0 for _, score in relevance) > sum(score > 0 for _, score in relevance)
+        cause_score = max((score for _, score in relevance), default=0)
+    dimensions = [dim for dim, cues in DIMENSION_CUES.items() if any(f" {cue} " in dimension_text for cue in cues)]
     chronology = False
     if analysis.question_type == "cause" and analysis.outcome in {"suy yếu", "sụp đổ"} and analysis.subject:
         dynasty = normalize_entity(analysis.subject).removeprefix("nha ").removeprefix("trieu dai ")
@@ -98,13 +135,16 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
         after = sum(any(cue in s for cue in (f"hau {dynasty}", "sau khi", "sau su sup do", "phuc hung")) for s in sentences)
         during = sum(any(cue in s for cue in ("cuoi trieu", "cuoi thoi", "nguyen nhan", "ruong dat", "thue", "tham nhung")) for s in sentences)
         chronology = after > during
+    viewpoints = annotate_viewpoints(text)
     row.update({
         "target_consistent": associated and not reason, "overview_anchor": overview and not reason,
         "entity_filter_reason": reason, "evidence_dimensions": dimensions,
-        "causal_relevance": any(f" {cue} " in folded for cue in _CAUSAL),
-        "chronology_downranked": chronology, "viewpoint_sensitive": viewpoint_sensitive(text),
+        "causal_relevance": cause_score > 0 or any(f" {cue} " in dimension_text for cue in _CAUSAL),
+        "cause_facet_score": cause_score, "cause_focus_downranked": cause_downranked,
+        "chronology_downranked": chronology, "viewpoint_sensitive": bool(viewpoints),
+        "viewpoint_annotations": viewpoints,
     })
-    return row
+    return annotate_relationship(row, analysis) if analysis.relation_requested else row
 
 
 def evidence_targets(row: dict[str, Any]) -> list[str]:
@@ -122,8 +162,10 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
             dims = set(row.get("evidence_dimensions") or [])
             return (
                 not row.get("chronology_downranked", False),
+                not row.get("cause_focus_downranked", False) if analysis.question_type == "cause" else True,
                 bool(row.get("overview_anchor")) and not any(s.get("overview_anchor") for s in selected),
                 bool(row.get("target_consistent")),
+                row.get("cause_facet_score", 0) > 0 if analysis.question_type == "cause" else False,
                 len((dims - covered) & requested) * 2 + len((dims - covered) & CAUSE_DIMENSIONS) + len(dims - covered),
                 bool(row.get("causal_relevance")) if analysis.question_type == "cause" else False,
                 -int(row.get("retrieval_rank", 999)),
@@ -140,7 +182,7 @@ def strong_evidence(row: dict[str, Any], *, min_chars: int) -> bool:
     return bool(row.get("target_consistent") and row.get("citable", True)
                 and len(text) >= min_chars and len(text.split()) >= 12
                 and len(row.get("evidence_dimensions") or []) >= 2
-                and not row.get("chronology_downranked"))
+                and not row.get("chronology_downranked") and not row.get("cause_focus_downranked"))
 
 
 def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, Any]], analysis: CentralQuestionAnalysis, config) -> tuple[bool, dict[str, Any]]:
@@ -157,7 +199,10 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
             "dimensions_covered": sorted(group_dims),
             "adequate": len(strong) >= config.comparison_min_strong_sources and len(group_dims) >= 2,
         }
-    if analysis.question_type == "comparison":
+    if analysis.relation_requested:
+        sufficient, relationship = relationship_coverage(selected, analysis)
+        reason = relationship["evidence_sufficiency_reason"]
+    elif analysis.question_type == "comparison":
         sufficient = len(balance) >= 2 and all(item["adequate"] for item in balance.values())
         reason = "both_comparison_targets_covered" if sufficient else "comparison_target_coverage_insufficient"
     elif analysis.question_type == "cause" and (analysis.event or analysis.subject):
@@ -179,4 +224,5 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
         "evidence_dimensions_covered": dims, "evidence_sufficiency_reason": reason,
         "evidence_sufficient": sufficient,
         "viewpoint_sensitive_evidence_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
+        **(relationship if analysis.relation_requested else {}),
     }

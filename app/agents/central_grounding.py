@@ -57,6 +57,11 @@ def _named_tokens(answer: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def entity_alias_matches(answer: str, packet: list[SynthesisEvidence]) -> list[dict]:
+    return [{"source_alias": source.alias, **pair} for source in packet for pair in source.entity_aliases
+            if f" {normalize_entity(pair['alias'])} " in f" {normalize_entity(answer)} "]
+
+
 def grounding_risks(answer: str, question: str, packet: list[SynthesisEvidence]) -> dict[str, list[str]]:
     """Conservative token-presence risk signal, not entailment or a fact verdict.
 
@@ -73,7 +78,12 @@ def grounding_risks(answer: str, question: str, packet: list[SynthesisEvidence])
             continue
         if not re.search(rf"(?<!\d){match.group()}(?!\d)", support):
             years.append(match.group())
-    names = [name for name in _named_tokens(prose) if f" {normalize_entity(name)} " not in normalized_support]
+    supplied_aliases = set()
+    for source in packet:
+        for pair in source.entity_aliases:
+            alias = pair["alias"]
+            supplied_aliases.add(normalize_entity(alias))
+    names = [name for name in _named_tokens(prose) if f" {normalize_entity(name)} " not in normalized_support and normalize_entity(name) not in supplied_aliases]
     return {
         "unsupported_named_claims": list(dict.fromkeys(names)),
         "unsupported_years": list(dict.fromkeys(years)),

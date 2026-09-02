@@ -60,12 +60,13 @@ test("legacy localStorage values migrate without changing old execution meaning"
 
 test("compact mode dropdown is inside the composer's left action group", async () => {
   const source = await readFile(new URL("../src/components/ChatInput.jsx", import.meta.url), "utf8");
-  const leading = source.indexOf('className="composer-leading-actions"');
+  const textarea = source.indexOf("<textarea");
+  const toolbar = source.indexOf('className="composer-toolbar"', textarea);
+  const leading = source.indexOf('className="composer-leading-actions"', toolbar);
   const selector = source.indexOf("<ModeSelector", leading);
-  const textarea = source.indexOf("<textarea", selector);
-  const submit = source.indexOf("composer-submit", textarea);
+  const submit = source.indexOf("composer-submit", selector);
 
-  assert.ok(leading >= 0 && selector > leading && textarea > selector && submit > textarea);
+  assert.ok(textarea >= 0 && toolbar > textarea && leading > toolbar && selector > leading && submit > selector);
 });
 
 

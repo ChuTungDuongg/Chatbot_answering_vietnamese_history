@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 FUNCTION_CALL_CODEC = HermesFunctionCallCodec()
 
 
+def choose_attention_backend(*, device: str, dtype: str, flash_available: bool, cuda_major: int, sdpa_available: bool) -> str:
+    if device.startswith("cuda") and dtype in {"bfloat16", "float16"} and flash_available and cuda_major >= 8:
+        return "flash_attention_2"
+    return "sdpa" if sdpa_available else "eager"
+
+
 @dataclass(frozen=True)
 class CentralToolCall:
     id: str
@@ -119,10 +125,20 @@ class CentralModelRuntime:
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         placement = {"": 0} if device == "cuda" else None
+        from transformers.utils import is_flash_attn_2_available
+        self.attention_backend = choose_attention_backend(
+            device=device, dtype=dtype,
+            flash_available=is_flash_attn_2_available() if device == "cuda" else False,
+            cuda_major=torch.cuda.get_device_capability(0)[0] if device == "cuda" else 0,
+            sdpa_available=hasattr(torch.nn.functional, "scaled_dot_product_attention"),
+        )
         base = AutoModelForCausalLM.from_pretrained(
             model_id,
             dtype=compute_dtype,
             device_map=placement,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            attn_implementation=self.attention_backend,
             trust_remote_code=True,
             cache_dir=str(self.cache_dir),
             local_files_only=local_files_only,
@@ -196,7 +212,7 @@ class CentralModelRuntime:
         inputs = self.tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
         input_tokens = int(inputs["input_ids"].shape[1])
         telemetry = current_request_telemetry()
-        with self._lock:
+        with self._lock, torch.inference_mode():
             inputs = inputs.to(self.model.get_input_embeddings().weight.device)
             started = time.perf_counter()
             stopping = DeadlineStoppingCriteria(deadline)
@@ -206,6 +222,10 @@ class CentralModelRuntime:
                 "generation_config": self.generation_config,
                 "do_sample": False,
                 "use_cache": True,
+                "output_scores": False,
+                "output_hidden_states": False,
+                "output_attentions": False,
+                "return_dict_in_generate": False,
                 "pad_token_id": self.tokenizer.pad_token_id,
                 "eos_token_id": self.tokenizer.eos_token_id,
                 "stopping_criteria": StoppingCriteriaList([stopping]),

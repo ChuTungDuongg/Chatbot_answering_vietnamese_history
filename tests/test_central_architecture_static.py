@@ -45,7 +45,7 @@ def test_production_modal_uses_a100_and_lazy_independent_central_runtime():
     assert "WEB_SEARCH_API_KEY" not in source
     assert "min_containers=0" in source
     assert "max_containers=1" in source
-    assert "scaledown_window=120" in source
+    assert 'scaledown_window=int(os.getenv("CENTRAL_SCALEDOWN_WINDOW_SECONDS", "120"))' in source
 
 
 def test_obsolete_root_modal_smoke_files_are_absent():

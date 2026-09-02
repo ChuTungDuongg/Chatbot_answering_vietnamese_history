@@ -85,7 +85,7 @@ image = modal.Image.from_dockerfile(
     startup_timeout=300,
     min_containers=0,
     max_containers=1,
-    scaledown_window=120,
+    scaledown_window=int(os.getenv("CENTRAL_SCALEDOWN_WINDOW_SECONDS", "120")),
     volumes={
         "/artifacts": artifacts,
         "/hf-cache": hf_cache,

@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from app.agents.central_evidence import SynthesisEvidence
 from app.agents.central_question import _ascii_fold_vietnamese
-from app.agents.central_analytical import target_mentions, viewpoint_sensitive
+from app.agents.central_analytical import target_mentions
+from app.agents.central_viewpoints import viewpoint_attribution_issues
 
 
 BRACKET_RE = re.compile(r"\[([^\[\]\n]+)\]")
@@ -21,6 +22,7 @@ class CitationCheck:
     uncited_paragraphs: int
     target_mismatches: list[str]
     unattributed_viewpoints: int
+    viewpoint_issues: list[dict]
 
 
 def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationCheck:
@@ -58,9 +60,12 @@ def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationChe
         answer, flags=re.I,
     )
     normalized_answer = BRACKET_RE.sub(replace, unwrapped)
+    normalized_answer = re.sub(r"\[S(\d+)\](?=\[S\d+\])", r"[S\1] ", normalized_answer)
     uncited = 0
     mismatches: list[str] = []
     unattributed = 0
+    viewpoint_issues = []
+    evidence_by_alias = {item.alias: item for item in packet}
     targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
     alias_targets = {item.alias: set(item.comparison_targets) for item in packet}
     section_targets: set[str] = set()
@@ -93,7 +98,7 @@ def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationChe
                 for expected, cell in zip(table_targets, cells):
                     supported = set().union(*(alias_targets.get(alias, set()) for alias in BRACKET_RE.findall(cell)))
                     # Explicitly unavailable dimensions do not assert a historical fact.
-                    if "chua du bang chung" not in _ascii_fold_vietnamese(cell):
+                    if "chua du bang chung" not in _ascii_fold_vietnamese(cell) and BRACKET_RE.findall(cell):
                         mismatches.extend(sorted(expected - supported))
         else:
             table_targets = []
@@ -104,12 +109,16 @@ def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationChe
             uncited += 1
         discussed = {target for target in targets if target_mentions(plain, target)} or section_targets
         supported_targets = set().union(*(alias_targets[alias] for alias in cited_aliases)) if cited_aliases else set()
-        mismatches.extend(sorted(discussed - supported_targets))
-        if viewpoint_sensitive(plain) and not any(cue in folded for cue in ("theo ", "nguon ", "tac gia", "tuyen bo", "nhan dinh", "quan diem", "khau hieu", "loi ke")):
+        if cited_aliases:
+            mismatches.extend(sorted(discussed - supported_targets))
+        # Missing citations must not conceal copied opinions from host alignment.
+        paragraph_viewpoints = viewpoint_attribution_issues(plain, [evidence_by_alias[alias] for alias in cited_aliases] if cited_aliases else packet)
+        viewpoint_issues.extend(paragraph_viewpoints)
+        if paragraph_viewpoints:
             unattributed += 1
     return CitationCheck(
         normalized_answer, source_ids, list(dict.fromkeys(invalid)),
-        normalized_answer != answer, uncited, list(dict.fromkeys(mismatches)), unattributed,
+        normalized_answer != answer, uncited, list(dict.fromkeys(mismatches)), unattributed, viewpoint_issues,
     )
 
 

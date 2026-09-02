@@ -158,7 +158,8 @@ def test_comparison_balanced_before_character_budget_and_one_synthesis():
     debug = result["central_debug"]
     assert set(debug["target_rankings"]) == {A, B}
     assert all(item["selected_count"] == item["strong_evidence_count"] == 2 for item in debug["comparison_balance"].values())
-    assert debug["entity_disambiguation_filtered_count"] == 10  # five noise rows, two variants
+    assert debug["entity_disambiguation_filtered_count"] == 7  # A's redundant secondary is skipped; B still expands.
+    assert len(debug["retrieval_queries_skipped"]) == 1
     prompt = runtime.calls[0]["messages"][-1]["content"]
     assert f"TARGET A — {A}" in prompt and f"TARGET B — {B}" in prompt
     trace = _build_debug(result)
@@ -253,6 +254,11 @@ def test_shared_source_keeps_both_origins_but_truncation_cannot_transfer_support
     assert coverage_report(selected, [shared], analysis, CONFIG)[0]
     shared["text"] = comparison_rows(A)[0]["text"] + " Diễn giải bối cảnh." * 200 + comparison_rows(B)[0]["text"]
     selected = select_synthesis_evidence([shared], analysis, replace(CONFIG, synthesis_char_budget=1000))
+    # Relevant windows can now retain late B evidence instead of blindly truncating it.
+    assert evidence_targets(selected[0]) == [A, B]
+    assert coverage_report(selected, [shared], analysis, CONFIG)[0]
+    shared["text"] = comparison_rows(A)[0]["text"]
+    selected = select_synthesis_evidence([shared], analysis, CONFIG)
     assert evidence_targets(selected[0]) == [A]
     assert not coverage_report(selected, [shared], analysis, CONFIG)[0]
 
@@ -274,7 +280,7 @@ def test_failed_target_citation_repair_stays_bounded_and_returns_no_comparison()
     bad = GOOD_COMPARE.replace("[S3]", "[S1]")
     runtime = FakeCentralRuntime([CentralGeneration(content=bad), CentralGeneration(content=bad)])
     result = build_agent(runtime, FakeTool("search_history", comparison_tool), config=CONFIG).chat(COMPARE)
-    assert result["status"] == "insufficient_evidence" and len(runtime.calls) == 2
+    assert result["status"] == "answer_validation_failed" and len(runtime.calls) == 2
     assert result["source_ids"] == []
 
 

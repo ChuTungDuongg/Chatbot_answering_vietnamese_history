@@ -40,6 +40,9 @@ class CentralQuestionAnalysis:
     actors: tuple[str, ...] = ()
     outcome: str | None = None
     facets: tuple[str, ...] = ()
+    related_entities: tuple[str, ...] = ()
+    relation_requested: bool = False
+    relation_phrase: str | None = None
 
     def telemetry(self) -> dict:
         return {
@@ -47,6 +50,8 @@ class CentralQuestionAnalysis:
             "event": self.event, "actors": list(self.actors), "outcome": self.outcome,
             "comparison_targets": list(self.comparison_targets),
             "facet": self.facets[0] if self.facets else None, "facets": list(self.facets),
+            "related_entities": list(self.related_entities), "relation_requested": self.relation_requested,
+            "relation_phrase": self.relation_phrase,
         }
 
 
@@ -126,8 +131,14 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
     normalized = _ascii_fold_vietnamese(" ".join(question.split()))
     targets = extract_comparison_targets(question)
     subject = extract_biography_subject(question)
+    relation = extract_biography_relation(question)
+    if relation:
+        subject = relation[0]
     question_type: str | None = None
-    if targets or any(cue in normalized for cue in _COMPARISON_CUES):
+    if relation:
+        question_type = "biography"
+        targets = ()
+    elif targets or any(cue in normalized for cue in _COMPARISON_CUES):
         question_type = "comparison"
     elif subject or re.search(rf"\b{_BIOGRAPHY_TOPIC}\b|\bla ai\b|\bgiu chuc vu gi\b", normalized):
         question_type = "biography"
@@ -150,8 +161,39 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
         event=event if not targets and question_type != "biography" else None,
         actors=actors if question_type != "biography" else (),
         outcome=outcome if question_type != "biography" else None,
-        facets=extract_requested_facets(question, question_type),
+        facets=("identity", "relationship") if relation else extract_requested_facets(question, question_type),
+        related_entities=(relation[1],) if relation else (),
+        relation_requested=bool(relation), relation_phrase=relation[2] if relation else None,
     )
+
+
+def extract_biography_relation(question: str) -> tuple[str, str, str] | None:
+    """Bounded two-person grammar, preserving names; no historical equivalences."""
+    compact = unicodedata.normalize("NFC", " ".join(question.split())).strip(" .?!")
+    folded = _ascii_fold_vietnamese(compact)
+    patterns = (
+        r"^(?P<a>.+?)\s+(?P<phrase>(?:co )?(?:lien he|quan he)(?: gi| nhu the nao)? voi)\s+(?P<b>.+?)(?: khong)?$",
+        r"^(?P<a>.+?)\s+(?P<phrase>(?:co )?tung (?:gap(?: go)?|lam viec|doi dau)(?: voi)?)\s+(?P<b>.+?)(?: khong)?$",
+        r"^(?P<a>.+?)\s+va\s+(?P<b>.+?)\s+(?P<phrase>co lien quan gi den nhau)$",
+        r"^(?P<phrase>(?:moi )?quan he giua)\s+(?P<a>.+?)\s+va\s+(?P<b>.+)$",
+        r"^(?P<a>.+?)\s+(?P<phrase>doi voi)\s+(?P<b>.+)$",
+    )
+    def name(value):
+        value = value.strip(" ,;:")
+        biography = extract_biography_subject(value)
+        if biography:
+            return biography
+        value = re.sub(r"^(?:vai trò của|tiểu sử của)\s+", "", value, flags=re.I)
+        words = value.split()
+        return value if 2 <= len(words) <= 7 and all(word[0].isupper() and word.isalpha() for word in words) else None
+    for pattern in patterns:
+        match = re.match(pattern, folded)
+        if not match:
+            continue
+        first, second = (name(compact[slice(*match.span(key))]) for key in ("a", "b"))
+        if first and second and _ascii_fold_vietnamese(first) != _ascii_fold_vietnamese(second):
+            return first, second, compact[slice(*match.span("phrase"))]
+    return None
 
 
 # Grammatical patterns and a small actor-abbreviation vocabulary, not a historical database.
@@ -210,6 +252,10 @@ def extract_requested_facets(question: str, kind: str | None) -> tuple[str, ...]
 
 def plan_analytical_queries(analysis: CentralQuestionAnalysis, max_variants: int = 2) -> dict[str, list[str]]:
     """Bounded independent plans. Keys are canonical targets (or the original question)."""
+    if analysis.relation_requested:
+        related = analysis.related_entities[0]
+        return {analysis.subject: [analysis.subject], related: [related],
+                "relationship": [f"{analysis.subject} {related}"]}
     if analysis.comparison_targets:
         facet_words = {"context": "bối cảnh", "objective": "mục tiêu", "actors": "lực lượng",
                        "method": "tính chất", "result": "kết quả", "significance": "ý nghĩa",
