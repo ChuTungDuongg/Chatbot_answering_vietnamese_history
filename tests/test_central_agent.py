@@ -112,7 +112,8 @@ def test_factual_biography_and_cause_questions_are_grounded_before_synthesis():
         assert len(history.calls) == 1
         assert len(runtime.calls) == 1
         assert runtime.calls[0]["stage"] == "synthesis"
-        assert runtime.calls[0]["messages"][-2]["role"] == "tool"
+        assert "Gói bằng chứng:" in runtime.calls[0]["messages"][-1]["content"]
+        assert "[S1]" in runtime.calls[0]["messages"][-1]["content"]
         assert result["source_ids"] == ["hist_1"]
         assert result["answer_provenance"]["research_generation_calls"] == 0
         assert result["answer_provenance"]["evidence_generation_calls"] == 0
@@ -254,12 +255,12 @@ def test_quality_repair_is_single_and_uses_repair_budget():
     result = build_agent(runtime, history, config=config).chat("Vì sao sự kiện này thành công?")
 
     assert [call["stage"] for call in runtime.calls] == ["synthesis", "quality_repair"]
-    assert runtime.calls[1]["max_new_tokens"] == 1024
+    assert runtime.calls[1]["max_new_tokens"] == 192
     assert result["answer_provenance"]["repair_generation_used"] is True
 
 
 def test_generation_stop_telemetry_and_numeric_brackets_are_preserved():
-    history = FakeTool("search_history", [{"chunk_id": "h1", "text": "evidence"}])
+    history = FakeTool("search_history", [{"chunk_id": "h1", "text": "Năm 1945 là một mốc lịch sử."}])
     runtime = FakeCentralRuntime([CentralGeneration(
         content="Năm [1945] là một mốc; xem nguồn [h1].",
         generation_stage="synthesis",
@@ -310,11 +311,11 @@ def test_model_load_timeout_is_separate_and_lazy_initialization_is_single_flight
 
 def test_agent_timeout_reports_generation_stage():
     history = FakeTool("search_history", [{"chunk_id": "h1", "text": "evidence"}])
-    runtime = SleepingRuntime([CentralGeneration(content="late [h1]")], delay=0.05)
+    runtime = SleepingRuntime([CentralGeneration(content="late [h1]")], delay=0.4)
     result = build_agent(
         runtime,
         history,
-        config=CentralAgentConfig(timeout_seconds=0.03, repair_max_generations=0),
+        config=CentralAgentConfig(timeout_seconds=0.2, repair_max_generations=0),
     ).chat("q")
     assert result["answer"] == INSUFFICIENT_EVIDENCE_ANSWER
     assert result["answer_provenance"]["source"] == "central_timeout"

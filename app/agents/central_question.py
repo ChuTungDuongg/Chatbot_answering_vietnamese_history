@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 
@@ -34,18 +35,54 @@ class CentralQuestionAnalysis:
     question_type: str | None
     analytical: bool
     comparison_targets: tuple[str, ...] = ()
+    subject: str | None = None
 
 
 def _ascii_fold_vietnamese(text: str) -> str:
-    replacements = {
-        "à": "a", "á": "a", "ả": "a", "ã": "a", "ạ": "a", "ă": "a", "ằ": "a", "ắ": "a", "ẳ": "a", "ẵ": "a", "ặ": "a", "â": "a", "ầ": "a", "ấ": "a", "ẩ": "a", "ẫ": "a", "ậ": "a",
-        "è": "e", "é": "e", "ẻ": "e", "ẽ": "e", "ẹ": "e", "ê": "e", "ề": "e", "ế": "e", "ể": "e", "ễ": "e", "ệ": "e",
-        "ì": "i", "í": "i", "ỉ": "i", "ĩ": "i", "ị": "i",
-        "ò": "o", "ó": "o", "ỏ": "o", "õ": "o", "ọ": "o", "ô": "o", "ồ": "o", "ố": "o", "ổ": "o", "ỗ": "o", "ộ": "o", "ơ": "o", "ờ": "o", "ớ": "o", "ở": "o", "ỡ": "o", "ợ": "o",
-        "ù": "u", "ú": "u", "ủ": "u", "ũ": "u", "ụ": "u", "ư": "u", "ừ": "u", "ứ": "u", "ử": "u", "ữ": "u", "ự": "u",
-        "ỳ": "y", "ý": "y", "ỷ": "y", "ỹ": "y", "ỵ": "y", "đ": "d",
-    }
-    return "".join(replacements.get(ch, ch) for ch in text.casefold())
+    return "".join(
+        char for char in unicodedata.normalize("NFD", text.lower().replace("đ", "d"))
+        if not unicodedata.combining(char)
+    )
+
+
+_BIOGRAPHY_TOPIC = r"(?:tieu su|cuoc doi|su nghiep)"
+_BIOGRAPHY_PATTERNS = (
+    re.compile(r"(?P<subject>[^,;?!.]+?)\s+(?:la\s+ai|(?:da\s+|tung\s+)?giu\s+chuc\s+vu\s+gi)\b"),
+    re.compile(rf"\b{_BIOGRAPHY_TOPIC}(?:\s+va\s+{_BIOGRAPHY_TOPIC})*\s+(?:cua\s+)?(?P<subject>[^,;?!.]+)"),
+    re.compile(r"\b(?:hoat dong|vai tro|(?:nhung\s+|cac\s+)?chuc vu)\s+cua\s+(?P<subject>[^,;?!.]+)"),
+)
+_SUBJECT_PREFIX = re.compile(
+    r"^(?:(?:hay|xin|cho toi biet|cho toi|cho biet|noi ve|ke ve|tom tat|gioi thieu|ve|ong|ba|nhan vat)\s+)+"
+)
+_SUBJECT_END = re.compile(r"\s+(?:va|trong|doi voi|la|co|nhu the nao|tung|da)\b")
+_NON_PERSON_START = re.compile(
+    r"^(?:ong ta|ba ta|ai|lich su|chien thang|cuoc|cach mang|nha|quoc gia|chinh phu|phong trao|su kien)\b"
+)
+_ACCENTED_NON_PERSON_START = re.compile(r"^(?:trận|họ|đảng|triều đại)\b", re.I)
+
+
+def extract_biography_subject(question: str) -> str | None:
+    # NFC makes Vietnamese folding length-preserving, so captures retain original accents.
+    compact = unicodedata.normalize("NFC", " ".join(question.split()))
+    folded = _ascii_fold_vietnamese(compact)
+    for pattern in _BIOGRAPHY_PATTERNS:
+        for match in pattern.finditer(folded):
+            start, end = match.span("subject")
+            prefix = _SUBJECT_PREFIX.match(folded[start:end])
+            if prefix:
+                start += prefix.end()
+            suffix = _SUBJECT_END.search(folded[start:end])
+            if suffix:
+                end = start + suffix.start()
+            subject = compact[start:end].strip(" :\"'“”")
+            words = subject.split()
+            if (
+                2 <= len(words) <= 7
+                and not _NON_PERSON_START.match(_ascii_fold_vietnamese(subject))
+                and not _ACCENTED_NON_PERSON_START.match(subject)
+            ):
+                return subject
+    return None
 
 
 def _clean_target(value: str) -> str:
@@ -76,9 +113,12 @@ def extract_comparison_targets(question: str) -> tuple[str, ...]:
 def analyze_central_question(question: str) -> CentralQuestionAnalysis:
     normalized = _ascii_fold_vietnamese(" ".join(question.split()))
     targets = extract_comparison_targets(question)
+    subject = extract_biography_subject(question)
     question_type: str | None = None
     if targets or any(cue in normalized for cue in _COMPARISON_CUES):
         question_type = "comparison"
+    elif subject or re.search(rf"\b{_BIOGRAPHY_TOPIC}\b|\bla ai\b|\bgiu chuc vu gi\b", normalized):
+        question_type = "biography"
     elif any(cue in normalized for cue in _CAUSE_CUES):
         question_type = "cause"
     elif any(cue in normalized for cue in _CONSEQUENCE_CUES):
@@ -87,12 +127,13 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
         question_type = "significance"
     elif any(cue in normalized for cue in _EVALUATION_CUES):
         question_type = "evaluation"
-    analytical = question_type in {"comparison", "cause", "consequence", "significance", "evaluation"}
+    analytical = question_type in {"comparison", "cause", "consequence", "significance", "evaluation", "biography"}
     return CentralQuestionAnalysis(
         question=question,
         question_type=question_type,
         analytical=analytical,
         comparison_targets=targets,
+        subject=subject if question_type == "biography" else None,
     )
 
 
@@ -128,12 +169,10 @@ def analytical_answer_issues(
         return []
 
     folded = _ascii_fold_vietnamese(answer)
-    words = answer.split()
     issues: list[str] = []
     if evidence_available and not source_ids:
         issues.append("missing_valid_citations")
-    if len(words) < 120:
-        issues.append("analytical_answer_too_shallow")
+    # Length alone is not a quality failure: evidence may support only a compact answer.
 
     if analysis.question_type == "comparison":
         missing_targets = [

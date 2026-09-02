@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     central_action_max_new_tokens: int = 256
     central_final_max_new_tokens: int = 1536
     central_repair_max_new_tokens: int = 1024
+    central_repair_min_new_tokens: int = 192
+    central_repair_token_margin: int = 96
+    central_biography_max_sources: int = 4
+    central_biography_min_exact_hits: int = 2
+    central_reranker_tail_gap_ratio: float = 0.75
+    central_reranker_score_mode: Literal["raw", "probability"] = "raw"
+    central_reranker_score_floor: float | None = None
+    central_reranker_strong_score: float = 0.5
     central_agent_timeout_seconds: float = 180.0
     central_model_load_timeout_seconds: float = 300.0
     central_tool_timeout_seconds: float = 30.0

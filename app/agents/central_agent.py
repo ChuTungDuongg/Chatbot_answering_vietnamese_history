@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
+from app.agents.central_citations import check_citations, expand_citations
+from app.agents.central_evidence import SynthesisEvidence, build_evidence_packet, render_evidence_packet, select_evidence
+from app.agents.central_grounding import grounding_risks
 from app.agents.central_model_runtime import CentralGeneration, CentralLLMBackend, CentralToolCall
 from app.agents.central_policy import CentralRequestPolicy, HistoryGroundingPolicy
-from app.agents.central_prompt import CENTRAL_SYSTEM_PROMPT
+from app.agents.central_prompt import BIOGRAPHY_CONTRACT, CENTRAL_SYSTEM_PROMPT, REPAIR_CONTRACT, SYNTHESIS_CONTRACT
 from app.agents.central_question import analytical_answer_issues, analyze_central_question
 from app.agents.central_state import CentralAgentState, CentralPhase
 from app.agents.central_tools import EXTERNAL_TOOLS, bounded_tool_arguments, normalize_tool_result, qwen_tool_schemas
@@ -22,8 +25,6 @@ INSUFFICIENT_EVIDENCE_ANSWER = (
     "Mình chưa tìm thấy đủ bằng chứng đáng tin cậy để trả lời câu hỏi này. "
     "Bạn có thể bổ sung tài liệu hoặc làm rõ giai đoạn, nhân vật hay sự kiện cần hỏi."
 )
-# A bare numeric bracket such as [1945] is prose, not a source citation.
-CITATION_RE = re.compile(r"\[((?=[A-Za-z0-9_.:-]*[A-Za-z_])[A-Za-z0-9_.:-]+)\]")
 
 
 class CentralAgent:
@@ -97,20 +98,6 @@ class CentralAgent:
                 for call in calls
             ],
         }
-
-    @staticmethod
-    def _validated_citations(
-        answer: str,
-        source_by_id: dict[str, dict[str, Any]],
-    ) -> tuple[str, list[str], list[str]]:
-        mentioned = CITATION_RE.findall(answer)
-        valid = list(dict.fromkeys(item for item in mentioned if item in source_by_id))
-        invalid = list(dict.fromkeys(item for item in mentioned if item not in source_by_id))
-        if invalid:
-            invalid_set = set(invalid)
-            answer = CITATION_RE.sub(lambda match: "" if match.group(1) in invalid_set else match.group(0), answer)
-            answer = re.sub(r"[ \t]{2,}", " ", answer).strip()
-        return answer, valid, invalid
 
     def _ensure_model_ready(self) -> Any:
         ensure_ready = getattr(self.model_runtime, "ensure_ready", None)
@@ -243,12 +230,18 @@ class CentralAgent:
                 if error:
                     observation = json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":"))
                 else:
+                    rows = result if isinstance(result, list) else ([] if result is None else [result])
+                    rows = [dict(row) if isinstance(row, dict) else {"text": str(row)} for row in rows[:self.config.max_tool_results]]
+                    state.retrieval_candidates.extend(rows)
+                    filtered, filter_debug = select_evidence(rows, state.question_analysis, self.config)
+                    state.retrieval_filter_events.append({"tool": call.name, **filter_debug})
                     observation, sources = normalize_tool_result(
                         call.name,
-                        result,
+                        filtered,
                         max_results=self.config.max_tool_results,
                         char_budget=remaining,
                     )
+                    sources = [source for source in sources if str(source.get("text") or "").strip()]
                     for source in sources:
                         source_id = str(source["chunk_id"])
                         existing = state.source_by_id.get(source_id)
@@ -307,6 +300,72 @@ class CentralAgent:
         if callable(checker):
             return bool(checker(state))
         return state.local_evidence_count > 0
+
+    def _prepare_synthesis(self, state: CentralAgentState) -> list[SynthesisEvidence]:
+        selected, final_filter = select_evidence(
+            list(state.source_by_id.values()), state.question_analysis, self.config, compare_scores=False,
+        )
+        state.source_by_id = {str(row["chunk_id"]): row for row in selected}
+        packet = build_evidence_packet(selected)
+        rendered = render_evidence_packet(packet)
+        reasons: Counter[str] = Counter(final_filter["retrieval_filter_reasons"])
+        for event in state.retrieval_filter_events:
+            reasons.update(event["retrieval_filter_reasons"])
+        filtered_count = len(state.retrieval_candidates) - len(packet)
+        unaccounted = filtered_count - sum(reasons.values())
+        if unaccounted > 0:
+            reasons["duplicate_empty_or_budget_limited"] += unaccounted
+        state.evidence_debug = {
+            "retrieval_candidates_before_filter": len(state.retrieval_candidates),
+            "retrieval_candidates_after_filter": len(packet),
+            "retrieval_filtered_count": filtered_count,
+            "retrieval_filter_reasons": dict(reasons),
+            "biography_entity": state.question_analysis.subject,
+            "biography_exact_title_hits": sum(event["biography_exact_title_hits"] for event in state.retrieval_filter_events),
+            "evidence_input_chars": len(rendered),
+            "evidence_source_count": len(packet),
+            "citation_aliases": {item.alias: item.real_source_id for item in packet},
+        }
+        telemetry = current_request_telemetry()
+        if telemetry is not None:
+            telemetry.central_quality.update(state.evidence_debug)
+        instruction = SYNTHESIS_CONTRACT
+        if state.question_analysis.question_type == "biography":
+            instruction += "\n" + BIOGRAPHY_CONTRACT
+        if len(state.question_analysis.comparison_targets) >= 2:
+            instruction += "\nBảo đảm trả lời riêng cả hai đối tượng và các phương diện được hỏi."
+        # Discard action observations, including rejected rows and long source IDs.
+        state.messages = self._messages(state.question, state.history)
+        state.messages.append({"role": "user", "content": instruction + "\n\nGói bằng chứng:\n" + rendered})
+        return packet
+
+    def _check_answer(self, state: CentralAgentState, packet: list[SynthesisEvidence], *, stage: str):
+        citations = check_citations(state.final_answer, packet)
+        state.final_answer = citations.answer
+        state.invalid_source_ids = citations.invalid
+        risks = grounding_risks(citations.answer, state.question, packet)
+        state.grounding_risk_checks.append({"stage": stage, **risks})
+        issues: list[str] = []
+        if risks["unsupported_named_claims"] or risks["unsupported_years"]:
+            issues.append("unsupported_evidence_claim")
+        if not citations.source_ids:
+            issues.append("missing_valid_citations")
+        if citations.invalid:
+            issues.append("invalid_citation_aliases")
+        if citations.uncited_paragraphs:
+            issues.append("uncited_factual_paragraphs")
+        issues.extend(analytical_answer_issues(
+            analysis=state.question_analysis, answer=citations.answer,
+            source_ids=citations.source_ids, evidence_available=bool(packet),
+        ))
+        return list(dict.fromkeys(issues)), citations
+
+    def _repair_budget(self, generation: CentralGeneration, answer: str) -> int:
+        # Runtime token count is authoritative; fakes/older backends may omit it.
+        estimated_tokens = generation.output_tokens or max(1, (len(answer) + 2) // 3)
+        return min(self.config.repair_max_new_tokens, max(
+            self.config.repair_min_new_tokens, estimated_tokens + self.config.repair_token_margin,
+        ))
 
     async def _run(
         self,
@@ -381,19 +440,11 @@ class CentralAgent:
                     break
                 state.transition(CentralPhase.ACTION)
 
-        if state.source_by_id:
+        packet = self._prepare_synthesis(state)
+        source_ids: list[str] = []
+        if packet:
             if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
                 state.transition(CentralPhase.SYNTHESIS)
-            target_note = ""
-            if len(analysis.comparison_targets) >= 2:
-                target_note = " Bảo đảm trả lời riêng cả hai đối tượng và các phương diện được hỏi."
-            state.messages.append({
-                "role": "user",
-                "content": (
-                    "Hãy tổng hợp câu trả lời cuối cùng chỉ từ các quan sát công cụ ở trên; "
-                    "trích dẫn đúng source_id hiện có và không tạo ID mới." + target_note
-                ),
-            })
             generation = await self._generate(
                 state,
                 stage="synthesis",
@@ -404,26 +455,19 @@ class CentralAgent:
             if not generation.tool_calls:
                 state.final_answer = generation.content.strip()
 
-            checked_answer, checked_ids, _ = self._validated_citations(state.final_answer, state.source_by_id)
-            quality_issues = analytical_answer_issues(
-                analysis=analysis,
-                answer=checked_answer,
-                source_ids=checked_ids,
-                evidence_available=True,
-            )
-            if state.final_answer and not checked_ids:
-                quality_issues = list(dict.fromkeys(["missing_valid_citations", *quality_issues]))
+            quality_issues, citations = self._check_answer(state, packet, stage="synthesis")
             if quality_issues and self.config.repair_max_generations:
                 state.repair_attempted = True
                 state.repair_reason = quality_issues[0]
+                state.repair_budget = self._repair_budget(generation, state.final_answer)
                 state.transition(CentralPhase.QUALITY_REPAIR)
                 state.messages.extend([
                     {"role": "assistant", "content": state.final_answer},
                     {
                         "role": "user",
                         "content": (
-                            "Sửa câu trả lời đúng một lần vì: " + ", ".join(quality_issues) + ". "
-                            "Chỉ dùng bằng chứng đã có, hoàn thiện các ý còn thiếu và giữ đúng source_id hợp lệ."
+                            REPAIR_CONTRACT + "\nLỗi cần sửa: " + ", ".join(quality_issues) + "."
+                            "\nRủi ro: " + json.dumps(state.grounding_risk_checks[-1], ensure_ascii=False)
                         ),
                     },
                 ])
@@ -431,19 +475,25 @@ class CentralAgent:
                     state,
                     stage="quality_repair",
                     tools=[],
-                    max_new_tokens=self.config.repair_max_new_tokens,
+                    max_new_tokens=state.repair_budget,
                     progress=progress,
                 )
+                state.repair_used = True
                 if repaired.content.strip() and not repaired.tool_calls:
                     state.final_answer = repaired.content.strip()
-                    state.repair_used = True
-                checked_answer, checked_ids, _ = self._validated_citations(state.final_answer, state.source_by_id)
-                quality_issues = analytical_answer_issues(
-                    analysis=analysis,
-                    answer=checked_answer,
-                    source_ids=checked_ids,
-                    evidence_available=True,
-                )
+                quality_issues, citations = self._check_answer(state, packet, stage="quality_repair")
+            elif not quality_issues:
+                state.repair_avoided_reason = "citation_normalized" if citations.normalized else "valid_first_synthesis"
+            else:
+                state.repair_avoided_reason = "repair_disabled"
+            if any(issue in quality_issues for issue in (
+                "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases", "uncited_factual_paragraphs",
+            )):
+                # A second failure cannot trigger a third call or pass as a grounded answer.
+                state.final_answer = ""
+            else:
+                state.final_answer = expand_citations(state.final_answer, packet)
+                source_ids = citations.source_ids
             state.transition(CentralPhase.FINAL)
         else:
             quality_issues = []
@@ -453,13 +503,24 @@ class CentralAgent:
         status = "ok" if state.final_answer else "insufficient_evidence"
         if not state.final_answer:
             state.final_answer = INSUFFICIENT_EVIDENCE_ANSWER
-        state.final_answer, source_ids, state.invalid_source_ids = self._validated_citations(
-            state.final_answer, state.source_by_id,
-        )
+        final_risks = state.grounding_risk_checks[-1] if state.grounding_risk_checks else {}
+        quality_debug = {
+            **state.evidence_debug,
+            "question_type": analysis.question_type,
+            "subject": analysis.subject,
+            "repair_reason": state.repair_reason,
+            "repair_used": state.repair_used,
+            "repair_avoided_reason": state.repair_avoided_reason,
+            "repair_budget": state.repair_budget,
+            "unsupported_named_claims": final_risks.get("unsupported_named_claims", []),
+            "unsupported_years": final_risks.get("unsupported_years", []),
+            "answer_quality_issues": quality_issues,
+        }
         elapsed_ms = (time.perf_counter() - started) * 1000
         runtime = self._runtime_snapshot()
         telemetry = current_request_telemetry()
         if telemetry is not None:
+            telemetry.central_quality.update(quality_debug)
             telemetry.tool_calls += state.tool_calls
             for name, count in state.tool_calls_by_name.items():
                 telemetry.tool_calls_by_type[name] = telemetry.tool_calls_by_type.get(name, 0) + count
@@ -495,10 +556,12 @@ class CentralAgent:
             "grounding_required": state.grounding_required,
             "grounding_reason": state.grounding_reason,
             "local_evidence_count": state.local_evidence_count,
+            **quality_debug,
             "question_type": analysis.question_type,
             "comparison_targets": list(analysis.comparison_targets),
         }
         performance = {
+            **quality_debug,
             "central_model_calls": state.model_calls,
             "central_tool_calls": state.tool_calls,
             "central_tool_calls_by_type": dict(state.tool_calls_by_name),
@@ -523,20 +586,27 @@ class CentralAgent:
             "source_chunks": list(state.source_by_id.values()),
             "model_source_ids": source_ids,
             "invalid_source_ids": state.invalid_source_ids,
+            "unsupported_years": quality_debug["unsupported_years"],
+            "unsupported_named_claims": quality_debug["unsupported_named_claims"],
             "retrieval": {
                 "question": question,
                 "final_context": list(state.source_by_id.values()),
+                "candidates20": state.retrieval_candidates,
                 "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
             },
             "analysis": {
                 "question": question,
                 "analytical": analysis.analytical,
                 "question_type": analysis.question_type,
+                "subject": analysis.subject,
                 "comparison_targets": list(analysis.comparison_targets),
                 "answer_quality_issues": quality_issues,
             },
             "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
             "central_debug": {
+                **quality_debug,
+                "retrieval_filter_events": state.retrieval_filter_events,
+                "grounding_risk_checks": state.grounding_risk_checks,
                 "tools": state.tool_trace,
                 "allowed_tools": sorted(allowed_tools),
                 "tool_schema_count": len(schemas),
@@ -544,6 +614,7 @@ class CentralAgent:
                 "tool_parse_failures": state.tool_parse_failures,
                 "malformed_tool_calls": state.malformed_tool_calls[:5],
                 "question_type": analysis.question_type,
+                "subject": analysis.subject,
                 "comparison_targets": list(analysis.comparison_targets),
                 "phase": state.phase.value,
                 "phase_trace": state.phase_trace,
@@ -594,6 +665,7 @@ class CentralAgent:
                 "question": question,
                 "analytical": analysis.analytical,
                 "question_type": analysis.question_type,
+                "subject": analysis.subject,
                 "comparison_targets": list(analysis.comparison_targets),
             },
             "tool_trace": [],

@@ -356,6 +356,7 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
                 or analysis.get("facet")
             ),
             "facet": analysis.get("facet"),
+            "subject": analysis.get("subject"),
             "facets": analysis.get("facets") or [],
             "comparison_targets": evidence.get("comparison_targets") or analysis.get("comparison_targets") or [],
             "domain_result": retrieval.get("domain_gate_result"),

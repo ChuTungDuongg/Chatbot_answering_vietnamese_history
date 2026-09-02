@@ -35,6 +35,14 @@ class CentralAgentConfig:
     action_max_new_tokens: int = 256
     final_max_new_tokens: int = 1536
     repair_max_new_tokens: int = 1024
+    repair_min_new_tokens: int = 192
+    repair_token_margin: int = 96
+    biography_max_sources: int = 4
+    biography_min_exact_hits: int = 2
+    reranker_tail_gap_ratio: float = 0.75
+    reranker_score_mode: str = "raw"
+    reranker_score_floor: float | None = None
+    reranker_strong_score: float = 0.5
     max_tool_results: int = 6
     observation_char_budget: int = 12_000
     timeout_seconds: float = 180.0
@@ -63,6 +71,18 @@ class CentralAgentConfig:
             raise ValueError("Central action_max_new_tokens must be at least 32.")
         if self.final_max_new_tokens < 128 or self.repair_max_new_tokens < 128:
             raise ValueError("Central final/repair token budgets must be at least 128.")
+        if self.repair_min_new_tokens < 1 or self.repair_token_margin < 0:
+            raise ValueError("Central repair minimum must be positive and margin nonnegative.")
+        if not 1 <= self.biography_max_sources <= 10 or not 1 <= self.biography_min_exact_hits <= 10:
+            raise ValueError("Central biography evidence bounds must be between 1 and 10.")
+        if not 0.5 < self.reranker_tail_gap_ratio <= 1:
+            raise ValueError("Central reranker tail gap ratio must be in (0.5, 1].")
+        if self.reranker_score_mode not in {"raw", "probability"}:
+            raise ValueError("Central reranker score mode must be raw or probability.")
+        if self.reranker_score_floor is not None and not 0 <= self.reranker_score_floor <= 1:
+            raise ValueError("Central reranker probability floor must be between 0 and 1.")
+        if not 0 <= self.reranker_strong_score <= 1:
+            raise ValueError("Central reranker strong probability score must be between 0 and 1.")
         if not 1 <= self.max_tool_results <= 10:
             raise ValueError("Central max_tool_results must be between 1 and 10.")
         if self.observation_char_budget < 1_000:

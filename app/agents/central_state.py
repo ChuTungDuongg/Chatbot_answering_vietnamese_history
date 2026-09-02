@@ -63,6 +63,12 @@ class CentralAgentState:
     repair_attempted: bool = False
     repair_used: bool = False
     repair_reason: str | None = None
+    repair_avoided_reason: str | None = None
+    repair_budget: int | None = None
+    retrieval_candidates: list[dict[str, Any]] = field(default_factory=list)
+    retrieval_filter_events: list[dict[str, Any]] = field(default_factory=list)
+    evidence_debug: dict[str, Any] = field(default_factory=dict)
+    grounding_risk_checks: list[dict[str, Any]] = field(default_factory=list)
 
     def transition(self, next_phase: CentralPhase) -> None:
         if next_phase not in _ALLOWED_TRANSITIONS[self.phase]:
@@ -73,4 +79,3 @@ class CentralAgentState:
     @property
     def remaining_seconds(self) -> float:
         return max(0.0, self.deadline_monotonic - time.monotonic())
-
