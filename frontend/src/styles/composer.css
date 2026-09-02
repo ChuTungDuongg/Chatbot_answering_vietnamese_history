@@ -29,7 +29,7 @@
 .mode-option-copy small { color: var(--text-muted); font-size: 10px; line-height: 1.5; }
 .composer-mode-menu button > svg { width: 15px; height: 15px; color: var(--accent); }
 .composer-drop-label { position: absolute; inset: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); border: 1px dashed var(--accent); border-radius: var(--radius-lg); pointer-events: none; font-size: 13px; }
-.attachment-tray { display: flex; gap: 8px; max-width: 100%; overflow: auto; padding: 0 0 10px; }
+.attachment-tray { display: flex; gap: 8px; max-width: 100%; max-height: 86px; overflow-x: auto; overflow-y: hidden; padding: 0 0 10px; }
 .attachment-item { display: flex; align-items: center; gap: 9px; min-width: 210px; max-width: 270px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); }
 .attachment-icon { color: var(--accent); }
 .attachment-icon svg { width: 19px; height: 19px; }
@@ -50,4 +50,18 @@
   .composer-submit { height: 40px; width: 40px; }
   .composer-mode-trigger { height: 36px; }
   .composer-disclaimer { font-size: 9px; margin-top: 9px; padding-inline: 10px; }
+}
+.attachment-preview {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.user-attachment {
+  display: block;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
 }

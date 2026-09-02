@@ -8,6 +8,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     Header,
     HTTPException,
     Request,
@@ -305,6 +306,7 @@ async def upload_attachment(
     store: StoreDependency,
     attachment_service: AttachmentServiceDependency,
     file: Annotated[UploadFile, File(...)],
+    upload_origin: Annotated[str, Form()] = "file",
 ) -> AttachmentUploadResponse:
     await require_conversation(
         store,
@@ -341,6 +343,7 @@ async def upload_attachment(
             filename,
             mime_type,
             data,
+            upload_origin,
         )
 
     except AttachmentProcessingError as exc:
@@ -362,7 +365,7 @@ async def upload_attachment(
 
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail="Không thể xử lý tài liệu lúc này. Vui lòng thử lại.",
         ) from exc
 
     except Exception as exc:

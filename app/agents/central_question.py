@@ -52,6 +52,7 @@ class CentralQuestionAnalysis:
     freshness_required: bool = False
     freshness_reason: str | None = None
     premise_requires_validation: bool = False
+    raw_event_clause: str | None = None
 
     def telemetry(self) -> dict:
         return {
@@ -70,6 +71,10 @@ class CentralQuestionAnalysis:
             "requested_administrative_level": self.administrative_level,
             "time_scope": list(self.time_scope), "freshness_required": self.freshness_required,
             "freshness_reason": self.freshness_reason,
+            "canonical_event": self.event, "raw_event_clause": self.raw_event_clause,
+            "requested_facets": list(self.facets),
+            "event_resolution_events": ([{"raw": self.raw_event_clause, "canonical": self.event,
+                                          "reason": "analytical_clause_boundary"}] if self.raw_event_clause and self.raw_event_clause != self.event else []),
         }
 
 
@@ -185,6 +190,7 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
         facets=("identity", "relationship") if relation else extract_requested_facets(question, question_type),
         related_entities=(relation[1],) if relation else (),
         relation_requested=bool(relation), relation_phrase=relation[2] if relation else None,
+        raw_event_clause=raw_event_clause(question) if event else None,
         **{key: value for key, value in admin.items() if key not in {"event", "subject"}},
     ))
 
@@ -224,14 +230,22 @@ _OUTCOMES = ((r"\b(?:suy yeu|suy thoai)\b", "suy yếu"),
              (r"\b(?:thanh cong|thang loi)\b", "thành công"),
              (r"\b(?:sup do|suy vong)\b", "sụp đổ"))
 _EVENT_START = r"(?:chien tranh|cach mang|chien dich|chien thang|tran|hiep dinh|khoi nghia|phong trao)"
-_TARGET_END = r"\s+(?:nam\s+\d{3,4}|thanh cong|that bai|thang loi|suy yeu|sup do|co\s|da\s|dan den|de lai|ve\s|la gi|nhu the nao)"
+_TARGET_END = r"\s+(?:thanh cong|that bai|thang loi|suy yeu|sup do|ket thuc|co\s|da\s|dan den|de lai|ve\s|la gi|nhu the nao|vi sao|tai sao)|(?:\s+va|[,;])\s+(?:dieu do|no|he qua|hau qua|anh huong|tac dong|y nghia|nguyen nhan|ket qua|boi canh|dien bien|co y nghia)\b"
 _FACET_CUES = {
+    "cause": ("vi sao", "tai sao", "nguyen nhan"),
     "context": ("boi canh", "dieu kien"), "objective": ("muc tieu", "muc dich"),
     "actors": ("luc luong", "chu the"), "method": ("tinh chat", "phuong phap", "dien bien"),
-    "result": ("ket qua", "he qua"), "significance": ("y nghia", "vai tro"),
+    "result": ("ket qua",), "consequence": ("he qua", "hau qua", "anh huong lau dai", "tac dong lau dai"),
+    "significance": ("y nghia", "vai tro"),
     "military": ("quan su",), "political": ("chinh tri",), "economic": ("kinh te",),
     "domestic": ("xa hoi", "trong nuoc"), "international": ("ngoai giao", "quoc te"),
 }
+
+
+def raw_event_clause(question):
+    compact = unicodedata.normalize("NFC", " ".join(question.split())).strip(" .?!")
+    match = re.search(rf"\b{_EVENT_START}\b", _ascii_fold_vietnamese(compact))
+    return compact[match.start():] if match else None
 
 
 def extract_analytical_target(question: str) -> tuple[str | None, str | None, tuple[str, ...], str | None]:
@@ -289,6 +303,12 @@ def plan_analytical_queries(analysis: CentralQuestionAnalysis, max_variants: int
                          f"{target} lực lượng diễn biến kết quả"][:max_variants]
                 for target in analysis.comparison_targets}
     target = analysis.event or analysis.subject
+    from app.agents.central_facets import multi_facet, analytical_facets, FACET_QUERY
+    if multi_facet(analysis) and target:
+        return {f"facet:{facet}": list(dict.fromkeys([
+            f"{target} {FACET_QUERY[facet]}" + (f" {analysis.outcome}" if facet == "cause" and analysis.outcome else "") + (" " + " ".join(analysis.actors) if analysis.actors else ""),
+            f"{target} {FACET_QUERY[facet]} phân tích",
+        ]))[:max_variants] for facet in analytical_facets(analysis)}
     if analysis.administrative_level:
         suffix = "nguyên nhân mục tiêu" if analysis.question_type == "cause" else "nội dung kết quả"
         return {target: [f"{target} {suffix}", f"{target} lý do chủ trương"][:max_variants]}

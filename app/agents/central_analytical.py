@@ -10,6 +10,7 @@ from app.agents.central_viewpoints import annotate_viewpoints
 from app.agents.central_relationships import annotate_relationship, relationship_coverage
 from app.agents.central_targets import canonical_for, entity_type_consistent
 from app.agents.central_administration import annotate_administration, administrative_coverage
+from app.agents.central_facets import evidence_facets, facet_coverage, multi_facet, neutral_preference, viewpoint_cost
 
 
 def normalize_entity(value: str) -> str:
@@ -78,10 +79,16 @@ def entity_consistency(row: dict[str, Any], target: str, *, person: bool = False
     key = normalize_entity(target) if person else target_key(target)
     title_key = base if person else target_key(re.sub(r"\([^)]*\)", "", raw_title))
     canonical = title_key == key
+    undated_key = re.sub(r"\s+(?:nam\s+)?\d{3,4}$", "", key)
+    if not person and undated_key != key and title_key == undated_key:
+        years = set(re.findall(r"\b\d{3,4}\b", text))
+        canonical = not years or key.split()[-1] in years
     if person:
         associated = canonical or any(f" {key} " in f" {normalize_entity(value)} " for value in (text, raw_title))
     else:
         associated = canonical or target_mentions(text, target) or target_mentions(raw_title, target)
+        if undated_key != key and not re.search(r"\b\d{3,4}\b", raw_title + " " + text):
+            associated = associated or target_mentions(text, undated_key)
     if not person:
         metadata = row.get("metadata") or {}
         # An event mention in a song/station/commemorative page does not establish
@@ -125,7 +132,7 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
         associated = associated and canonical_match and type_match
     cause_score, cause_downranked = 0, False
     dimension_text = folded
-    if analysis.question_type == "cause":
+    if analysis.question_type == "cause" or multi_facet(analysis):
         sentences = [s for s in re.split(r"[.!?;\n]", text) if s.strip()]
         relevance = [(s, cause_sentence_relevance(s)) for s in sentences]
         # Do not turn a poem/aftermath's vocabulary into causal coverage. Other
@@ -153,7 +160,9 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
         "cause_facet_score": cause_score, "cause_focus_downranked": cause_downranked,
         "chronology_downranked": chronology, "viewpoint_sensitive": bool(viewpoints),
         "viewpoint_annotations": viewpoints,
+        "viewpoint_cost": viewpoint_cost(text),
     })
+    row["evidence_facets"] = evidence_facets(row)
     if analysis.administrative_level:
         return annotate_administration(row, analysis)
     return annotate_relationship(row, analysis) if analysis.relation_requested else row
@@ -169,12 +178,20 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
     selected: list[dict[str, Any]] = []
     covered: set[str] = set()
     requested = set(analysis.facets)
+    facet_covered = set()
     while pending and len(selected) < limit:
         def priority(row):
             dims = set(row.get("evidence_dimensions") or [])
+            neutral_alternative = neutral_preference(analysis) and row.get("viewpoint_cost", 0) > .25 and any(
+                other.get("viewpoint_cost", 0) <= .1 and other.get("target_consistent") and len(str(other.get("text") or "")) >= 100
+                and len(dims & set(other.get("evidence_dimensions", []))) >= 2
+                and (set(row.get("evidence_facets", [])) & requested) <= set(other.get("evidence_facets", []))
+                for other in pending if other is not row)
             return (
                 bool(row.get("target_consistent")) and row.get("entity_type_consistent", True),
                 row.get("administrative_time_consistent", True) and row.get("freshness_sufficient", True),
+                len((set(row.get("evidence_facets", [])) & requested) - facet_covered) if multi_facet(analysis) else 0,
+                not neutral_alternative,
                 not row.get("chronology_downranked", False),
                 not row.get("cause_focus_downranked", False) if analysis.question_type == "cause" else True,
                 bool(row.get("overview_anchor")) and not any(s.get("overview_anchor") for s in selected),
@@ -188,6 +205,7 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
         pending.remove(best)
         selected.append(best)
         covered.update(best.get("evidence_dimensions") or [])
+        facet_covered.update(best.get("evidence_facets") or [])
     return selected
 
 
@@ -215,6 +233,7 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
             "adequate": len(strong) >= config.comparison_min_strong_sources and len(group_dims) >= 2,
         }
     administrative = {}
+    facet_debug = facet_coverage(selected, [annotate_evidence(row, analysis) for row in candidates], analysis, config.strong_evidence_min_chars)
     if analysis.administrative_level:
         sufficient, administrative = administrative_coverage(selected, candidates, analysis, config.strong_evidence_min_chars)
         reason = administrative["evidence_sufficiency_reason"]
@@ -224,6 +243,9 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
     elif analysis.question_type == "comparison":
         sufficient = len(balance) >= 2 and all(item["adequate"] for item in balance.values())
         reason = "both_comparison_targets_covered" if sufficient else "comparison_target_coverage_insufficient"
+    elif multi_facet(analysis):
+        sufficient = bool(facet_debug["covered_facets"])
+        reason = "partial_facet_coverage" if facet_debug["partial_answer"] else "all_requested_facets_covered" if sufficient else "no_requested_facet_evidence"
     elif analysis.question_type == "cause" and (analysis.event or analysis.subject):
         strong = [row for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
         causal = any(row.get("causal_relevance") for row in strong)
@@ -245,4 +267,8 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
         "viewpoint_sensitive_evidence_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
         **(relationship if analysis.relation_requested else {}),
         **administrative,
+        **(facet_debug if multi_facet(analysis) else {}),
+        "neutral_evidence_selected_count": sum(not row.get("viewpoint_sensitive") for row in selected),
+        "viewpoint_evidence_selected_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
+        "neutral_evidence_preference": neutral_preference(analysis),
     }

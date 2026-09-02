@@ -501,23 +501,33 @@ def _execute_chat(
         )
 
         history = store.get_recent_history(owner_id, conversation_id, limit=history_limit)
+        requested_ids = [str(value) for value in getattr(payload, "attachment_ids", [])]
+        ready = {str(item["id"]): item for item in store.list_attachments(owner_id, conversation_id)
+                 if item["status"] == "ready" and item.get("chunk_count", 0) > 0} if requested_ids else {}
+        if any(value not in ready for value in requested_ids):
+            raise ValueError("Tài liệu không tồn tại, chưa đọc xong hoặc đã bị xóa.")
+        attachment_sources = [{"chunk_id": f"attachment:{value}", "attachment_id": value,
+                               "title": ready[value]["filename"], "source_kind": "attachment"} for value in requested_ids]
+        effective_question = payload.question.strip() or "Phân tích nội dung ảnh đính kèm."
 
         user_message = store.add_message(
             owner_id=owner_id,
             conversation_id=conversation_id,
             role="user",
             content=payload.question,
+            sources=attachment_sources,
             status="done",
         )
 
         result = generator.chat(
-            question=payload.question,
+            question=effective_question,
             final_k=payload.final_k,
             history=history,
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
             **({"request_progress": request_progress} if selected_mode == ChatMode.CENTRAL and getattr(generator, "supports_request_progress", False) else {}),
+            **({"attachment_ids": tuple(requested_ids)} if requested_ids and getattr(generator, "supports_attachment_scope", False) else {}),
         )
         result["inference_mode"] = selected_mode
         result.setdefault("answer_provenance", {})["mode"] = selected_mode

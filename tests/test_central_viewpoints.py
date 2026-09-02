@@ -81,7 +81,7 @@ def test_us_vnch_adaptive_candidates_four_sensitive_sources_one_valid_synthesis(
     ("VNCH không có cơ sở trong nhân dân. [S3]", True),
     ("Theo nhận định của Noam Chomsky, VNCH không có cơ sở trong nhân dân. [S3]", False),
     ("Theo Noam Chomsky, VNCH không có cơ sở trong nhân dân. [S3]", False),
-    ("Một số nhà phê bình đương thời cho rằng VNCH không có cơ sở trong nhân dân. [S3]", False),
+    ("Một số nhà phê bình đương thời cho rằng VNCH không có cơ sở trong nhân dân. [S3]", True),
     ('“Chúng tôi phải tìm một cách để rút khỏi cuộc chiến này”. [S2]', True),
     ('Nixon nói: “Chúng tôi phải tìm một cách để rút khỏi cuộc chiến này”. [S2]', False),
     ('Chính sách "Việt Nam hóa chiến tranh" làm giảm mức độ tham chiến trực tiếp. [S2]', False),

@@ -30,13 +30,14 @@ function AttachmentTray({ attachments, pendingUploads, onDelete, disabled }) {
         return (
           <div className={`attachment-item attachment-${status}`} key={item.id} title={item.error || filename}>
             <span className="attachment-icon">
-              <AttachmentIcon filename={filename} mimeType={item.mime_type ?? item.type ?? ""} />
+              {item.preview_url ? <img className="attachment-preview" src={item.preview_url} alt={`Ảnh đính kèm: ${filename}`} />
+                : <AttachmentIcon filename={filename} mimeType={item.mime_type ?? item.type ?? ""} />}
             </span>
 
             <span className="attachment-copy">
               <strong>{filename}</strong>
               <small>
-                {isProcessing && "Đang đọc tài liệu..."}
+                {isProcessing && (status === "queued" ? "Đang chờ tải..." : "Đang tải và xử lý...")}
                 {isFailed && (item.error || "Xử lý thất bại")}
                 {!isProcessing && !isFailed && (
                   <>
@@ -53,7 +54,7 @@ function AttachmentTray({ attachments, pendingUploads, onDelete, disabled }) {
               {!isProcessing && !isFailed && <CheckCircle2 />}
             </span>
 
-            {!item.pending && (
+            {(
               <button
                 type="button"
                 className="attachment-remove"

@@ -13,6 +13,8 @@ from app.agents.central_viewpoints import annotate_viewpoints
 from app.agents.central_compaction import excerpt_evidence
 from app.agents.central_relationships import select_relationship_evidence, mentions
 from app.agents.central_entity_aliases import evidence_aliases
+from app.agents.central_facets import multi_facet
+from app.chat.attachments import is_attachment_question
 from app.agents.config import CentralAgentConfig
 from app.agents.central_analytical import (
     annotate_evidence, coverage_select, evidence_targets, strong_evidence, normalize_entity,
@@ -59,7 +61,7 @@ def select_evidence(
             "retrieval_filtered_count": dropped, "retrieval_filter_reasons": {"unrequested_biography_entity": dropped} if dropped else {},
             "entity_disambiguation_filtered_count": dropped, "entity_disambiguation_filter_reasons": {},
             "biography_entity": analysis.subject, "biography_exact_title_hits": sum(bool(row["canonical_entities"]) for row in kept)}
-    if analysis.question_type in {"cause", "comparison"} and (target or analysis.event or analysis.subject):
+    if (analysis.question_type in {"cause", "comparison"} or multi_facet(analysis)) and (target or analysis.event or analysis.subject):
         annotated = [annotate_evidence(row, analysis, target) for row in rows]
         reasons = Counter(row["entity_filter_reason"] or "analytical_target_mismatch"
                           for row in annotated if not row["target_consistent"])
@@ -174,7 +176,7 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
     else:
         filtered, _ = select_evidence(rows, analysis, config, compare_scores=False)
         selected = [annotate_evidence(row, analysis) for row in filtered]
-        if analysis.question_type == "cause":
+        if analysis.question_type == "cause" or multi_facet(analysis):
             # Rank the excerpt that synthesis can actually receive, not the
             # dimensions aggregated over a larger source that will be discarded.
             selected = [annotate_evidence({**row,
@@ -182,12 +184,14 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
                 "evidence_chars_before_compaction": len(str(row.get("text") or "")),
             }, analysis) for row in selected]
             selected = [row for row in selected if row["text"]]
-        if analysis.question_type in {"cause", "significance", "consequence", "evaluation"}:
+        if analysis.question_type in {"cause", "significance", "consequence", "evaluation"} or multi_facet(analysis):
             strong = [row for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
-            if len(strong) >= 3:
+            if len(strong) >= 3 and not multi_facet(analysis):
                 selected = strong
             selected = coverage_select(selected, analysis, config.analytical_max_sources)
         else:
+            if is_attachment_question(analysis.question):
+                selected.sort(key=lambda row: row.get("source_kind") != "attachment")
             selected = selected[:config.max_tool_results]
     # Source admission is independent of action-observation consumption. Share the
     # synthesis character budget fairly, then re-annotate exactly what the model sees.
@@ -221,6 +225,8 @@ class SynthesisEvidence:
     viewpoint_sensitive: bool = False
     viewpoint_annotations: tuple[dict[str, Any], ...] = ()
     entity_aliases: tuple[dict[str, Any], ...] = ()
+    evidence_facets: tuple[str, ...] = ()
+    attachment_metadata: dict[str, Any] | None = None
 
     def __post_init__(self):
         if self.comparison_target and not self.comparison_targets:
@@ -251,6 +257,8 @@ def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEviden
             comparison_target=row.get("comparison_target"), comparison_targets=tuple(evidence_targets(row)),
             viewpoint_sensitive=bool(row.get("viewpoint_sensitive")),
             entity_aliases=tuple(evidence_aliases(text, str(row.get("title") or ""), row.get("metadata"))),
+            evidence_facets=tuple(row.get("evidence_facets") or ()),
+            attachment_metadata=({key: row.get(key) for key in ("attachment_id", "filename", "mime_type", "ocr_success", "ocr_error", "ocr_provider", "ocr_confidence")} if row.get("source_kind") == "attachment" else None),
         ))
     return packet
 
@@ -263,6 +271,10 @@ def render_evidence_packet(packet: list[SynthesisEvidence]) -> str:
         note = "\nviewpoint_annotations: " + json.dumps(spans[:6], ensure_ascii=False) if spans else ""
         if item.entity_aliases:
             note += "\nentity_aliases: " + json.dumps(item.entity_aliases, ensure_ascii=False)
+        if item.evidence_facets:
+            note += "\nevidence_facets: " + ", ".join(item.evidence_facets)
+        if item.attachment_metadata:
+            note += "\nATTACHMENT — extracted text (may contain OCR errors): " + json.dumps(item.attachment_metadata, ensure_ascii=False)
         return f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}{note}\ntext: {item.text}"
     targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
     if targets:

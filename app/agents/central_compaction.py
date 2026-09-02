@@ -5,6 +5,7 @@ import re
 
 from app.agents.central_analytical import DIMENSION_CUES, cause_sentence_relevance, normalize_entity
 from app.agents.central_question import analyze_central_question
+from app.agents.central_facets import neutral_preference, viewpoint_cost, evidence_facets, multi_facet
 
 
 def sentence_units(text: str) -> list[str]:
@@ -41,7 +42,9 @@ def excerpt_evidence(text: str, analysis, limit: int) -> str:
             from app.agents.central_administration import annotate_administration
             relevance = annotate_administration({"text": value}, analysis)
             administrative = 30 * relevance["administrative_level_consistent"] + 15 * bool(relevance["policy_cause_spans"])
-        return len(words & query) + 3 * len(dims & requested) + len(dims) + cause + administrative
+        neutral = -24 * viewpoint_cost(value) if neutral_preference(analysis) else 0
+        facet_gain = 6 * len(set(evidence_facets({"text": value, "cause_facet_score": cause_sentence_relevance(value)})) & requested) if multi_facet(analysis) else 0
+        return len(words & query) + 3 * len(dims & requested) + len(dims) + cause + administrative + neutral + facet_gain
     ranked = sorted(range(len(units)), key=lambda i: (-score(units[i]), i))
     chosen: set[int] = set()
     window_count = 0
@@ -53,6 +56,8 @@ def excerpt_evidence(text: str, analysis, limit: int) -> str:
         window = {center}
         for neighbor in (center - 1, center + 1):
             if 0 <= neighbor < len(units):
+                if neutral_preference(analysis) and not viewpoint_cost(units[center]) and viewpoint_cost(units[neighbor]) > .25:
+                    continue
                 proposal = chosen | window | {neighbor}
                 if len("\n\n[…]\n\n".join(units[i] for i in sorted(proposal))) <= limit:
                     window.add(neighbor)

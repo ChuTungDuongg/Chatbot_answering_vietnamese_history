@@ -116,12 +116,13 @@ export function deleteConversation(conversationId, { signal } = {}) {
   return requestJson(`/api/v1/conversations/${conversationId}`, { method: "DELETE", signal });
 }
 
-export function uploadAttachment(conversationId, file, { signal } = {}) {
+export function uploadAttachment(conversationId, file, { signal, uploadOrigin = "file" } = {}) {
   if (!conversationId) throw new Error("conversationId is required.");
   if (!(file instanceof File)) throw new Error("File tải lên không hợp lệ.");
 
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("upload_origin", uploadOrigin);
 
   return requestJson(`/api/v1/conversations/${conversationId}/attachments`, {
     method: "POST",
@@ -144,6 +145,7 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
 export async function streamChat({
   conversationId,
   question,
+  attachmentIds = [],
   mode = ChatMode.HYBRID,
   finalK = 6,
   debug = false,
@@ -152,9 +154,9 @@ export async function streamChat({
 }) {
   ensureApiConfigured();
 
-  const normalizedQuestion = question?.trim();
+  const normalizedQuestion = question?.trim() ?? "";
   if (!conversationId) throw new Error("conversationId is required.");
-  if (!normalizedQuestion) throw new Error("Câu hỏi không được để trống.");
+  if (!normalizedQuestion && !attachmentIds.length) throw new Error("Câu hỏi không được để trống.");
 
   const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
     method: "POST",
@@ -165,6 +167,7 @@ export async function streamChat({
     body: JSON.stringify({
       conversation_id: conversationId,
       question: normalizedQuestion,
+      ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       mode,
       final_k: finalK,
       debug,

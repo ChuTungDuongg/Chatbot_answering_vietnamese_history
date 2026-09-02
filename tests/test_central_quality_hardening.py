@@ -196,7 +196,7 @@ def test_biography_context_cap_packet_fields_and_duplicate_ids():
     assert debug["retrieval_filter_reasons"] == {"biography_context_limit": 3}
     packet = build_evidence_packet(selected + selected)
     assert [item.alias for item in packet] == ["S1", "S2", "S3"]
-    assert set(asdict(packet[0])) == {"alias", "real_source_id", "title", "source_kind", "text", "comparison_target", "comparison_targets", "viewpoint_sensitive", "viewpoint_annotations", "entity_aliases"}
+    assert set(asdict(packet[0])) == {"alias", "real_source_id", "title", "source_kind", "text", "comparison_target", "comparison_targets", "viewpoint_sensitive", "viewpoint_annotations", "entity_aliases", "evidence_facets", "attachment_metadata"}
     assert "reranker" not in render_evidence_packet(packet)
 
 

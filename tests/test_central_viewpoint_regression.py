@@ -71,7 +71,8 @@ def test_cmt8_warm_first_synthesis_keeps_one_query_one_generation_and_compaction
 @pytest.mark.parametrize("answer,expected", [
     ("Chúng ta nhất định thắng lợi. [S1]", "direct_quote"),
     ('“Chúng ta nhất định thắng lợi”. [S1]', "direct_quote"),
-    ("Theo phát biểu được trích trong nguồn, 'chúng ta nhất định thắng lợi'. [S1]", None),
+    ("Theo phát biểu được trích của Hồ Chí Minh, 'chúng ta nhất định thắng lợi'. [S1]", None),
+    ("Theo phát biểu được trích trong nguồn, 'chúng ta nhất định thắng lợi'. [S1]", "direct_quote"),
 ])
 def test_short_concrete_first_person_quote_and_attribution(answer, expected):
     packet = build_evidence_packet([row("speech", "Diễn văn", 'Hồ Chí Minh nói: “chúng ta nhất định thắng lợi”.')])

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Paperclip, Square } from "lucide-react";
 import ModeSelector from "./ModeSelector";
+import { clipboardImages } from "../services/attachments";
 
 const ACCEPTED_FILES = ".pdf,image/png,image/jpeg,image/webp";
 
@@ -14,9 +15,11 @@ function ChatInput({
   onModeChange,
   isRunning,
   isUploading,
+  hasAttachments = false,
 }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const clipboardSequence = useRef(1);
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
@@ -31,7 +34,16 @@ function ChatInput({
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 
     event.preventDefault();
-    if (!isRunning && question.trim()) onSubmit(event);
+    if (!isRunning && !isUploading && (question.trim() || hasAttachments)) onSubmit(event);
+  };
+
+  const handlePaste = (event) => {
+    const files = clipboardImages(event.clipboardData, clipboardSequence.current);
+    if (!files.length) return;
+    clipboardSequence.current += files.length;
+    // Keep the browser's native text insertion for mixed text/image clipboard data.
+    if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+    onFilesSelected(files, { uploadOrigin: "clipboard" });
   };
 
   const handleFileInput = (event) => {
@@ -79,6 +91,7 @@ function ChatInput({
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
         placeholder="Hỏi về lịch sử Việt Nam..."
         aria-label="Nội dung câu hỏi"
         rows={2}
@@ -113,7 +126,7 @@ function ChatInput({
         <button
           type="submit"
           className="icon-button composer-submit send-button"
-          disabled={!question.trim()}
+          disabled={isUploading || (!question.trim() && !hasAttachments)}
           aria-label="Gửi câu hỏi"
           title="Gửi câu hỏi"
         >

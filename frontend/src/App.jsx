@@ -31,6 +31,7 @@ import {
 import { shouldShowDebugTrace } from "./services/debugTrace";
 import { persistChatMode, readStoredChatMode } from "./config/chatModes";
 import { useChatScroll } from "./hooks/useChatScroll";
+import { normalizeUploadFile, validateAttachments } from "./services/attachments";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "vn-history-theme";
@@ -40,10 +41,6 @@ const ACTIVE_STATUSES = new Set([
   "three_llm_research", "three_llm_evidence", "three_llm_answering",
   "central_loading", "central_analyzing", "central_tools", "central_answering",
 ]);
-const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
-const MIME_BY_EXTENSION = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
-const MAX_FILES_PER_UPLOAD = 5;
 const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
 
 function getInitialTheme() {
@@ -84,16 +81,6 @@ function getLatestSources(messages) {
   return [];
 }
 
-function normalizeUploadFile(file) {
-  if (ALLOWED_MIME_TYPES.has(file.type)) return file;
-
-  const extension = file.name.split(".").pop()?.toLowerCase();
-  const inferredType = MIME_BY_EXTENSION[extension];
-  if (!inferredType) return file;
-
-  return new File([file], file.name, { type: inferredType, lastModified: file.lastModified });
-}
-
 function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 840);
@@ -115,9 +102,29 @@ function App() {
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   const abortControllerRef = useRef(null);
+  const uploadBusyRef = useRef(false);
+  const cancelledUploadsRef = useRef(new Set());
+  const previewUrlsRef = useRef(new Map());
+  const [uploadBusy, setUploadBusy] = useState(false);
+  useEffect(() => {
+    const urls = previewUrlsRef.current;
+    return () => { for (const url of urls.values()) URL.revokeObjectURL(url); urls.clear(); };
+  }, []);
+  const releasePreview = (id) => {
+    const url = previewUrlsRef.current.get(id);
+    if (url) URL.revokeObjectURL(url);
+    previewUrlsRef.current.delete(id);
+  };
+  const clearPreviews = () => {
+    for (const id of previewUrlsRef.current.keys()) releasePreview(id);
+  };
+  const refreshAttachments = (items) => setAttachments((current) => items.map((item) => ({
+    ...item, preview_url: current.find((old) => old.id === item.id)?.preview_url,
+  })));
   const { scrollerRef, contentRef, onScroll, followLatest } = useChatScroll(messages, status);
   const isRunning = ACTIVE_STATUSES.has(status);
-  const isUploading = pendingUploads.length > 0;
+  const isUploading = uploadBusy;
+  const readyAttachments = attachments.filter((item) => item.status === "ready");
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId),
@@ -185,6 +192,7 @@ function App() {
     try {
       const payload = await getConversation(conversationId);
       const detail = normalizeConversationDetail(payload);
+      clearPreviews();
       followLatest();
       setActiveConversationId(conversationId);
       setMessages(detail.messages);
@@ -197,7 +205,7 @@ function App() {
     }
   };
 
-  const createNewConversation = async () => {
+  const createNewConversation = async ({ preserveDraft = false } = {}) => {
     if (isRunning) return null;
 
     const payload = await createConversation({ title: null });
@@ -207,21 +215,22 @@ function App() {
     setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
     setActiveConversationId(conversation.id);
     setMessages([]);
+    if (!preserveDraft) clearPreviews();
     setAttachments([]);
     setSources([]);
-    setQuestion("");
+    if (!preserveDraft) setQuestion("");
     setStatus("idle");
     return conversation;
   };
 
-  const ensureActiveConversation = async () => {
+  const ensureActiveConversation = async (options) => {
     if (activeConversationId) return activeConversationId;
-    const conversation = await createNewConversation();
+    const conversation = await createNewConversation(options);
     return conversation.id;
   };
 
   const handleSelectConversation = async (conversationId) => {
-    if (isRunning || conversationId === activeConversationId) return;
+    if (isRunning || uploadBusyRef.current || conversationId === activeConversationId) return;
 
     try {
       await loadConversation(conversationId);
@@ -233,6 +242,7 @@ function App() {
   };
 
   const handleNewConversation = async () => {
+    if (uploadBusyRef.current) return;
     try {
       await createNewConversation();
       if (window.matchMedia("(max-width: 839px)").matches) setSidebarOpen(false);
@@ -253,7 +263,7 @@ function App() {
   };
 
   const confirmDeleteConversation = async () => {
-    if (!conversationToDelete || isRunning) return;
+    if (!conversationToDelete || isRunning || uploadBusyRef.current) return;
 
     setIsDeletingConversation(true);
     setError("");
@@ -267,6 +277,7 @@ function App() {
         if (remaining.length > 0) {
           await loadConversation(remaining[0].id);
         } else {
+          clearPreviews();
           setActiveConversationId(null);
           setMessages([]);
           setAttachments([]);
@@ -286,7 +297,7 @@ function App() {
   const handleSubmit = async (event) => {
     event?.preventDefault();
     const trimmedQuestion = question.trim();
-    if (!trimmedQuestion || isRunning) return;
+    if ((!trimmedQuestion && !readyAttachments.length) || isRunning || uploadBusyRef.current) return;
 
     setQuestion("");
     setError("");
@@ -306,7 +317,8 @@ function App() {
       id: createLocalId("user"),
       role: "user",
       content: trimmedQuestion,
-      sources: [],
+      sources: readyAttachments.map((item) => ({ chunk_id: `attachment:${item.id}`, attachment_id: item.id,
+        title: item.filename, source_kind: "attachment" })),
       status: "done",
       created_at: new Date().toISOString(),
     };
@@ -333,6 +345,7 @@ function App() {
       await streamChat({
         conversationId,
         question: trimmedQuestion,
+        attachmentIds: readyAttachments.map((item) => item.id),
         mode: inferenceMode,
         finalK: 6,
         debug: SHOW_DEBUG_TRACE,
@@ -401,7 +414,7 @@ function App() {
         const detail = normalizeConversationDetail(detailPayload);
         setConversations(normalizeConversationList(conversationPayload));
         setMessages(detail.messages);
-        setAttachments(detail.attachments);
+        refreshAttachments(detail.attachments);
         setSources(getLatestSources(detail.messages));
       }
     } catch (requestError) {
@@ -427,86 +440,83 @@ function App() {
     }
   };
 
-  const handleFilesSelected = async (selectedFiles) => {
-    const files = selectedFiles.slice(0, MAX_FILES_PER_UPLOAD).map(normalizeUploadFile);
-    const invalidFile = files.find((file) => !ALLOWED_MIME_TYPES.has(file.type));
-    const oversizedFile = files.find((file) => file.size > MAX_FILE_SIZE);
-
-    if (selectedFiles.length > MAX_FILES_PER_UPLOAD) {
-      setError(`Mỗi lần chỉ có thể tải tối đa ${MAX_FILES_PER_UPLOAD} file.`);
+  const handleFilesSelected = async (selectedFiles, { uploadOrigin = "file" } = {}) => {
+    if (isRunning || uploadBusyRef.current) {
+      setError("Vui lòng chờ thao tác hiện tại hoàn tất trước khi thêm ảnh.");
       return;
     }
-    if (invalidFile) {
-      setError(`Không hỗ trợ định dạng của ${invalidFile.name}. Chỉ nhận PDF, PNG, JPEG và WebP.`);
-      return;
-    }
-    if (oversizedFile) {
-      setError(`${oversizedFile.name} vượt quá giới hạn 20 MB.`);
-      return;
-    }
-
+    const files = selectedFiles.map(normalizeUploadFile);
+    const validationError = validateAttachments(files, attachments.length);
+    if (validationError) { setError(validationError); return; }
+    if (!files.length) return;
+    uploadBusyRef.current = true;
+    setUploadBusy(true);
     setError("");
-
-    let conversationId;
+    const queuedFiles = files.map((file) => {
+      const id = createLocalId("upload");
+      const preview_url = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      if (preview_url) previewUrlsRef.current.set(id, preview_url);
+      return { id, name: file.name, type: file.type, size_bytes: file.size, status: "queued", file, preview_url };
+    });
+    setPendingUploads(queuedFiles);
     try {
-      conversationId = await ensureActiveConversation();
-    } catch (requestError) {
-      setError(requestError.message || "Không thể tạo cuộc trò chuyện.");
-      return;
-    }
-
-    const queuedFiles = files.map((file) => ({
-      id: createLocalId("upload"),
-      name: file.name,
-      type: file.type,
-      size_bytes: file.size,
-      status: "queued",
-      file,
-    }));
-    setPendingUploads((current) => [...current, ...queuedFiles]);
-
-    for (const queuedFile of queuedFiles) {
-      setPendingUploads((current) => current.map((item) =>
-        item.id === queuedFile.id ? { ...item, status: "processing" } : item,
-      ));
-
-      try {
-        const payload = await uploadAttachment(conversationId, queuedFile.file);
-        const attachment = payload?.attachment ?? payload;
-        setAttachments((current) => [
-          ...current.filter((item) => item.id !== attachment.id),
-          attachment,
-        ]);
-      } catch (requestError) {
-        console.error(requestError);
-        setError(requestError.message || `Không thể xử lý ${queuedFile.name}.`);
-      } finally {
-        setPendingUploads((current) => current.filter((item) => item.id !== queuedFile.id));
+      const conversationId = await ensureActiveConversation({ preserveDraft: true });
+      for (const queued of queuedFiles) {
+        if (cancelledUploadsRef.current.has(queued.id)) continue;
+        setPendingUploads((current) => current.map((item) => item.id === queued.id ? { ...item, status: "uploading" } : item));
+        try {
+          const payload = await uploadAttachment(conversationId, queued.file, { uploadOrigin });
+          const attachment = payload?.attachment ?? payload;
+          // Let an in-flight upload finish so its server record can also be removed.
+          if (cancelledUploadsRef.current.has(queued.id)) {
+            await deleteAttachment(conversationId, attachment.id);
+          } else {
+            if (queued.preview_url) {
+              previewUrlsRef.current.delete(queued.id);
+              previewUrlsRef.current.set(attachment.id, queued.preview_url);
+            }
+            setAttachments((current) => [...current, { ...attachment, preview_url: queued.preview_url }]);
+            if (attachment.status === "failed") setError(attachment.error || "Không thể đọc ảnh. Hãy thử ảnh rõ hơn.");
+          }
+        } catch (requestError) {
+          releasePreview(queued.id);
+          setError(requestError.message || `Không thể xử lý ${queued.name}.`);
+          // Failed OCR records remain removable, but are never sent as ready IDs.
+          const detail = normalizeConversationDetail(await getConversation(conversationId));
+          refreshAttachments(detail.attachments);
+        } finally {
+          setPendingUploads((current) => current.filter((item) => item.id !== queued.id));
+        }
       }
-    }
-
-    try {
-      const [conversationPayload, detailPayload] = await Promise.all([
-        listConversations(),
-        getConversation(conversationId),
-      ]);
-      const detail = normalizeConversationDetail(detailPayload);
-      setConversations(normalizeConversationList(conversationPayload));
-      setAttachments(detail.attachments);
-    } catch (refreshError) {
-      console.warn("Could not refresh attachments", refreshError);
+      await refreshConversations();
+    } catch (requestError) {
+      setError(requestError.message || "Không thể tải tài liệu.");
+    } finally {
+      for (const queued of queuedFiles) {
+        releasePreview(queued.id);
+        cancelledUploadsRef.current.delete(queued.id);
+      }
+      setPendingUploads([]);
+      uploadBusyRef.current = false;
+      setUploadBusy(false);
     }
   };
 
   const handleDeleteAttachment = async (attachmentId) => {
-    if (!activeConversationId || isRunning) return;
-
+    if (isRunning) return;
+    if (pendingUploads.some((item) => item.id === attachmentId)) {
+      cancelledUploadsRef.current.add(attachmentId);
+      releasePreview(attachmentId);
+      setPendingUploads((current) => current.filter((item) => item.id !== attachmentId));
+      return;
+    }
+    if (!activeConversationId) return;
     try {
       await deleteAttachment(activeConversationId, attachmentId);
+      releasePreview(attachmentId);
       setAttachments((current) => current.filter((item) => item.id !== attachmentId));
       await refreshConversations();
     } catch (requestError) {
-      console.error(requestError);
       setError(requestError.message || "Không thể xóa tài liệu.");
     }
   };
@@ -525,7 +535,7 @@ function App() {
       <AttachmentTray attachments={attachments} pendingUploads={pendingUploads} onDelete={handleDeleteAttachment} disabled={isRunning} />
       <ChatInput question={question} onQuestionChange={setQuestion} onSubmit={handleSubmit}
         onStop={() => abortControllerRef.current?.abort()} onFilesSelected={handleFilesSelected}
-        mode={inferenceMode} onModeChange={setInferenceMode} isRunning={isRunning} isUploading={isUploading} />
+        mode={inferenceMode} onModeChange={setInferenceMode} isRunning={isRunning} isUploading={isUploading} hasAttachments={readyAttachments.length > 0} />
       <p className="composer-disclaimer">Lịch sử cần được nhìn từ nhiều nguồn. Hãy đối chiếu tư liệu khi cần.</p>
     </div>
   );
@@ -537,7 +547,7 @@ function App() {
         activeConversationId={activeConversationId}
         isOpen={sidebarOpen}
         isLoading={isLoadingConversations}
-        isRunning={isRunning}
+        isRunning={isRunning || isUploading}
         theme={theme}
         onClose={() => setSidebarOpen(false)}
         onNewConversation={handleNewConversation}

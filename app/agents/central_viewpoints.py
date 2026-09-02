@@ -140,9 +140,10 @@ def _concrete_span(source: Any, annotation: dict[str, Any]) -> str | None:
 
 def _attributed(sentence: str, hint: str | None) -> bool:
     folded = _fold(sentence)
+    if hint:
+        return (f" {' '.join(_words(hint))} " in f" {' '.join(_words(sentence))} "
+                and bool(re.search(r"\b(?:theo|noi|tuyen bo|cho rang|nhan dinh|quan diem|loi)\b", folded)))
     if re.search(r"\btheo (?:nguon|tac gia|nhan dinh|quan diem|phat bieu|loi|mot so nha|cac nha)\b", folded):
-        return True
-    if hint and f" {' '.join(_words(hint))} " in f" {' '.join(_words(sentence))} " and re.search(r"\b(?:theo|noi|tuyen bo|cho rang|nhan dinh|quan diem|loi)\b", folded):
         return True
     return bool(re.search(r"\b(?:nguon|tac gia|nha phe binh|nha su hoc).{0,90}\b(?:cho rang|tuyen bo|nhan dinh|goi|viet|noi)\b", folded)
                 or re.search(r"\b(?:la|trich) (?:loi tuyen bo|loi ke|khau hieu|nhan dinh|quan diem)\b", folded))

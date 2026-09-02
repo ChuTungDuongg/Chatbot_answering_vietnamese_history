@@ -70,7 +70,9 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
           {insufficient && <div className="insufficient-title"><Info aria-hidden="true" /><strong>Chưa đủ tư liệu để trả lời chắc chắn.</strong></div>}
           {validationFailed && <div className="insufficient-title"><Info aria-hidden="true" /><strong>Câu trả lời chưa vượt qua kiểm tra.</strong></div>}
           {isUser ? (
-            message.content
+            <>{message.sources?.filter((source) => source.source_kind === "attachment").map((source) => (
+              <span className="user-attachment" key={source.attachment_id ?? source.chunk_id}>{source.title}</span>
+            ))}{message.content}</>
           ) : message.content ? (
             <CitationContext.Provider value={{ sourcesByIndex, onShowSources }}>
               <ReactMarkdown remarkPlugins={[remarkGfm, [remarkSourceCitations, { sources: message.sources }]]}
