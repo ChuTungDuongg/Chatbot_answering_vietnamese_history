@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.agents.comparison import (
+from app.agents.common.comparison import (
     comparison_dimension_coverage,
     comparison_target_relevance,
 )
-from app.agents.evidence_agent import _best_candidate_claims, _claim_noise_reason
-from app.agents.history_answerer import HistoryAnswererAgent, _deep_answer_quality_issues
+from app.agents.evidence.agent import _best_candidate_claims, _claim_noise_reason
+from app.agents.history_answerer.agent import HistoryAnswererAgent, _deep_answer_quality_issues
 from app.api.routes import _build_debug, _failure_debug_trace
 from app.chat.store import ConversationStore
 from app.schemas import ChatRequest

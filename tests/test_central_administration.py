@@ -4,13 +4,13 @@ from datetime import date
 
 import pytest
 
-from app.agents.central_administration import administrative_question, administrative_levels
-from app.agents.central_analytical import coverage_report
-from app.agents.central_compaction import compact_history
-from app.agents.central_evidence import select_synthesis_evidence
-from app.agents.central_model_runtime import CentralGeneration
-from app.agents.central_question import analyze_central_question, plan_analytical_queries
-from app.agents.config import CentralAgentConfig
+from app.agents.central.administration import administrative_question, administrative_levels
+from app.agents.central.analytical import coverage_report
+from app.agents.central.compaction import compact_history
+from app.agents.central.evidence import select_synthesis_evidence
+from app.agents.central.model_runtime import CentralGeneration
+from app.agents.central.question import analyze_central_question, plan_analytical_queries
+from app.agents.central.config import CentralAgentConfig
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent
 
 QUESTION = "Vì sao Việt Nam lại bắt đầu sáp nhập tỉnh năm 2025?"
@@ -23,7 +23,7 @@ def fixed_policy_clock(monkeypatch):
         @classmethod
         def today(cls):
             return cls(2026, 9, 1)
-    monkeypatch.setattr("app.agents.central_administration.date", FixtureDate)
+    monkeypatch.setattr("app.agents.central.administration.date", FixtureDate)
 
 
 def row(key, text, title="Sắp xếp đơn vị hành chính", updated="2025-07-01", **extra):

@@ -7,9 +7,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
-from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
-from app.agents.evidence_validation import (
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceModelOutput
+from app.agents.evidence.validation import (
     compressed_derived_from_own_claims,
     grounded_in_source,
     referenced_evidence_ids,

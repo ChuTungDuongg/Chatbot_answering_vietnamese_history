@@ -8,10 +8,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from training.central_agent import engine
-from training.central_agent.config import parse_args, validate_args
-from training.central_agent.data import DatasetSplit, ResolvedPaths
-from training.central_agent.diagnostics import (
+from training.central.train import engine
+from training.central.train.config import parse_args, validate_args
+from training.central.train.data import DatasetSplit, ResolvedPaths
+from training.central.train.diagnostics import (
     SPAN_FINAL_ANSWER,
     SPAN_OTHER,
     SPAN_TOOL_CALL,

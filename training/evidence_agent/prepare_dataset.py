@@ -8,8 +8,8 @@ import re
 from collections import Counter
 from typing import Any
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
-from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput, SelectedEvidence
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceModelOutput, SelectedEvidence
 from training.common.datasets import first_user_assistant, load_messages
 from training.common.jsonl import write_jsonl
 from training.evidence_agent.coverage import (

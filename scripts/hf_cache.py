@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.agents.hf_cache import hf_cache_status, seed_hf_cache
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.agents.common.hf_cache import hf_cache_status, seed_hf_cache
+from app.agents.common.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 
 
 def build_parser() -> argparse.ArgumentParser:

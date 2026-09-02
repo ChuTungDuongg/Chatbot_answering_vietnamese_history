@@ -1,6 +1,6 @@
 # 🧠 Training Pipelines
 
-[🏠 README gốc](../README.md) · [🧠 Central Agent](central_agent/README.md) · [🧭 History Answerer](history_answerer/README.md) · [🔎 Research Agent](research_agent/README.md) · [🧹 Evidence Agent](evidence_agent/README.md) · [🛠️ Data scripts](scripts/README.md)
+[🏠 README gốc](../README.md) · [🧠 Central Agent](central/README.md) · [🧭 History Answerer](history_answerer/README.md) · [🔎 Research Agent](research_agent/README.md) · [🧹 Evidence Agent](evidence_agent/README.md) · [🛠️ Data scripts](scripts/README.md)
 
 Thư mục `training/` thay thế hoàn toàn workflow notebook Phase 1-10. Package viết thường có chủ đích để `python -m training...` chạy giống nhau trên Windows, Linux, Colab và Modal.
 
@@ -15,7 +15,7 @@ training/
 │   ├── sft.py                 # generic assistant-only CE for policy agents
 │   ├── datasets.py            # load/split chat rows
 │   └── jsonl.py               # typed JSONL I/O
-├── central_agent/           # final Qwen3-8B canonical-trajectory QLoRA CLI
+├── central/                 # Central V2 preparation and QLoRA CLI
 │   ├── cli.py                 # orchestration: dry-run, preflight, train, resume
 │   ├── config.py              # CLI/JSON config resolution + validation
 │   ├── data.py                # canonical validation, split stats, SHA256, token audit
@@ -57,7 +57,7 @@ Dry-run validate dataset/split và chạy tokenizer path thật, nhưng không t
 
 ## 🧠 Final central Qwen3-8B agent
 
-Trainer cuối cùng cho canonical trajectories được tách thành package `central_agent/` để dễ maintain và debug. Lệnh tương thích cũ vẫn là entry point chính:
+Trainer cuối cùng cho canonical trajectories được tách thành package `central/train/` để dễ maintain và debug. Lệnh tương thích cũ vẫn là entry point chính:
 
 ```bash
 python -m training.train_qwen3_8b_agent --help
@@ -66,7 +66,7 @@ python -m training.train_qwen3_8b_agent --help
 Lệnh module tương đương:
 
 ```bash
-python -m training.central_agent.cli --help
+python -m training.central.train.cli --help
 ```
 
 Ba chế độ tách biệt rõ ràng:
@@ -79,9 +79,9 @@ Ví dụ validate dataset trên Google Drive mà không dùng GPU:
 
 ```bash
 python -m training.train_qwen3_8b_agent \
-  --dataset-root /content/drive/MyDrive/vn-history/trajectory_dataset_FINAL/final \
+  --dataset-root /content/drive/MyDrive/vn-history/central-v2/prepared \
   --drive-root /content/drive/MyDrive/vn-history \
-  --run-name qwen3-8b-agent-v1 \
+  --run-name central-v2 \
   --dry-run
 ```
 
@@ -89,14 +89,14 @@ Tokenizer preflight:
 
 ```bash
 python -m training.train_qwen3_8b_agent \
-  --dataset-root /content/drive/MyDrive/vn-history/trajectory_dataset_FINAL/final \
+  --dataset-root /content/drive/MyDrive/vn-history/central-v2/prepared \
   --drive-root /content/drive/MyDrive/vn-history \
-  --run-name qwen3-8b-agent-v1 \
+  --run-name central-v2 \
   --max-seq-length 4096 \
   --preflight-only
 ```
 
-Trainer hỗ trợ JSON config; precedence là defaults `<` `--config` `<` CLI flags. Các config L4/A100 trong `central_agent/configs/` chỉ là starting profiles tường minh, không tự áp dụng theo GPU. Xem toàn bộ lệnh train/resume, cấu trúc output và Colab recipe tại [Central Agent README](central_agent/README.md).
+Trainer hỗ trợ JSON config; precedence là defaults `<` `--config` `<` CLI flags. Các config L4/A100 trong `central/configs/` chỉ là starting profiles tường minh, không tự áp dụng theo GPU. Xem toàn bộ lệnh train/resume, cấu trúc output và Colab recipe tại [Central Agent README](central/README.md).
 
 ## 🎓 Thứ tự train đề xuất
 

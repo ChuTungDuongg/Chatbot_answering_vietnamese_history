@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
-from app.agents.lazy_runtime import LazyRuntime
+from app.agents.common.lazy_runtime import LazyRuntime
 
 
 def test_mode_runtimes_initialize_only_when_the_selected_proxy_is_used():

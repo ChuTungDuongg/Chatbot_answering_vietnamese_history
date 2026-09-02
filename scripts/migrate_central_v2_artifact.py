@@ -16,7 +16,7 @@ from app.artifact_contract import (
     validate_artifact_lock,
     write_artifact_lock,
 )
-from app.agents.model_registry import registry_manifest
+from app.agents.common.model_registry import registry_manifest
 
 
 def migrate_base_only(root: str | Path) -> dict:

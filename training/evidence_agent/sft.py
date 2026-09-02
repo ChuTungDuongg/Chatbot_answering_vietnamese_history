@@ -5,8 +5,8 @@ import statistics
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
-from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceModelOutput
 from training.common.sft import (
     IGNORE_INDEX,
     AssistantOnlyTokenStats,

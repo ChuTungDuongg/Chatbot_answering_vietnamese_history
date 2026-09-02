@@ -1,9 +1,4 @@
-from app.agents.schemas import (
-    EvidenceAgentRequest,
-    EvidenceCandidate,
-    EvidenceModelOutput,
-    SelectedEvidence,
-)
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceCandidate, EvidenceModelOutput, SelectedEvidence
 
 
 # Compatibility alias. Training and runtime intentionally validate the same model output.

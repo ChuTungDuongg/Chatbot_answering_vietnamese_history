@@ -4,11 +4,12 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
-from app.agents.research_agent import ResearchAgent
-from app.agents.research_agent import _external_research_reason, _select_wikipedia_candidate, needs_external_research
+from app.agents.evidence.agent import EvidenceCriticAgent
+from app.agents.history_answerer.agent import HistoryAnswererAgent
+from app.agents.three_llm.orchestrator import AgentOrchestrator
+from app.agents.hybrid import HybridRAGOrchestrator
+from app.agents.research.agent import ResearchAgent
+from app.agents.research.agent import _external_research_reason, _select_wikipedia_candidate, needs_external_research
 from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore
 from app.tools.local_search import SearchHistoryTool
 from app.tools.registry import ToolRegistry
@@ -741,7 +742,7 @@ class DepthResearchAgent:
 
 class DepthEvidenceAgent:
     def compress(self, question, evidence, *, final_k, request_id=None):
-        from app.agents.schemas import EvidenceCritique, SelectedEvidence
+        from app.agents.evidence.schemas import EvidenceCritique, SelectedEvidence
 
         selected = SelectedEvidence(
             evidence_id="ev_01",

@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from training.history_answerer.config import BASE_MODEL_ID
-from app.agents.model_registry import adapter_declared_base
+from app.agents.common.model_registry import adapter_declared_base
 
 
 def merge_lora_adapter(

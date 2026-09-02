@@ -6,13 +6,13 @@ from dataclasses import asdict, replace
 
 import pytest
 
-from app.agents.central_agent import INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
-from app.agents.central_citations import check_citations, expand_citations
-from app.agents.central_evidence import build_evidence_packet, render_evidence_packet, select_evidence
-from app.agents.central_grounding import grounding_risks
-from app.agents.central_model_runtime import CentralGeneration
-from app.agents.central_question import analyze_central_question
-from app.agents.config import CentralAgentConfig
+from app.agents.central.agent import INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
+from app.agents.central.citations import check_citations, expand_citations
+from app.agents.central.evidence import build_evidence_packet, render_evidence_packet, select_evidence
+from app.agents.central.grounding import grounding_risks
+from app.agents.central.model_runtime import CentralGeneration
+from app.agents.central.question import analyze_central_question
+from app.agents.central.config import CentralAgentConfig
 from app.api.routes import _build_debug
 from app.telemetry import RequestTelemetry, reset_request_telemetry, set_request_telemetry
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent as _build_agent

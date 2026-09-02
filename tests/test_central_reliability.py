@@ -8,15 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.central_agent import FAILURE_ANSWERS
-from app.agents.central_citation_recovery import align_citations, apply_citation_mapping, sentence_support
-from app.agents.central_citations import check_citations
-from app.agents.central_compaction import compact_history, excerpt_evidence
-from app.agents.central_evidence import build_evidence_packet, select_evidence
-from app.agents.central_model_runtime import CentralGeneration, choose_attention_backend
-from app.agents.central_question import analyze_central_question
-from app.agents.config import CentralAgentConfig
-from app.agents.lazy_runtime import LazyRuntime
+from app.agents.central.agent import FAILURE_ANSWERS
+from app.agents.central.citation_recovery import align_citations, apply_citation_mapping
+from app.agents.central.citation_support import sentence_support
+from app.agents.central.citations import check_citations
+from app.agents.central.compaction import compact_history, excerpt_evidence
+from app.agents.central.evidence import build_evidence_packet, select_evidence
+from app.agents.central.model_runtime import CentralGeneration, choose_attention_backend
+from app.agents.central.question import analyze_central_question
+from app.agents.central.config import CentralAgentConfig
+from app.agents.common.lazy_runtime import LazyRuntime
 from app.tools.local_search import SearchHistoryTool
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, SleepingRuntime, build_agent
 
@@ -298,8 +299,8 @@ def test_attention_backend_selection_is_capability_gated(device, dtype, flash, m
 
 def test_runtime_loading_and_generation_flags_without_loading_weights(monkeypatch, tmp_path):
     import torch
-    from app.agents.central_model_runtime import CentralModelRuntime
-    import app.agents.hf_cache as cache
+    from app.agents.central.model_runtime import CentralModelRuntime
+    import app.agents.common.hf_cache as cache
     load_kwargs, generation_kwargs = {}, {}
     class Inputs(dict):
         def to(self, device):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import SHARED_BASE_MODEL_ID
 from training.history_answerer.config import Phase6Config
 from training.history_answerer.loss import IGNORE_INDEX, build_rag_training_example_with_stats
 from training.history_answerer.validate_dataset import validate_rows

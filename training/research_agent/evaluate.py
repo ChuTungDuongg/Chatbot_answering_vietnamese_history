@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from typing import Any
 
-from app.agents.policy_schema import ResearchPolicyState, ToolBatchDecision, ToolDecision, validate_training_decision
+from app.agents.research.policy import ResearchPolicyState, ToolBatchDecision, ToolDecision, validate_training_decision
 from training.common.jsonl import read_jsonl
 
 

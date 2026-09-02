@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from app.agents.history_contract import (
+from app.agents.history_answerer.contract import (
     build_history_answerer_messages,
     parse_history_answer_output,
     parse_history_training_user_text,

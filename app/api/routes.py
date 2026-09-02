@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
-from app.agents.evidence_agent import EvidenceModelContractError
+from app.agents.evidence.agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
 from app.chat_modes import ChatMode, normalize_chat_mode
 from app.config import settings

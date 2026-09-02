@@ -28,7 +28,7 @@ class SearchHistoryTool:
 
     def resolve_entity_title(self, target: str, expected_type: str | None = None) -> str | None:
         # Use the already loaded corpus. Never initialize embeddings/models here.
-        from app.agents.central_targets import EntityTitleIndex
+        from app.agents.central.targets import EntityTitleIndex
         chunks = getattr(getattr(self.retriever, "service", None), "chunks", None)
         if chunks is None:
             return None

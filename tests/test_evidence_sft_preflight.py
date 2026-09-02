@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
 from training.evidence_agent.sft import build_evidence_assistant_only_example, prepare_evidence_split
 
 

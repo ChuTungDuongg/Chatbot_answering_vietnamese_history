@@ -4,8 +4,8 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
-from app.agents.schemas import SelectedEvidence
-from app.agents.evidence_validation import (
+from app.agents.evidence.schemas import SelectedEvidence
+from app.agents.evidence.validation import (
     compressed_derived_from_own_claims,
     grounded_in_source,
     normalize_grounding,

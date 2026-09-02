@@ -1,6 +1,6 @@
 import asyncio
 
-from app.agents.research_agent import ResearchAgent
+from app.agents.research.agent import ResearchAgent
 from app.tools.evidence_tools import SessionEvidenceStore
 from app.tools.local_search import SearchHistoryTool
 from app.tools.registry import ToolRegistry

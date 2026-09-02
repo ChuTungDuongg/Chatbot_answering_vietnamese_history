@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.history_contract import parse_history_training_user_text
-from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.orchestrator import AgentOrchestrator
-from app.agents.research_agent import ResearchAgent
+from app.agents.evidence.agent import EvidenceCriticAgent
+from app.agents.history_answerer.contract import parse_history_training_user_text
+from app.agents.history_answerer.agent import HistoryAnswererAgent
+from app.agents.three_llm.orchestrator import AgentOrchestrator
+from app.agents.research.agent import ResearchAgent
 from app.chat.attachments import TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.tools.attachment_search import SearchUploadedDocumentsTool

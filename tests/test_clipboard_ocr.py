@@ -16,7 +16,7 @@ from app.chat.attachments import AttachmentService, AttachmentProcessingError, O
 from app.chat.store import ConversationStore
 from app.schemas import ChatRequest
 from app.tools.attachment_search import SearchUploadedDocumentsTool
-from app.agents.central_model_runtime import CentralGeneration
+from app.agents.central.model_runtime import CentralGeneration
 from tests.test_attachment_agent_flow import FakeEmbedder
 from tests.test_central_agent import FakeTool, FakeCentralRuntime, build_agent
 

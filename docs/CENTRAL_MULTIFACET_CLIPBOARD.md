@@ -65,7 +65,7 @@ Tesseract was not found on this machine's PATH. Real screenshot OCR accuracy was
 
 ### Changed files
 
-- Central parsing, selection, validation and telemetry: `app/agents/central_question.py`, `central_facets.py`, `central_analytical.py`, `central_compaction.py`, `central_evidence.py`, `central_viewpoints.py`, `central_prompt.py`, `central_agent.py`.
+- Central parsing, selection, validation and telemetry: `app/agents/central/question.py`, `central_facets.py`, `central_analytical.py`, `central_compaction.py`, `central_evidence.py`, `central_viewpoints.py`, `central_prompt.py`, `central_agent.py`.
 - Shared attachment/API path: `app/chat/attachments.py`, `app/chat/store.py`, `app/api/conversations.py`, `app/api/routes.py`, `app/schemas.py`, `app/tools/attachment_search.py`, `app/tools/registry.py`.
 - Composer/upload UI: `frontend/src/App.jsx`, `components/ChatInput.jsx`, `components/AttachmentTray.jsx`, `components/ChatMessage.jsx`, `services/attachments.js`, `services/api.js`, `styles/composer.css`.
 - Regressions: `tests/test_central_multifacet.py`, `tests/test_clipboard_ocr.py`, three existing Central viewpoint/evidence test files, `frontend/tests/attachments.test.js`, `frontend/e2e/clipboard.spec.js`.

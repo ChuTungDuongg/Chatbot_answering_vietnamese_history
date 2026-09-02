@@ -7,11 +7,11 @@ from collections import deque
 
 from pydantic import BaseModel, Field
 
-from app.agents.central_agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
-from app.agents.central_model_runtime import CentralGeneration, CentralToolCall, parse_central_generation_detailed
-from app.agents.central_question import analyze_central_question
-from app.agents.config import CentralAgentConfig
-from app.agents.lazy_runtime import LazyRuntime
+from app.agents.central.agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
+from app.agents.central.model_runtime import CentralGeneration, CentralToolCall, parse_central_generation_detailed
+from app.agents.central.question import analyze_central_question
+from app.agents.central.config import CentralAgentConfig
+from app.agents.common.lazy_runtime import LazyRuntime
 from app.tools.registry import ToolRegistry
 
 

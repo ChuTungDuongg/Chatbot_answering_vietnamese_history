@@ -18,7 +18,7 @@
 
 9. **Python verification.** The focused viewpoint/consolidated/quality run passed 122 tests. The complete local suite passed **698 tests, with 1 skip**, in 131.34 seconds. The skip concerns an absent legacy V1 Colab notebook. Tests ran with Hugging Face/Transformers offline and CUDA visibility disabled. Existing Nguyễn Cao Kỳ, Nhà Trần, Bạch Đằng 938, US/VNCH, comparison, retrieval and architecture tests remain passing. Compilation and `git diff --check` also passed.
 
-Changed backend files: `app/agents/central_viewpoints.py`, `central_analytical.py`, `central_evidence.py`, `central_citations.py`, `central_prompt.py`, `central_agent.py`; tests in `tests/test_central_viewpoints.py` and `tests/test_central_quality_hardening.py`.
+Changed backend files: `app/agents/central/viewpoints.py`, `central_analytical.py`, `central_evidence.py`, `central_citations.py`, `central_prompt.py`, `central_agent.py`; tests in `tests/test_central_viewpoints.py` and `tests/test_central_quality_hardening.py`.
 
 CENTRAL V2 ARCHITECTURE PRESERVED  
 VIEWPOINT SAFETY PRESERVED BUT NO LONGER SOURCE-WIDE  

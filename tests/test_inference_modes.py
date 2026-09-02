@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.agents.orchestrator import HybridRAGOrchestrator
+from app.agents.hybrid import HybridRAGOrchestrator
 from app.api import routes
 from app.api.routes import _execute_chat, _get_generation_runtime, _resolve_inference_mode
 from app.chat_modes import ChatMode

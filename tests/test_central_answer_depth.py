@@ -3,15 +3,16 @@ from dataclasses import replace
 
 import pytest
 
-from app.agents.central_analytical import annotate_evidence, coverage_report
-from app.agents.central_citations import check_citations
-from app.agents.central_depth import answer_coverage, depth_contract, dimension_spans, evidence_plan
-from app.agents.central_evidence import build_evidence_packet, select_synthesis_evidence, select_evidence
-from app.agents.central_model_runtime import CentralGeneration
-from app.agents.central_question import analyze_central_question, plan_analytical_queries
-from app.agents.central_repair import remove_optional_viewpoint
-from app.agents.central_viewpoints import viewpoint_repair_plan
-from app.agents.config import CentralAgentConfig
+from app.agents.central.analytical import annotate_evidence, coverage_report
+from app.agents.central.citations import check_citations
+from app.agents.central.depth import answer_coverage, depth_contract, dimension_spans
+from app.agents.central.evidence import evidence_plan
+from app.agents.central.evidence import build_evidence_packet, select_synthesis_evidence, select_evidence
+from app.agents.central.model_runtime import CentralGeneration
+from app.agents.central.question import analyze_central_question, plan_analytical_queries
+from app.agents.central.repair import remove_optional_viewpoint
+from app.agents.central.viewpoints import viewpoint_repair_plan
+from app.agents.central.config import CentralAgentConfig
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent
 from tests.test_central_consolidated import row
 
@@ -287,8 +288,8 @@ def test_one_analysis_is_reused_through_runtime_and_compaction(monkeypatch):
     def analyze(question):
         calls.append(question)
         return analyze_central_question(question)
-    monkeypatch.setattr("app.agents.central_agent.analyze_central_question", analyze)
-    monkeypatch.setattr("app.agents.central_compaction.analyze_central_question", analyze)
+    monkeypatch.setattr("app.agents.central.agent.analyze_central_question", analyze)
+    monkeypatch.setattr("app.agents.central.compaction.analyze_central_question", analyze)
     result = build_agent(FakeCentralRuntime([CentralGeneration(content=GOOD)]), FakeTool("search_history", sources()), config=CONFIG).chat(US[0])
     assert result["status"] == "ok" and calls == [US[0]]
 

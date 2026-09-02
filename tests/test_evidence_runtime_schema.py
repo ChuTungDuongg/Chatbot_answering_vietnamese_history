@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.evidence_agent import (
+from app.agents.evidence.agent import (
     EvidenceCriticAgent,
     EvidenceModelContractError,
     question_relevant_excerpt,
 )
-from app.agents.evidence_validation import grounded_in_source
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.validation import grounded_in_source
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
 from app.telemetry import GenerationMetric, RequestTelemetry, reset_request_telemetry, set_request_telemetry
 
 

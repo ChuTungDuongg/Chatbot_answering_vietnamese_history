@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from training.common.qlora import LoRASettings
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import SHARED_BASE_MODEL_ID
 
 
 # Active Phase-6/History Answerer training starts fresh from Qwen3.  The old

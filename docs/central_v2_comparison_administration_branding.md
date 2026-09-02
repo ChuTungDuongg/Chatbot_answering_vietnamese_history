@@ -53,14 +53,14 @@ Telemetry includes administrative match/mismatch counts, observed levels, cause/
 
 ## Backend files
 
-- Added `app/agents/central_targets.py` and `app/agents/central_administration.py`.
-- Updated `app/agents/central_question.py`: structured semantics and bounded query planning.
+- Added `app/agents/central/targets.py` and `app/agents/central/administration.py`.
+- Updated `app/agents/central/question.py`: structured semantics and bounded query planning.
 - Updated `app/tools/local_search.py`: cached loaded-corpus title resolution.
-- Updated `app/agents/central_analytical.py`: target/type/level/time/cause sufficiency.
-- Updated `app/agents/central_compaction.py`: prefer relevant administrative excerpts.
-- Updated `app/agents/central_evidence.py`: revalidate comparison provenance after compaction.
-- Updated `app/agents/central_agent.py`: resolution, deterministic fallback, all-issue repair telemetry, premise checks, qualified limitations.
-- Updated `app/agents/central_prompt.py`: comparison synthesis contract.
+- Updated `app/agents/central/analytical.py`: target/type/level/time/cause sufficiency.
+- Updated `app/agents/central/compaction.py`: prefer relevant administrative excerpts.
+- Updated `app/agents/central/evidence.py`: revalidate comparison provenance after compaction.
+- Updated `app/agents/central/agent.py`: resolution, deterministic fallback, all-issue repair telemetry, premise checks, qualified limitations.
+- Updated `app/agents/central/prompt.py`: comparison synthesis contract.
 - Added `tests/test_central_comparison_resolution.py` and `tests/test_central_administration.py`.
 
 # TASK 2 — Cherry blossom branding

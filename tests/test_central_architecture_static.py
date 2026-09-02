@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from app.agents.central_agent import CentralAgent
+from app.agents.central.agent import CentralAgent
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,7 @@ def test_central_constructor_has_no_three_llm_or_fast_runtime_dependency():
 
 
 def test_central_module_does_not_import_role_agents_or_orchestrator():
-    source = (ROOT / "app" / "agents" / "central_agent.py").read_text(encoding="utf-8")
+    source = (ROOT / "app" / "agents" / "central/agent.py").read_text(encoding="utf-8")
 
     for forbidden in (
         "ResearchAgent", "EvidenceCriticAgent", "HistoryAnswererAgent", "AgentOrchestrator",
@@ -59,14 +59,14 @@ def test_obsolete_root_modal_smoke_files_are_absent():
 
 
 def test_central_runtime_passes_native_tool_schemas_to_qwen_template():
-    source = (ROOT / "app" / "agents" / "central_model_runtime.py").read_text(encoding="utf-8")
+    source = (ROOT / "app" / "agents" / "central/model_runtime.py").read_text(encoding="utf-8")
 
     assert "apply_chat_template(" in source
     assert 'template_kwargs["tools"] = tools' in source
     assert '"enable_thinking": False' in source
     assert "parse_central_generation_detailed" in source
     assert "TOOL_CALL_RE" not in source
-    codec = (ROOT / "app" / "agents" / "hermes_function_call.py").read_text(encoding="utf-8")
+    codec = (ROOT / "app" / "agents" / "common/hermes_function_call.py").read_text(encoding="utf-8")
     assert "class HermesFunctionCallCodec" in codec
 
 

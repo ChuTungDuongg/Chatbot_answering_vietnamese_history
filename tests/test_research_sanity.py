@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.agents.policy_schema import ResearchPolicyState
+from app.agents.research.policy import ResearchPolicyState
 from training.common.jsonl import read_jsonl
 from training.research_agent.evaluate import evaluate_rows
 from training.research_agent.sanity import (

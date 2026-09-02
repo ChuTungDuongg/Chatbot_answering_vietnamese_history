@@ -49,7 +49,7 @@ python -m training.trajectory_dataset.cli normalize-public \
   --report-output "$CENTRAL_V2/reports/viquad_report.json"
 
 python -m training.trajectory_dataset.cli mix \
-  --config training/trajectory_dataset/configs/central_v2_mix.json \
+  --config training/central/configs/mix.json \
   --input "hermes_function_calling=$CENTRAL_V2/intermediate/hermes_function_calling.jsonl" \
   --input "uit_viquad2_grounded=$CENTRAL_V2/intermediate/uit_viquad2_grounded.jsonl" \
   --output "$CENTRAL_V2/mixed.jsonl" \

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.agents.hf_cache import hf_cache_status, resolve_hf_hub_cache_dir, seed_hf_cache
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID
+from app.agents.common.hf_cache import hf_cache_status, resolve_hf_hub_cache_dir, seed_hf_cache
+from app.agents.common.model_registry import CENTRAL_BASE_MODEL_ID
 from scripts import hf_cache as hf_cache_cli
 
 

@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.central_analytical import annotate_evidence, coverage_report
-from app.agents.central_evidence import select_synthesis_evidence
-from app.agents.central_model_runtime import CentralGeneration
-from app.agents.central_question import analyze_central_question, plan_analytical_queries
-from app.agents.central_targets import EntityTitleIndex, resolve_comparison_targets
-from app.agents.config import CentralAgentConfig
+from app.agents.central.analytical import annotate_evidence, coverage_report
+from app.agents.central.evidence import select_synthesis_evidence
+from app.agents.central.model_runtime import CentralGeneration
+from app.agents.central.question import analyze_central_question, plan_analytical_queries
+from app.agents.central.targets import EntityTitleIndex, resolve_comparison_targets
+from app.agents.central.config import CentralAgentConfig
 from app.tools.local_search import SearchHistoryTool
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent
 

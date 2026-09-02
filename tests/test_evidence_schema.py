@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.agents.schemas import EvidenceCritique
+from app.agents.evidence.schemas import EvidenceCritique
 from training.evidence_agent.schemas import EvidenceCritiqueOutput
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.evidence_agent import EvidenceCriticAgent
+from app.agents.evidence.agent import EvidenceCriticAgent
 from app.tools.evidence_tools import SessionEvidenceStore
 
 

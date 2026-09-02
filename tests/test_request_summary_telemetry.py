@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.evidence_agent import EvidenceModelContractError
+from app.agents.evidence.agent import EvidenceModelContractError
 from app.api.routes import _execute_chat
 from app.chat.store import ConversationStore
 

@@ -56,7 +56,7 @@ that gold label is not causally available at inference time; injecting a guessed
 search.  The question, retrieval question, observations, limits, tools, and observed
 evidence IDs retain the canonical field structure.
 
-The active builder lives in `app/agents/history_contract.py`.  It deliberately
+The active builder lives in `app/agents/history_answerer/contract.py`.  It deliberately
 does not import or reuse `PromptBuilder`.
 
 ## Active path before repair

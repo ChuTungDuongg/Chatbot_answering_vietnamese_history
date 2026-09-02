@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.central_analytical import annotate_evidence, coverage_report
-from app.agents.central_citations import check_citations
-from app.agents.central_compaction import excerpt_evidence
-from app.agents.central_evidence import build_evidence_packet, select_synthesis_evidence
-from app.agents.central_model_runtime import CentralGeneration
-from app.agents.central_question import analyze_central_question
-from app.agents.central_viewpoints import annotate_viewpoints, viewpoint_attribution_issues
-from app.agents.config import CentralAgentConfig
+from app.agents.central.analytical import annotate_evidence, coverage_report
+from app.agents.central.citations import check_citations
+from app.agents.central.compaction import excerpt_evidence
+from app.agents.central.evidence import build_evidence_packet, select_synthesis_evidence
+from app.agents.central.model_runtime import CentralGeneration
+from app.agents.central.question import analyze_central_question
+from app.agents.central.viewpoints import annotate_viewpoints, viewpoint_attribution_issues
+from app.agents.central.config import CentralAgentConfig
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent
 from tests.test_central_consolidated import COMPARE, GOOD_COMPARE, comparison_tool, row
 from tests.test_central_reliability import QUESTION, FACTS

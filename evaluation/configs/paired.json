@@ -1,0 +1,13 @@
+{
+  "dataset": "evaluation/datasets/fixtures/questions.jsonl",
+  "dataset_version": "schema-fixture-v1-not-a-benchmark",
+  "seed": 42,
+  "adapter_path": "/artifacts/adapters/central-v2",
+  "settings": {
+    "runtime_loading_strategy": "lazy",
+    "central_model_load_retrieval_overlap": true,
+    "central_action_max_new_tokens": 256,
+    "central_final_max_new_tokens": 1536,
+    "central_repair_max_new_tokens": 1024
+  }
+}

@@ -20,11 +20,11 @@ The Central state machine, deterministic grounding, compaction, citation aliases
 
 Production changes:
 
-- `app/agents/central_depth.py`, `central_repair.py`: depth, evidence plan, coverage validation and safe repair helpers.
-- `app/agents/central_question.py`, `central_compaction.py`, `central_facets.py`: canonical semantics, actor grammar and reused intent.
-- `app/agents/central_analytical.py`, `central_evidence.py`: selection, excerpt roles, uncertainty and sufficiency.
-- `app/agents/central_viewpoints.py`, `central_citations.py`: quote/paraphrase checks, neutral support and repair actions.
-- `app/agents/central_prompt.py`, `central_agent.py`: composed instructions, recovery and validation integration.
+- `app/agents/central/depth.py`, `central_repair.py`: depth, evidence plan, coverage validation and safe repair helpers.
+- `app/agents/central/question.py`, `central_compaction.py`, `central_facets.py`: canonical semantics, actor grammar and reused intent.
+- `app/agents/central/analytical.py`, `central_evidence.py`: selection, excerpt roles, uncertainty and sufficiency.
+- `app/agents/central/viewpoints.py`, `central_citations.py`: quote/paraphrase checks, neutral support and repair actions.
+- `app/agents/central/prompt.py`, `central_agent.py`: composed instructions, recovery and validation integration.
 - `app/agents/config.py`, `app/config.py`, `app/main.py`: configurable coverage thresholds.
 
 Regression changes: `tests/test_central_answer_depth.py`; two existing viewpoint fixtures now retain developed supported causes after repair, and the packet-field assertion includes `source_role`. No benchmark artifacts were added.

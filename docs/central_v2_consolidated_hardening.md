@@ -56,11 +56,11 @@ This pass works from the current repository state and preserves PREPARE → INIT
 
 23. **Files changed.**
 
-    - `app/agents/central_analytical.py`: consistency, dimensions, temporal/viewpoint annotations, coverage selection and sufficiency reporting.
-    - `app/agents/central_question.py`: deterministic analytical fields, query planning and target-name handling.
-    - `app/agents/central_evidence.py`: independent target queues, bounded packets and provenance.
-    - `app/agents/central_agent.py`, `central_state.py`, `central_policy.py`: orchestration, result reuse, selected-packet gates, fallback and telemetry.
-    - `app/agents/central_citations.py`, `central_prompt.py`: display map, target-aware checks and synthesis/repair contracts.
+    - `app/agents/central/analytical.py`: consistency, dimensions, temporal/viewpoint annotations, coverage selection and sufficiency reporting.
+    - `app/agents/central/question.py`: deterministic analytical fields, query planning and target-name handling.
+    - `app/agents/central/evidence.py`: independent target queues, bounded packets and provenance.
+    - `app/agents/central/agent.py`, `central_state.py`, `central_policy.py`: orchestration, result reuse, selected-packet gates, fallback and telemetry.
+    - `app/agents/central/citations.py`, `central_prompt.py`: display map, target-aware checks and synthesis/repair contracts.
     - `app/agents/config.py`, `app/config.py`, `app/main.py`, `.env.example`: validated bounds and application wiring.
     - `app/tools/local_search.py`: opt-in candidate-pool return before final diversity selection.
     - `app/schemas.py`, `app/api/routes.py`: display/provenance fields in API, SSE, persisted sources and debug.

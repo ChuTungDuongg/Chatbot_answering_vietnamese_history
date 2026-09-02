@@ -5,16 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
-from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.central_agent import CentralAgent
-from app.agents.central_model_runtime import CentralModelRuntime
-from app.agents.config import AgentConfig, CentralAgentConfig
+from app.agents.evidence import EvidenceCriticAgent
+from app.agents.central import CentralAgent, CentralModelRuntime, CentralAgentConfig
+from app.agents.research import AgentConfig, ResearchAgent
 from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.lazy_runtime import LazyRuntime
-from app.agents.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
-from app.agents.model_registry import SHARED_BASE_MODEL_ID, validate_central_adapter
-from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
-from app.agents.research_agent import ResearchAgent
+from app.agents.common.lazy_runtime import LazyRuntime
+from app.agents.common.model_runtime import SharedAgentModelRuntime, VLLMOpenAIBackend
+from app.agents.common.model_registry import SHARED_BASE_MODEL_ID, validate_central_adapter
+from app.agents.three_llm import AgentOrchestrator
+from app.agents.hybrid import HybridRAGOrchestrator
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
@@ -231,6 +230,8 @@ async def lifespan(app: FastAPI):
                         strong_evidence_min_chars=settings.central_strong_evidence_min_chars,
                         analytical_coverage_support_threshold=settings.central_analytical_coverage_support_threshold,
                         analytical_coverage_min_dimensions=settings.central_analytical_coverage_min_dimensions,
+                        focused_coverage_support_threshold=settings.central_focused_coverage_support_threshold,
+                        focused_coverage_min_dimensions=settings.central_focused_coverage_min_dimensions,
                         synthesis_char_budget=settings.central_synthesis_char_budget,
                         reranker_tail_gap_ratio=settings.central_reranker_tail_gap_ratio,
                         reranker_score_mode=settings.central_reranker_score_mode,
