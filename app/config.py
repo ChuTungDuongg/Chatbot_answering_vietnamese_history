@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     central_repair_token_margin: int = 96
     central_biography_max_sources: int = 4
     central_biography_min_exact_hits: int = 2
+    central_analytical_retrieval_candidates: int = 10
+    central_analytical_query_variants: int = 2
+    central_analytical_max_sources: int = 4
+    central_comparison_min_strong_sources: int = 1
+    central_strong_evidence_min_chars: int = 100
+    central_synthesis_char_budget: int = 12_000
     central_reranker_tail_gap_ratio: float = 0.75
     central_reranker_score_mode: Literal["raw", "probability"] = "raw"
     central_reranker_score_floor: float | None = None

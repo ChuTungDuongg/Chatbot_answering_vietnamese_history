@@ -69,6 +69,12 @@ class QuestionAnalysis(BaseModel):
 
 class RetrievalContextItem(BaseModel):
     chunk_id: str
+    source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    display_index: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    comparison_target: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    comparison_targets: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    viewpoint_sensitive: bool = Field(default=False, exclude_if=lambda value: not value)
+    url: str | None = Field(default=None, exclude_if=lambda value: value is None)
     title: str | None = None
     text: str | None = None
 
@@ -121,6 +127,11 @@ class RetrieveResponse(BaseModel):
 
 class SourceItem(BaseModel):
     chunk_id: str
+    source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    display_index: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    comparison_target: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    comparison_targets: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    viewpoint_sensitive: bool = Field(default=False, exclude_if=lambda value: not value)
     title: str | None = None
 
     source_kind: Literal[

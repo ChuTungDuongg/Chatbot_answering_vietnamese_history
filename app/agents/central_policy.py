@@ -26,8 +26,5 @@ class HistoryGroundingPolicy:
         return GroundingDecision(required=True, reason="in_domain_history_grounded_by_default")
 
     def evidence_is_sufficient(self, state: CentralAgentState) -> bool:
-        targets = tuple(state.question_analysis.comparison_targets or ())
-        if len(targets) >= 2:
-            local_coverage = all(state.initial_grounding_coverage.get(target, 0) > 0 for target in targets[:2])
-            return local_coverage or state.external_evidence_count >= 2
-        return state.local_evidence_count > 0 or state.external_evidence_count > 0
+        # Computed from the selected, bounded packet, never from raw tool counts.
+        return bool(state.evidence_debug.get("evidence_sufficient"))

@@ -1,5 +1,7 @@
 # Central V2 quality and performance hardening
 
+This document records the earlier biography-focused pass. Current behavior and verification are in [Central V2 consolidated hardening](central_v2_consolidated_hardening.md). In particular, the former expansion to visible real chunk IDs described below has been replaced by numeric display citations.
+
 Central retains PREPARE → INITIAL_GROUNDING → optional ACTION / TOOL_EXECUTION → SYNTHESIS → optional QUALITY_REPAIR → FINAL. The public mode is `central`; the Qwen3-8B base, optional future Central V2 adapter, Hermes function calling, host-side `search_history`, and future request-policy hook remain intact. This work changes deterministic selection and answer validation around that state machine.
 
 ## Confirmed causes

@@ -14,6 +14,7 @@ function RetrievedChunks({ sources }) {
     <div className="retrieved-list">
       {sources.map((source, index) => {
         const chunkId = source.chunk_id ?? source.id ?? `chunk-${index}`;
+        const displayIndex = source.display_index ?? index + 1;
         const title = source.title ?? "Nguồn chưa có tiêu đề";
         const text = source.text ?? source.content ?? "";
         const score = source.final_retrieval_score;
@@ -29,9 +30,9 @@ function RetrievedChunks({ sources }) {
               <SourceIcon className="retrieved-type-icon" />
               <span className="retrieved-summary-main">
                 <span className="retrieved-source-type">{sourceLabel(source)}</span>
-                <strong>{title}</strong>
+                <strong>[{displayIndex}] {title}</strong>
                 <span className="retrieved-meta">
-                  {source.page_number ? `Trang ${source.page_number}` : `Nguồn ${index + 1}`}
+                  {source.page_number ? `Trang ${source.page_number}` : `Nguồn ${displayIndex}`}
                   {source.cited ? " · Được trích dẫn" : ""}
                 </span>
               </span>
@@ -39,7 +40,6 @@ function RetrievedChunks({ sources }) {
             </summary>
 
             <div className="retrieved-details">
-              <code className="chunk-id">{chunkId}</code>
               {sourceUrl && (
                 <a href={sourceUrl} target="_blank" rel="noreferrer">Mở nguồn</a>
               )}

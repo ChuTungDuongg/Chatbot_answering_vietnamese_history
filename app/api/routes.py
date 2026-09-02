@@ -54,6 +54,12 @@ def _source_kind(chunk: dict[str, Any]) -> str:
 def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
     return RetrievalContextItem(
         chunk_id=str(chunk.get("chunk_id", "")),
+        source_id=chunk.get("source_id"),
+        display_index=chunk.get("display_index"),
+        comparison_target=chunk.get("comparison_target"),
+        comparison_targets=chunk.get("comparison_targets") or [],
+        viewpoint_sensitive=bool(chunk.get("viewpoint_sensitive")),
+        url=chunk.get("url"),
         title=chunk.get("title"),
         text=chunk.get("text"),
         source_kind=_source_kind(chunk),
@@ -81,6 +87,11 @@ def _source_to_api(
 
     return SourceItem(
         chunk_id=source_id,
+        source_id=chunk.get("source_id") if chunk else None,
+        display_index=chunk.get("display_index") if chunk else None,
+        comparison_target=chunk.get("comparison_target") if chunk else None,
+        comparison_targets=chunk.get("comparison_targets") or [] if chunk else [],
+        viewpoint_sensitive=bool(chunk.get("viewpoint_sensitive")) if chunk else False,
         title=chunk.get("title") if chunk else None,
         source_kind=_source_kind(chunk or {"chunk_id": source_id}),
         attachment_id=chunk.get("attachment_id") if chunk else None,
@@ -97,10 +108,13 @@ def _result_sources(service: Any, result: dict[str, Any]) -> list[SourceItem]:
         if chunk.get("chunk_id")
     }
 
-    return [
+    sources = [
         _source_to_api(service, source_id, context_by_id)
         for source_id in result.get("source_ids", [])
     ]
+    if sources and all(source.display_index is not None for source in sources):
+        sources.sort(key=lambda source: source.display_index)
+    return sources
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -265,6 +279,10 @@ def _trace_candidate(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "reranker_score": item.get("reranker_score"),
         "final_retrieval_score": item.get("final_retrieval_score"),
         "comparison_target": item.get("comparison_target"),
+        "comparison_targets": item.get("comparison_targets") or [],
+        "display_index": item.get("display_index"),
+        "evidence_dimensions": item.get("evidence_dimensions") or [],
+        "viewpoint_sensitive": bool(item.get("viewpoint_sensitive")),
         "incidental_target_penalty": item.get("incidental_target_penalty"),
         "text_preview": str(item.get("text_preview") or item.get("text") or "")[:260],
     }
@@ -333,6 +351,9 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             "chunk_id": str(item.get("chunk_id") or ""),
             "title": item.get("title"),
             "source_kind": item.get("source_kind") or item.get("source_type") or "history",
+            "source_id": item.get("source_id"),
+            "display_index": item.get("display_index"),
+            "comparison_target": item.get("comparison_target"),
         }
         for item in source_chunks
         if item.get("chunk_id")
@@ -357,6 +378,9 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             ),
             "facet": analysis.get("facet"),
             "subject": analysis.get("subject"),
+            "event": analysis.get("event"),
+            "actors": analysis.get("actors") or [],
+            "outcome": analysis.get("outcome"),
             "facets": analysis.get("facets") or [],
             "comparison_targets": evidence.get("comparison_targets") or analysis.get("comparison_targets") or [],
             "domain_result": retrieval.get("domain_gate_result"),

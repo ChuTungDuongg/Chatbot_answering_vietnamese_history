@@ -13,6 +13,7 @@ from app.rag.retrieval import (
 class SearchHistoryInput(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=8, ge=1, le=20)
+    candidate_pool: bool = Field(default=False, description="Return ranked candidates before final diversity selection for host-side analytical selection.")
 
 
 class SearchHistoryTool:
@@ -55,7 +56,8 @@ class SearchHistoryTool:
             return chunks
 
         result = self.retriever.retrieve(arguments.query, final_k=arguments.top_k)
-        chunks = result.get("final_context") or []
+        chunks = (result.get("candidates20") or result.get("final_context") or [])[:arguments.top_k] if arguments.candidate_pool else result.get("final_context") or []
+        chunks = [dict(chunk) for chunk in chunks]
         for chunk in chunks:
             chunk.setdefault("source_kind", "history")
         return chunks

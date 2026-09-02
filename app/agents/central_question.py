@@ -36,6 +36,18 @@ class CentralQuestionAnalysis:
     analytical: bool
     comparison_targets: tuple[str, ...] = ()
     subject: str | None = None
+    event: str | None = None
+    actors: tuple[str, ...] = ()
+    outcome: str | None = None
+    facets: tuple[str, ...] = ()
+
+    def telemetry(self) -> dict:
+        return {
+            "question_type": self.question_type, "subject": self.subject,
+            "event": self.event, "actors": list(self.actors), "outcome": self.outcome,
+            "comparison_targets": list(self.comparison_targets),
+            "facet": self.facets[0] if self.facets else None, "facets": list(self.facets),
+        }
 
 
 def _ascii_fold_vietnamese(text: str) -> str:
@@ -128,13 +140,91 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
     elif any(cue in normalized for cue in _EVALUATION_CUES):
         question_type = "evaluation"
     analytical = question_type in {"comparison", "cause", "consequence", "significance", "evaluation", "biography"}
+    event, analytical_subject, actors, outcome = extract_analytical_target(question)
     return CentralQuestionAnalysis(
         question=question,
         question_type=question_type,
         analytical=analytical,
         comparison_targets=targets,
-        subject=subject if question_type == "biography" else None,
+        subject=subject if question_type == "biography" else analytical_subject if not targets else None,
+        event=event if not targets and question_type != "biography" else None,
+        actors=actors if question_type != "biography" else (),
+        outcome=outcome if question_type != "biography" else None,
+        facets=extract_requested_facets(question, question_type),
     )
+
+
+# Grammatical patterns and a small actor-abbreviation vocabulary, not a historical database.
+_OUTCOMES = ((r"\b(?:suy yeu|suy thoai)\b", "suy yếu"),
+             (r"\b(?:that bai|thua)\b", "thất bại"),
+             (r"\b(?:thanh cong|thang loi)\b", "thành công"),
+             (r"\b(?:sup do|suy vong)\b", "sụp đổ"))
+_EVENT_START = r"(?:chien tranh|cach mang|chien dich|chien thang|tran|hiep dinh|khoi nghia|phong trao)"
+_TARGET_END = r"\s+(?:nam\s+\d{3,4}|thanh cong|that bai|thang loi|suy yeu|sup do|co\s|da\s|dan den|de lai|ve\s|la gi|nhu the nao)"
+_FACET_CUES = {
+    "context": ("boi canh", "dieu kien"), "objective": ("muc tieu", "muc dich"),
+    "actors": ("luc luong", "chu the"), "method": ("tinh chat", "phuong phap", "dien bien"),
+    "result": ("ket qua", "he qua"), "significance": ("y nghia", "vai tro"),
+    "military": ("quan su",), "political": ("chinh tri",), "economic": ("kinh te",),
+    "domestic": ("xa hoi", "trong nuoc"), "international": ("ngoai giao", "quoc te"),
+}
+
+
+def extract_analytical_target(question: str) -> tuple[str | None, str | None, tuple[str, ...], str | None]:
+    compact = unicodedata.normalize("NFC", " ".join(question.split())).strip(" .?!")
+    folded = _ascii_fold_vietnamese(compact)
+    outcome = next((value for pattern, value in _OUTCOMES if re.search(pattern, folded)), None)
+    event = None
+    match = next((candidate for candidate in re.finditer(rf"\b{_EVENT_START}\s+", folded)
+                  if compact[candidate.start():candidate.end()].strip().casefold() != "trần"
+                  and not re.search(r"(?:nha|trieu dai)\s+$", folded[:candidate.start()])), None)
+    if match:
+        end_match = re.search(_TARGET_END, folded[match.end():])
+        end = match.end() + end_match.start() if end_match else len(compact)
+        event = compact[match.start():end].strip(" ,;:")
+        event = event[:1].upper() + event[1:]
+        if _ascii_fold_vietnamese(event) in {"chien tranh viet nam", "cach mang thang tam"}:
+            # Preserve conventional Vietnamese event capitalization.
+            event = {"chien tranh viet nam": "Chiến tranh Việt Nam", "cach mang thang tam": "Cách mạng Tháng Tám"}[_ascii_fold_vietnamese(event)]
+    dynasty = re.search(r"\b(?:nha|trieu dai(?:\s+nha)?)\s+([^\s,;.?!]+)", folded)
+    subject = "Nhà " + compact[dynasty.start(1):dynasty.end(1)] if dynasty else None
+    actors = []
+    for pattern, name in ((r"\b(?:my|hoa ky)\b", "Mỹ"), (r"\b(?:vnch|viet nam cong hoa)\b", "Việt Nam Cộng hòa")):
+        if re.search(pattern, folded):
+            actors.append(name)
+    return event, subject, tuple(actors), outcome
+
+
+def extract_requested_facets(question: str, kind: str | None) -> tuple[str, ...]:
+    folded = _ascii_fold_vietnamese(question)
+    if kind == "comparison":
+        for target in extract_comparison_targets(question):
+            folded = folded.replace(_ascii_fold_vietnamese(target), " ")
+    explicit = tuple(key for key, cues in _FACET_CUES.items() if any(re.search(rf"\b{re.escape(cue)}\b", folded) for cue in cues))
+    if explicit:
+        return explicit
+    if kind == "comparison":
+        return ("context", "objective", "actors", "method", "result", "significance")
+    return ("cause",) if kind == "cause" else ()
+
+
+def plan_analytical_queries(analysis: CentralQuestionAnalysis, max_variants: int = 2) -> dict[str, list[str]]:
+    """Bounded independent plans. Keys are canonical targets (or the original question)."""
+    if analysis.comparison_targets:
+        facet_words = {"context": "bối cảnh", "objective": "mục tiêu", "actors": "lực lượng",
+                       "method": "tính chất", "result": "kết quả", "significance": "ý nghĩa",
+                       "military": "quân sự", "political": "chính trị", "economic": "kinh tế",
+                       "domestic": "xã hội", "international": "ngoại giao"}
+        suffix = " ".join(facet_words[f] for f in analysis.facets if f in facet_words)
+        return {target: [target, f"{target} {suffix or 'bối cảnh kết quả ý nghĩa'}",
+                         f"{target} lực lượng diễn biến kết quả"][:max_variants]
+                for target in analysis.comparison_targets}
+    target = analysis.event or analysis.subject
+    if analysis.question_type == "cause" and target:
+        causal = f"{target} nguyên nhân" + (f" {analysis.outcome}" if analysis.outcome else "")
+        actors = " ".join(analysis.actors)
+        return {target: list(dict.fromkeys([f"{causal} {actors}".strip(), analysis.question]))[:max_variants]}
+    return {analysis.question: [analysis.question]}
 
 
 def build_research_instruction(analysis: CentralQuestionAnalysis, allowed_tools: set[str]) -> str:
@@ -175,9 +265,10 @@ def analytical_answer_issues(
     # Length alone is not a quality failure: evidence may support only a compact answer.
 
     if analysis.question_type == "comparison":
+        from app.agents.central_analytical import target_mentions
         missing_targets = [
             target for target in analysis.comparison_targets
-            if _ascii_fold_vietnamese(target) not in folded
+            if not target_mentions(answer, target)
         ]
         if missing_targets:
             issues.append("comparison_target_missing")

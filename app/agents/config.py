@@ -44,6 +44,12 @@ class CentralAgentConfig:
     reranker_score_floor: float | None = None
     reranker_strong_score: float = 0.5
     max_tool_results: int = 6
+    analytical_retrieval_candidates: int = 10
+    analytical_query_variants: int = 2
+    analytical_max_sources: int = 4
+    comparison_min_strong_sources: int = 1
+    strong_evidence_min_chars: int = 100
+    synthesis_char_budget: int = 12_000
     observation_char_budget: int = 12_000
     timeout_seconds: float = 180.0
     model_load_timeout_seconds: float = 300.0
@@ -85,6 +91,14 @@ class CentralAgentConfig:
             raise ValueError("Central reranker strong probability score must be between 0 and 1.")
         if not 1 <= self.max_tool_results <= 10:
             raise ValueError("Central max_tool_results must be between 1 and 10.")
+        if not 8 <= self.analytical_retrieval_candidates <= 12 or not 1 <= self.analytical_query_variants <= 3:
+            raise ValueError("Central analytical retrieval requires 8–12 candidates and 1–3 variants.")
+        if not 3 <= self.analytical_max_sources <= 6 or not 1 <= self.comparison_min_strong_sources <= 2:
+            raise ValueError("Central synthesis requires 3–6 slots and 1–2 strong sources per target.")
+        if self.analytical_max_sources < 2 * self.comparison_min_strong_sources:
+            raise ValueError("Central synthesis budget must fit both comparison targets.")
+        if self.strong_evidence_min_chars < 40 or self.synthesis_char_budget < 1000:
+            raise ValueError("Central evidence quality and character budgets are too small.")
         if self.observation_char_budget < 1_000:
             raise ValueError("Central observation_char_budget must be at least 1000 characters.")
         if self.timeout_seconds <= 0:

@@ -19,7 +19,11 @@ Mỗi đoạn có khẳng định lịch sử phải có ít nhất một trích
 
 BIOGRAPHY_CONTRACT = """Trả lời tự nhiên về nhân vật: danh tính, sinh/mất, vai trò/chức vụ chính, các giai đoạn sự nghiệp và cuối đời khi có bằng chứng. Không tự thêm giai đoạn còn thiếu, không ép mẫu đề mục; chỉ thêm phần ý nghĩa nếu người dùng hỏi."""
 
-REPAIR_CONTRACT = """Viết lại câu trả lời hiện có đúng một lần, giữ nội dung được bằng chứng hỗ trợ và chỉ dùng các bí danh được cấp. Bỏ hoặc thu hẹp khẳng định thiếu căn cứ, không thêm dữ kiện để kéo dài câu trả lời. Gắn trích dẫn vào nội dung tương ứng; không đoán nguồn. Chỉ xuất câu trả lời đã sửa."""
+COMPARISON_CONTRACT = """Bằng chứng được nhóm theo TARGET A và TARGET B. Chỉ so sánh từ các nhóm này; không chuyển dữ kiện hoặc trích dẫn giữa hai đối tượng. Trình bày cả hai phía, điểm giống và điểm khác, giải thích ý nghĩa khi có căn cứ. Đoạn nói về đối tượng A phải trích nguồn A, đoạn nói về B phải trích nguồn B; đoạn so sánh cả hai phải trích nguồn cả hai. Mỗi đoạn khẳng định sự kiện cần trích dẫn. Phương diện được hỏi chưa có bằng chứng thì nói rõ chưa đủ bằng chứng, không bịa dữ kiện."""
+
+VIEWPOINT_CONTRACT = """Bằng chứng có viewpoint_sensitive=true chứa lời trích hoặc quan điểm riêng. Phải quy thuộc lời đó cho nguồn/tác giả (ví dụ: 'Theo nguồn...'), không biến lời ngôi thứ nhất, khẩu hiệu hoặc ngôn từ đánh giá mạnh thành nhận định trung lập hay đồng thuận lịch sử."""
+
+REPAIR_CONTRACT = """Viết lại câu trả lời hiện có đúng một lần, giữ nội dung được bằng chứng hỗ trợ và chỉ dùng các bí danh [S#] được cấp. Bỏ hoặc thu hẹp khẳng định thiếu căn cứ, không thêm tên, năm, sự kiện hay dữ kiện mới. Mỗi đoạn có khẳng định sự kiện cần trích dẫn. Giữ cả hai đối tượng so sánh: khẳng định về A chỉ dùng bằng chứng A, về B phải dùng bằng chứng B. Quy thuộc quan điểm hoặc lời trích nhạy cảm cho nguồn/tác giả. Không đoán nguồn. Chỉ xuất câu trả lời đã sửa."""
 
 
 ANALYTICAL_CUES = (

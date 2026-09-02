@@ -7,13 +7,14 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
-from app.agents.central_citations import check_citations, expand_citations
-from app.agents.central_evidence import SynthesisEvidence, build_evidence_packet, render_evidence_packet, select_evidence
+from app.agents.central_citations import check_citations, expand_citations, citation_display_map
+from app.agents.central_evidence import SynthesisEvidence, build_evidence_packet, render_evidence_packet, select_evidence, select_synthesis_evidence
+from app.agents.central_analytical import annotate_evidence, coverage_report, coverage_select, evidence_targets, target_mentions
 from app.agents.central_grounding import grounding_risks
 from app.agents.central_model_runtime import CentralGeneration, CentralLLMBackend, CentralToolCall
 from app.agents.central_policy import CentralRequestPolicy, HistoryGroundingPolicy
-from app.agents.central_prompt import BIOGRAPHY_CONTRACT, CENTRAL_SYSTEM_PROMPT, REPAIR_CONTRACT, SYNTHESIS_CONTRACT
-from app.agents.central_question import analytical_answer_issues, analyze_central_question
+from app.agents.central_prompt import BIOGRAPHY_CONTRACT, CENTRAL_SYSTEM_PROMPT, REPAIR_CONTRACT, SYNTHESIS_CONTRACT, COMPARISON_CONTRACT, VIEWPOINT_CONTRACT
+from app.agents.central_question import analytical_answer_issues, analyze_central_question, plan_analytical_queries
 from app.agents.central_state import CentralAgentState, CentralPhase
 from app.agents.central_tools import EXTERNAL_TOOLS, bounded_tool_arguments, normalize_tool_result, qwen_tool_schemas
 from app.agents.config import CentralAgentConfig
@@ -186,7 +187,8 @@ class CentralAgent:
         prepared: list[tuple[CentralToolCall, dict[str, Any], str | None, int | None]] = []
         pending: list[tuple[str, dict[str, Any]]] = []
         for call in calls:
-            arguments = bounded_tool_arguments(call.name, call.arguments, max_results=self.config.max_tool_results)
+            result_limit = self._retrieval_limit(state, call.name)
+            arguments = bounded_tool_arguments(call.name, call.arguments, max_results=result_limit)
             signature = json.dumps([call.name, arguments], ensure_ascii=False, sort_keys=True)
             if signature in state.executed_tool_signatures:
                 prepared.append((call, arguments, "duplicate_tool_call_prevented", None))
@@ -217,51 +219,85 @@ class CentralAgent:
             state.tool_ms += max(item[3] for item in executed)
 
         for call, arguments, immediate_error, pending_index in prepared:
+            signature = json.dumps([call.name, arguments], ensure_ascii=False, sort_keys=True)
+            target = (grounding_targets or {}).get(call.id)
+            if target is None and state.question_analysis.comparison_targets:
+                matches = [value for value in state.question_analysis.comparison_targets
+                           if target_mentions(str(arguments.get("query") or arguments.get("page_id_or_title") or ""), value)]
+                target = matches[0] if len(matches) == 1 else None
+            comparison_target = target if target in state.question_analysis.comparison_targets else None
             sources: list[dict[str, Any]] = []
             error = immediate_error
             result_count: int | None = None
             elapsed = 0.0
-            if immediate_error is None:
-                assert pending_index is not None
-                result, error, result_count, elapsed = executed[pending_index]
-                state.tool_calls += 1
-                state.tool_calls_by_name[call.name] += 1
+            reused = bool(immediate_error == "duplicate_tool_call_prevented" and grounding_targets and signature in state.tool_results)
+            if immediate_error is None or reused:
+                if reused:
+                    result, error, result_count = state.tool_results[signature]
+                else:
+                    assert pending_index is not None
+                    result, error, result_count, elapsed = executed[pending_index]
+                    state.tool_results[signature] = (result, error, result_count)
+                    state.tool_calls += 1
+                    state.tool_calls_by_name[call.name] += 1
                 remaining = max(0, self.config.observation_char_budget - state.observation_chars)
                 if error:
                     observation = json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":"))
                 else:
                     rows = result if isinstance(result, list) else ([] if result is None else [result])
-                    rows = [dict(row) if isinstance(row, dict) else {"text": str(row)} for row in rows[:self.config.max_tool_results]]
+                    result_limit = self._retrieval_limit(state, call.name)
+                    rows = [dict(row) if isinstance(row, dict) else {"text": str(row)} for row in rows[:result_limit]]
+                    rows = [{**row, "retrieval_tool": call.name, "retrieval_query": arguments.get("query"),
+                             "citable": call.name != "search_wikipedia",
+                             **({"comparison_target": comparison_target, "comparison_targets": [comparison_target]} if comparison_target else {})}
+                            for row in rows]
                     state.retrieval_candidates.extend(rows)
-                    filtered, filter_debug = select_evidence(rows, state.question_analysis, self.config)
-                    state.retrieval_filter_events.append({"tool": call.name, **filter_debug})
+                    filtered, filter_debug = select_evidence(rows, state.question_analysis, self.config, target=comparison_target)
+                    state.retrieval_filter_events.append({"tool": call.name, "comparison_target": comparison_target, **filter_debug})
+                    if comparison_target:
+                        state.target_rankings.setdefault(comparison_target, []).extend(filtered)
                     observation, sources = normalize_tool_result(
                         call.name,
                         filtered,
-                        max_results=self.config.max_tool_results,
-                        char_budget=remaining,
+                        max_results=result_limit,
+                        char_budget=result_limit * 4500,
                     )
                     sources = [source for source in sources if str(source.get("text") or "").strip()]
+                    if call.name == "search_wikipedia":
+                        state.wikipedia_search_results.extend(sources)
+                        sources = []  # Search snippets guide fetch, never establish sufficiency.
                     for source in sources:
+                        source = annotate_evidence(source, state.question_analysis, comparison_target)
                         source_id = str(source["chunk_id"])
                         existing = state.source_by_id.get(source_id)
-                        if existing is None or len(str(source.get("text") or "")) > len(str(existing.get("text") or "")):
-                            state.source_by_id[source_id] = source
+                        if existing is not None:
+                            origins = list(dict.fromkeys(evidence_targets(existing) + evidence_targets(source)))
+                            queries = list(dict.fromkeys([*existing.get("retrieval_queries", []), *source.get("retrieval_queries", []), str(arguments.get("query") or "")]))
+                            if len(str(existing.get("text") or "")) > len(str(source.get("text") or "")):
+                                source = dict(existing)
+                            if origins:
+                                source.update(comparison_target=origins[0], comparison_targets=origins)
+                            source["retrieval_rank"] = min(existing.get("retrieval_rank", 999), source.get("retrieval_rank", 999))
+                            source["retrieval_queries"] = queries
+                        else:
+                            source["retrieval_queries"] = [str(arguments.get("query") or "")]
+                        state.source_by_id[source_id] = source
                     if call.name == "search_history":
                         state.local_evidence_count += len(sources)
                     elif call.name in EXTERNAL_TOOLS:
                         state.external_evidence_count += len(sources)
             else:
-                observation = json.dumps({"error": immediate_error}, separators=(",", ":"))
+                observation = json.dumps({"error": immediate_error, "previous_observation": state.tool_observations.get(signature),
+                                          "next_step": "Already executed; fetch a result, choose a different query, or finish. Do not repeat this signature."}, ensure_ascii=False)
 
             remaining = max(0, self.config.observation_char_budget - state.observation_chars)
             if len(observation) > remaining:
-                compact_error = json.dumps({"error": "observation_budget_exhausted"}, separators=(",", ":"))
+                compact_error = json.dumps({"observation": "Results retained host-side; observation preview budget exhausted.", "source_count": len(sources)}, separators=(",", ":"))
                 observation = compact_error if len(compact_error) <= remaining else "{}"
             state.observation_chars += len(observation)
-            target = (grounding_targets or {}).get(call.id)
+            state.tool_observations[signature] = observation
             if target is not None:
-                state.initial_grounding_coverage[target] = len(sources)
+                state.initial_grounding_coverage[target] = sum(target in evidence_targets(source) for source in state.source_by_id.values()) if comparison_target else len(sources)
             state.tool_trace.append({
                 "phase": trace_phase,
                 "name": call.name,
@@ -271,6 +307,7 @@ class CentralAgent:
                 "latency_ms": elapsed,
                 "source_ids": [str(source["chunk_id"]) for source in sources],
                 "grounding_target": target,
+                "result_reused": reused,
             })
             state.messages.append({
                 "role": "tool",
@@ -279,43 +316,110 @@ class CentralAgent:
                 "content": observation,
             })
 
+    def _retrieval_limit(self, state: CentralAgentState, tool_name: str) -> int:
+        if tool_name == "search_history" and state.question_analysis.question_type in {"cause", "comparison"}:
+            return self.config.analytical_retrieval_candidates
+        return min(10, self.config.max_tool_results)
+
     def _initial_grounding_calls(self, state: CentralAgentState) -> tuple[tuple[CentralToolCall, ...], dict[str, str]]:
         if not state.grounding_required or "search_history" not in state.allowed_tools:
             return (), {}
-        targets = tuple(state.question_analysis.comparison_targets or ())
-        queries = list(targets[:2]) if len(targets) >= 2 else [state.question]
+        plan = plan_analytical_queries(state.question_analysis, self.config.analytical_query_variants)
+        if state.question_analysis.comparison_targets:
+            state.target_specific_queries = plan
+        state.retrieval_query_variants = list(dict.fromkeys(query for queries in plan.values() for query in queries))
         calls: list[CentralToolCall] = []
         target_by_call: dict[str, str] = {}
-        for index, query in enumerate(queries, 1):
-            call_id = f"central_ground_{index:02d}"
-            calls.append(CentralToolCall(call_id, "search_history", {
-                "query": query,
-                "top_k": self.config.max_tool_results,
-            }))
-            target_by_call[call_id] = query
+        for target, queries in plan.items():
+            for query in queries:
+                call_id = f"central_ground_{len(calls) + 1:02d}"
+                arguments = {"query": query, "top_k": self._retrieval_limit(state, "search_history")}
+                if state.question_analysis.question_type in {"cause", "comparison"}:
+                    arguments["candidate_pool"] = True
+                calls.append(CentralToolCall(call_id, "search_history", arguments))
+                target_by_call[call_id] = target
         return tuple(calls), target_by_call
 
     def _evidence_sufficient(self, state: CentralAgentState) -> bool:
+        state.selected_sources = select_synthesis_evidence(list(state.source_by_id.values()), state.question_analysis, self.config)
+        sufficient, coverage = coverage_report(state.selected_sources, state.retrieval_candidates, state.question_analysis, self.config)
+        state.evidence_debug.update(coverage)
         checker = getattr(self.request_policy, "evidence_is_sufficient", None)
         if callable(checker):
-            return bool(checker(state))
-        return state.local_evidence_count > 0
+            sufficient = sufficient and bool(checker(state))
+        state.evidence_debug["evidence_sufficient"] = sufficient
+        return sufficient
+
+    async def _fetch_wikipedia_results(self, state: CentralAgentState, context: ToolExecutionContext, progress) -> None:
+        if "fetch_wikipedia_page" not in state.allowed_tools:
+            return
+        calls = []
+        targets = {}
+        # At most one canonical fetched page per target/query. Snippets are ranked
+        # by entity consistency and overview status before attempting a fetch.
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in state.wikipedia_search_results:
+            key = str(row.get("comparison_target") or row.get("retrieval_query") or "")
+            if key not in state.fetched_wikipedia_targets:
+                grouped.setdefault(key, []).append(row)
+        for key, rows in grouped.items():
+            state.fetched_wikipedia_targets.add(key)
+            target = key if key in state.question_analysis.comparison_targets else state.question_analysis.event or state.question_analysis.subject
+            annotated = [annotate_evidence(row, state.question_analysis, target) for row in rows]
+            relevant = [row for row in annotated if row["target_consistent"]]
+            if not relevant:
+                continue
+            best = coverage_select(relevant, state.question_analysis, 1)[0]
+            metadata = best.get("metadata") or {}
+            page = metadata.get("page_id") or best.get("page_id") or best.get("title")
+            if not page:
+                continue
+            call_id = f"central_wiki_fetch_{len(state.tool_trace)}_{len(calls)}"
+            calls.append(CentralToolCall(call_id, "fetch_wikipedia_page", {
+                "page_id_or_title": str(page), "language": metadata.get("language", "vi"), "max_chars": 6000,
+            }))
+            if key in state.question_analysis.comparison_targets:
+                targets[call_id] = key
+        if calls:
+            await self._execute_tool_calls(state, tuple(calls), context=context, trace_phase="wikipedia_fetch", grounding_targets=targets, progress=progress)
+
+    async def _comparison_fallback(self, state: CentralAgentState, context: ToolExecutionContext, progress) -> None:
+        if not {"search_wikipedia", "fetch_wikipedia_page"} <= state.allowed_tools:
+            return
+        self._evidence_sufficient(state)
+        calls = []
+        targets = {}
+        for target, balance in state.evidence_debug["comparison_balance"].items():
+            if balance["adequate"]:
+                continue
+            call_id = f"central_wiki_search_{len(calls)}"
+            calls.append(CentralToolCall(call_id, "search_wikipedia", {"query": target, "language": "vi", "top_k": self.config.max_tool_results}))
+            targets[call_id] = target
+            if target not in state.target_specific_queries.setdefault(target, []):
+                state.target_specific_queries[target].append(target)
+        if calls:
+            await self._execute_tool_calls(state, tuple(calls), context=context, trace_phase="wikipedia_search", grounding_targets=targets, progress=progress)
+            await self._fetch_wikipedia_results(state, context, progress)
 
     def _prepare_synthesis(self, state: CentralAgentState) -> list[SynthesisEvidence]:
-        selected, final_filter = select_evidence(
-            list(state.source_by_id.values()), state.question_analysis, self.config, compare_scores=False,
-        )
-        state.source_by_id = {str(row["chunk_id"]): row for row in selected}
+        self._evidence_sufficient(state)
+        selected = state.selected_sources
         packet = build_evidence_packet(selected)
         rendered = render_evidence_packet(packet)
-        reasons: Counter[str] = Counter(final_filter["retrieval_filter_reasons"])
+        reasons: Counter[str] = Counter()
+        entity_reasons: Counter[str] = Counter()
         for event in state.retrieval_filter_events:
             reasons.update(event["retrieval_filter_reasons"])
+            entity_reasons.update(event.get("entity_disambiguation_filter_reasons", {}))
         filtered_count = len(state.retrieval_candidates) - len(packet)
         unaccounted = filtered_count - sum(reasons.values())
         if unaccounted > 0:
             reasons["duplicate_empty_or_budget_limited"] += unaccounted
-        state.evidence_debug = {
+        display_map = citation_display_map(packet)
+        by_id = {item["source_id"]: item for item in display_map.values()}
+        state.selected_sources = [{**row, **by_id[str(row["chunk_id"])]} for row in selected]
+        state.evidence_debug.update({
+            **state.question_analysis.telemetry(),
             "retrieval_candidates_before_filter": len(state.retrieval_candidates),
             "retrieval_candidates_after_filter": len(packet),
             "retrieval_filtered_count": filtered_count,
@@ -325,15 +429,22 @@ class CentralAgent:
             "evidence_input_chars": len(rendered),
             "evidence_source_count": len(packet),
             "citation_aliases": {item.alias: item.real_source_id for item in packet},
-        }
+            "citation_display_map": display_map,
+            "target_specific_queries": state.target_specific_queries,
+            "target_rankings": state.target_rankings,
+            "retrieval_query_variants": state.retrieval_query_variants,
+            "entity_disambiguation_filtered_count": sum(entity_reasons.values()),
+            "entity_disambiguation_filter_reasons": dict(entity_reasons),
+            "chronology_downranked_count": sum(bool(row.get("chronology_downranked")) for row in state.source_by_id.values()),
+        })
         telemetry = current_request_telemetry()
         if telemetry is not None:
             telemetry.central_quality.update(state.evidence_debug)
-        instruction = SYNTHESIS_CONTRACT
+        instruction = SYNTHESIS_CONTRACT + "\n" + VIEWPOINT_CONTRACT
         if state.question_analysis.question_type == "biography":
             instruction += "\n" + BIOGRAPHY_CONTRACT
         if len(state.question_analysis.comparison_targets) >= 2:
-            instruction += "\nBảo đảm trả lời riêng cả hai đối tượng và các phương diện được hỏi."
+            instruction += "\n" + COMPARISON_CONTRACT
         # Discard action observations, including rejected rows and long source IDs.
         state.messages = self._messages(state.question, state.history)
         state.messages.append({"role": "user", "content": instruction + "\n\nGói bằng chứng:\n" + rendered})
@@ -354,6 +465,11 @@ class CentralAgent:
             issues.append("invalid_citation_aliases")
         if citations.uncited_paragraphs:
             issues.append("uncited_factual_paragraphs")
+        if citations.target_mismatches:
+            issues.append("comparison_citation_target_mismatch")
+        if citations.unattributed_viewpoints:
+            issues.append("unattributed_viewpoint")
+        state.evidence_debug["citation_target_mismatches"] = citations.target_mismatches
         issues.extend(analytical_answer_issues(
             analysis=state.question_analysis, answer=citations.answer,
             source_ids=citations.source_ids, evidence_available=bool(packet),
@@ -413,9 +529,18 @@ class CentralAgent:
             )
 
         sufficient = self._evidence_sufficient(state)
-        if not sufficient and schemas and self.config.max_action_rounds > 0:
+        if not sufficient and analysis.comparison_targets:
+            await self._comparison_fallback(state, context, progress)
+            sufficient = self._evidence_sufficient(state)
+        # Comparison retrieval is fully deterministic and bounded. Exhausting its
+        # search/fetch plan returns insufficient evidence, not a speculative answer.
+        if not sufficient and not analysis.comparison_targets and schemas and self.config.max_action_rounds > 0:
             state.transition(CentralPhase.ACTION)
             for round_index in range(self.config.max_action_rounds):
+                state.messages.append({"role": "user", "content": (
+                    "Các lệnh sau đã được thực hiện, không lặp lại. Dùng kết quả, fetch trang, đổi truy vấn hoặc kết thúc:\n"
+                    + "\n".join(sorted(state.executed_tool_signatures))
+                )})
                 generation = await self._generate(
                     state,
                     stage="action",
@@ -435,14 +560,22 @@ class CentralAgent:
                     trace_phase=f"action_round_{round_index + 1}",
                     progress=progress,
                 )
+                await self._fetch_wikipedia_results(state, context, progress)
                 sufficient = self._evidence_sufficient(state)
-                if sufficient or round_index + 1 >= self.config.max_action_rounds:
+                # A completed Wikipedia search already received its deterministic
+                # fetch. Do not spend another generation repeating that search.
+                completed_search = any(call.name == "search_wikipedia" for call in generation.tool_calls) and any(
+                    row.get("name") == "search_wikipedia" and not row.get("error")
+                    for row in state.tool_trace if row["phase"] == f"action_round_{round_index + 1}"
+                )
+                duplicate_only = all(row.get("error") == "duplicate_tool_call_prevented" for row in state.tool_trace if row["phase"] == f"action_round_{round_index + 1}")
+                if sufficient or completed_search or duplicate_only or round_index + 1 >= self.config.max_action_rounds:
                     break
                 state.transition(CentralPhase.ACTION)
 
         packet = self._prepare_synthesis(state)
         source_ids: list[str] = []
-        if packet:
+        if packet and state.evidence_debug["evidence_sufficient"]:
             if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
                 state.transition(CentralPhase.SYNTHESIS)
             generation = await self._generate(
@@ -488,6 +621,8 @@ class CentralAgent:
                 state.repair_avoided_reason = "repair_disabled"
             if any(issue in quality_issues for issue in (
                 "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases", "uncited_factual_paragraphs",
+                "comparison_citation_target_mismatch", "comparison_target_missing", "unattributed_viewpoint",
+                "comparison_similarity_missing", "comparison_difference_missing",
             )):
                 # A second failure cannot trigger a third call or pass as a grounded answer.
                 state.final_answer = ""
@@ -506,8 +641,7 @@ class CentralAgent:
         final_risks = state.grounding_risk_checks[-1] if state.grounding_risk_checks else {}
         quality_debug = {
             **state.evidence_debug,
-            "question_type": analysis.question_type,
-            "subject": analysis.subject,
+            **analysis.telemetry(),
             "repair_reason": state.repair_reason,
             "repair_used": state.repair_used,
             "repair_avoided_reason": state.repair_avoided_reason,
@@ -583,23 +717,26 @@ class CentralAgent:
             "answer": state.final_answer,
             "status": status,
             "source_ids": source_ids,
-            "source_chunks": list(state.source_by_id.values()),
+            "source_chunks": state.selected_sources,
             "model_source_ids": source_ids,
             "invalid_source_ids": state.invalid_source_ids,
             "unsupported_years": quality_debug["unsupported_years"],
             "unsupported_named_claims": quality_debug["unsupported_named_claims"],
             "retrieval": {
                 "question": question,
-                "final_context": list(state.source_by_id.values()),
+                "final_context": state.selected_sources,
                 "candidates20": state.retrieval_candidates,
+                "target_specific_queries": state.target_specific_queries,
+                "target_rankings": state.target_rankings,
+                "target_retrieval_results": state.target_rankings,
+                "comparison_balance": state.evidence_debug.get("comparison_balance", {}),
+                "query_variants": state.retrieval_query_variants,
                 "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
             },
             "analysis": {
                 "question": question,
                 "analytical": analysis.analytical,
-                "question_type": analysis.question_type,
-                "subject": analysis.subject,
-                "comparison_targets": list(analysis.comparison_targets),
+                **analysis.telemetry(),
                 "answer_quality_issues": quality_issues,
             },
             "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
@@ -664,9 +801,7 @@ class CentralAgent:
             "analysis": {
                 "question": question,
                 "analytical": analysis.analytical,
-                "question_type": analysis.question_type,
-                "subject": analysis.subject,
-                "comparison_targets": list(analysis.comparison_targets),
+                **analysis.telemetry(),
             },
             "tool_trace": [],
             "central_debug": {"tools": [], "timeout_stage": timeout_stage, **runtime},

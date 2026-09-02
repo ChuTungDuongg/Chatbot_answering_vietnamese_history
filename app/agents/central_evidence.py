@@ -7,12 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from app.agents.central_question import CentralQuestionAnalysis, _ascii_fold_vietnamese
+from app.agents.central_question import CentralQuestionAnalysis
 from app.agents.config import CentralAgentConfig
-
-
-def normalize_entity(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", _ascii_fold_vietnamese(value)))
+from app.agents.central_analytical import (
+    annotate_evidence, coverage_select, evidence_targets, strong_evidence, entity_consistency, normalize_entity,
+)
 
 
 def _score(row: dict[str, Any], key: str) -> float | None:
@@ -36,6 +35,7 @@ def select_evidence(
     config: CentralAgentConfig,
     *,
     compare_scores: bool = True,
+    target: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Filter within a retrieval batch; never compare scores from different queries/tools.
 
@@ -43,6 +43,24 @@ def select_evidence(
     removes only a separated low tail (at least two stronger anchors). An absolute
     floor is opt-in for explicitly calibrated probability scores.
     """
+    if analysis.question_type in {"cause", "comparison"} and (target or analysis.event or analysis.subject):
+        annotated = [annotate_evidence(row, analysis, target) for row in rows]
+        reasons = Counter(row["entity_filter_reason"] or "analytical_target_mismatch"
+                          for row in annotated if not row["target_consistent"])
+        kept = [row for row in annotated if row["target_consistent"]]
+        # Ranks are only comparable within this batch. Never apply a global score floor
+        # that could drop a whole target or a distinct analytical dimension.
+        if compare_scores:
+            kept.sort(key=lambda row: _score(row, "reranker_score") if _score(row, "reranker_score") is not None else float("-inf"), reverse=True)
+            kept = [{**row, "retrieval_rank": rank} for rank, row in enumerate(kept, 1)]
+        return kept, {
+            "retrieval_candidates_before_filter": len(rows), "retrieval_candidates_after_filter": len(kept),
+            "retrieval_filtered_count": len(rows) - len(kept), "retrieval_filter_reasons": dict(reasons),
+            "entity_disambiguation_filtered_count": sum(reasons.values()),
+            "entity_disambiguation_filter_reasons": dict(reasons),
+            "chronology_downranked_count": sum(row["chronology_downranked"] for row in kept),
+            "biography_entity": None, "biography_exact_title_hits": 0,
+        }
     reasons: Counter[str] = Counter()
     excluded: set[int] = set()
     scores = {i: score for i, row in enumerate(rows) if (score := _score(row, "reranker_score")) is not None}
@@ -105,7 +123,56 @@ def select_evidence(
         "retrieval_filter_reasons": dict(reasons),
         "biography_entity": analysis.subject if subject else None,
         "biography_exact_title_hits": len(exact),
+        "entity_disambiguation_filtered_count": sum(1 for i in excluded if subject and i not in associated),
+        "entity_disambiguation_filter_reasons": {"biography_entity_collision": sum(1 for i in excluded if subject and i not in associated)} if subject else {},
     }
+
+
+def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysis, config: CentralAgentConfig) -> list[dict[str, Any]]:
+    if analysis.comparison_targets:
+        groups = []
+        for target in analysis.comparison_targets:
+            group, _ = select_evidence([row for row in rows if target in evidence_targets(row)], analysis, config, compare_scores=False, target=target)
+            strong = [row for row in group if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
+            groups.append(coverage_select(strong or group, analysis, config.analytical_max_sources))
+        # Round-robin reservations before filling spare capacity; neither target can
+        # exhaust the packet. Duplicate sources retain all verified target origins.
+        combined: dict[str, dict[str, Any]] = {}
+        for index in range(config.analytical_max_sources):
+            for group in groups:
+                if index >= len(group):
+                    continue
+                row = group[index]
+                source_id = str(row["chunk_id"])
+                if source_id in combined:
+                    continue
+                if len(combined) < config.analytical_max_sources:
+                    combined[source_id] = row
+        selected = list(combined.values())
+        # Group order is stable, so S1/S2 belong to A and S3/S4 to B when quota=2.
+        selected.sort(key=lambda row: next(i for i, target in enumerate(analysis.comparison_targets) if target in evidence_targets(row)))
+    else:
+        filtered, _ = select_evidence(rows, analysis, config, compare_scores=False)
+        selected = [annotate_evidence(row, analysis) for row in filtered]
+        if analysis.question_type in {"cause", "significance", "consequence", "evaluation"}:
+            selected = coverage_select(selected, analysis, config.analytical_max_sources)
+        else:
+            selected = selected[:config.max_tool_results]
+    # Source admission is independent of action-observation consumption. Share the
+    # synthesis character budget fairly, then re-annotate exactly what the model sees.
+    per_source = min(3200, max(0, config.synthesis_char_budget // max(1, len(selected)) - 200))
+    bounded = []
+    for row in selected:
+        item = {**row, "text": str(row.get("text") or "")[:per_source]}
+        if analysis.comparison_targets:
+            # Merging versions or truncating text must not confer another target's
+            # support on a source that no longer contains that evidence.
+            verified = [target for target in evidence_targets(item) if entity_consistency(item, target)[0]]
+            if not verified:
+                continue
+            item.update(comparison_target=verified[0], comparison_targets=verified)
+        bounded.append(annotate_evidence(item, analysis))
+    return bounded
 
 
 @dataclass(frozen=True)
@@ -115,6 +182,13 @@ class SynthesisEvidence:
     title: str
     source_kind: str
     text: str
+    comparison_target: str | None = None
+    comparison_targets: tuple[str, ...] = ()
+    viewpoint_sensitive: bool = False
+
+    def __post_init__(self):
+        if self.comparison_target and not self.comparison_targets:
+            object.__setattr__(self, "comparison_targets", (self.comparison_target,))
 
 
 def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEvidence]:
@@ -129,13 +203,20 @@ def build_evidence_packet(sources: list[dict[str, Any]]) -> list[SynthesisEviden
         packet.append(SynthesisEvidence(
             alias=f"S{len(packet) + 1}", real_source_id=source_id,
             title=str(row.get("title") or ""), source_kind=str(row.get("source_kind") or "history"), text=text,
+            comparison_target=row.get("comparison_target"), comparison_targets=tuple(evidence_targets(row)),
+            viewpoint_sensitive=bool(row.get("viewpoint_sensitive")),
         ))
     return packet
 
 
 def render_evidence_packet(packet: list[SynthesisEvidence]) -> str:
     # Real IDs stay on the host. No ranks, retrieval scores, or old tool observations.
-    return "\n\n".join(
-        f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}\ntext: {item.text}"
-        for item in packet
-    )
+    def render(item):
+        note = "\nviewpoint_sensitive=true; phải quy thuộc quan điểm cho nguồn" if item.viewpoint_sensitive else ""
+        return f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}{note}\ntext: {item.text}"
+    targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
+    if targets:
+        return "\n\n".join(f"TARGET {chr(65 + i)} — {target}\n" + "\n\n".join(
+            render(item) for item in packet if target in item.comparison_targets
+        ) for i, target in enumerate(targets))
+    return "\n\n".join(render(item) for item in packet)
