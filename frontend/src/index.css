@@ -29,7 +29,8 @@
   --accent-soft: #f1e2d8;
   --button-accent: #a95139;
   --button-ink: #fffaf4;
-  --logo-ink: #fff4e9;
+  --brand-petals: #b65e4f;
+  --brand-center: #ac7b3d;
   --danger: #b33835;
   --danger-soft: #fae8e3;
   --success: #487056;
@@ -57,7 +58,8 @@ html[data-theme="dark"] {
   --accent-soft: #49372e;
   --button-accent: #d18e6f;
   --button-ink: #241c17;
-  --logo-ink: #fff4e9;
+  --brand-petals: #dda08c;
+  --brand-center: #f0d9a8;
   --danger: #ef9d91;
   --danger-soft: #422d28;
   --success: #a8c3a0;
@@ -82,10 +84,9 @@ a { color: var(--accent); }
 .icon-button { width: 38px; height: 38px; display: inline-grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); transition: background var(--transition), color var(--transition); }
 .icon-button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .icon-button svg { width: 19px; height: 19px; }
-.logo-mark { width: 34px; height: 34px; flex-shrink: 0; }
-.logo-mark-bg { fill: var(--button-accent); }
-.logo-mark-roof, .logo-mark-star { fill: var(--logo-ink); }
-.logo-mark-lines { fill: none; stroke: var(--logo-ink); stroke-width: 3.5; stroke-linecap: round; }
+.brand-mark { flex: 0 0 auto; }
+.brand-mark-petals { fill: var(--brand-petals); }
+.brand-mark-center { fill: var(--brand-center); }
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {

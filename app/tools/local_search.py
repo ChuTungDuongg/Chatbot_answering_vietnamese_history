@@ -23,6 +23,21 @@ class SearchHistoryTool:
 
     def __init__(self, retriever: Any):
         self.retriever = retriever
+        self._entity_title_index = None
+        self._indexed_chunks = None
+
+    def resolve_entity_title(self, target: str, expected_type: str | None = None) -> str | None:
+        # Use the already loaded corpus. Never initialize embeddings/models here.
+        from app.agents.central_targets import EntityTitleIndex
+        chunks = getattr(getattr(self.retriever, "service", None), "chunks", None)
+        if chunks is None:
+            return None
+        if self._indexed_chunks is not chunks:
+            titles = (str(row.get("title") or row.get("page_title") or row.get("source_title")
+                          or (row.get("metadata") or {}).get("title") or "") for row in chunks)
+            self._entity_title_index = EntityTitleIndex(titles)
+            self._indexed_chunks = chunks
+        return self._entity_title_index.resolve(target, expected_type)
 
     def can_overlap_model_load_and_retrieval(self) -> bool:
         # RAGService loads both models onto settings.device. Inspect the already

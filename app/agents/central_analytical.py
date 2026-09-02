@@ -8,6 +8,8 @@ from urllib.parse import unquote, urlsplit
 from app.agents.central_question import CentralQuestionAnalysis, _ascii_fold_vietnamese
 from app.agents.central_viewpoints import annotate_viewpoints
 from app.agents.central_relationships import annotate_relationship, relationship_coverage
+from app.agents.central_targets import canonical_for, entity_type_consistent
+from app.agents.central_administration import annotate_administration, administrative_coverage
 
 
 def normalize_entity(value: str) -> str:
@@ -114,6 +116,13 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
     folded = f" {normalize_entity(text)} "
     target = target or row.get("comparison_target") or analysis.event or analysis.subject
     associated, overview, reason = entity_consistency(row, target, person=analysis.question_type == "biography") if target else (True, False, None)
+    type_match = entity_type_consistent(row, target) if target and analysis.comparison_targets else True
+    canonical_match = True
+    if target in analysis.comparison_targets:
+        canonical = canonical_for(analysis, target)
+        canonical_match = entity_consistency(row, canonical)[0]
+        overview = overview or entity_consistency(row, canonical)[1]
+        associated = associated and canonical_match and type_match
     cause_score, cause_downranked = 0, False
     dimension_text = folded
     if analysis.question_type == "cause":
@@ -138,12 +147,15 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
     viewpoints = annotate_viewpoints(text)
     row.update({
         "target_consistent": associated and not reason, "overview_anchor": overview and not reason,
+        "entity_type_consistent": type_match, "canonical_target_consistent": canonical_match,
         "entity_filter_reason": reason, "evidence_dimensions": dimensions,
         "causal_relevance": cause_score > 0 or any(f" {cue} " in dimension_text for cue in _CAUSAL),
         "cause_facet_score": cause_score, "cause_focus_downranked": cause_downranked,
         "chronology_downranked": chronology, "viewpoint_sensitive": bool(viewpoints),
         "viewpoint_annotations": viewpoints,
     })
+    if analysis.administrative_level:
+        return annotate_administration(row, analysis)
     return annotate_relationship(row, analysis) if analysis.relation_requested else row
 
 
@@ -161,6 +173,8 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
         def priority(row):
             dims = set(row.get("evidence_dimensions") or [])
             return (
+                bool(row.get("target_consistent")) and row.get("entity_type_consistent", True),
+                row.get("administrative_time_consistent", True) and row.get("freshness_sufficient", True),
                 not row.get("chronology_downranked", False),
                 not row.get("cause_focus_downranked", False) if analysis.question_type == "cause" else True,
                 bool(row.get("overview_anchor")) and not any(s.get("overview_anchor") for s in selected),
@@ -180,6 +194,7 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
 def strong_evidence(row: dict[str, Any], *, min_chars: int) -> bool:
     text = str(row.get("text") or "").strip()
     return bool(row.get("target_consistent") and row.get("citable", True)
+                and row.get("entity_type_consistent", True) and row.get("canonical_target_consistent", True)
                 and len(text) >= min_chars and len(text.split()) >= 12
                 and len(row.get("evidence_dimensions") or []) >= 2
                 and not row.get("chronology_downranked") and not row.get("cause_focus_downranked"))
@@ -189,7 +204,7 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
     dims = sorted({dim for row in selected for dim in row.get("evidence_dimensions", [])})
     balance = {}
     for target in analysis.comparison_targets:
-        group = [row for row in selected if target in evidence_targets(row)]
+        group = [annotate_evidence(row, analysis, target) for row in selected if target in evidence_targets(row)]
         strong = list({normalize_entity(str(row.get("text") or "")): row for row in group
                        if strong_evidence(row, min_chars=config.strong_evidence_min_chars)}.values())
         group_dims = {dim for row in strong for dim in row.get("evidence_dimensions", [])}
@@ -199,7 +214,11 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
             "dimensions_covered": sorted(group_dims),
             "adequate": len(strong) >= config.comparison_min_strong_sources and len(group_dims) >= 2,
         }
-    if analysis.relation_requested:
+    administrative = {}
+    if analysis.administrative_level:
+        sufficient, administrative = administrative_coverage(selected, candidates, analysis, config.strong_evidence_min_chars)
+        reason = administrative["evidence_sufficiency_reason"]
+    elif analysis.relation_requested:
         sufficient, relationship = relationship_coverage(selected, analysis)
         reason = relationship["evidence_sufficiency_reason"]
     elif analysis.question_type == "comparison":
@@ -225,4 +244,5 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
         "evidence_sufficient": sufficient,
         "viewpoint_sensitive_evidence_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
         **(relationship if analysis.relation_requested else {}),
+        **administrative,
     }

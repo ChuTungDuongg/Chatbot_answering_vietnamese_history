@@ -19,6 +19,8 @@ from app.agents.central_model_runtime import CentralGeneration, CentralLLMBacken
 from app.agents.central_policy import CentralRequestPolicy, HistoryGroundingPolicy
 from app.agents.central_prompt import BIOGRAPHY_CONTRACT, CENTRAL_SYSTEM_PROMPT, REPAIR_CONTRACT, SYNTHESIS_CONTRACT, COMPARISON_CONTRACT, VIEWPOINT_CONTRACT
 from app.agents.central_question import analytical_answer_issues, analyze_central_question, plan_analytical_queries
+from app.agents.central_targets import resolve_comparison_targets, canonical_for
+from app.agents.central_administration import administrative_contract, administrative_answer_issues, LEVEL_NAMES
 from app.agents.central_state import CentralAgentState, CentralPhase
 from app.agents.central_tools import EXTERNAL_TOOLS, bounded_tool_arguments, normalize_tool_result, qwen_tool_schemas
 from app.agents.config import CentralAgentConfig
@@ -72,7 +74,7 @@ class CentralAgent:
         if self.config.enable_wikipedia:
             allowed.update(names & {"search_wikipedia", "fetch_wikipedia_page"})
         external_web_usable = self.config.web_search_provider.strip().casefold() not in {
-            "", "none", "disabled", "local-only",
+            "", "none", "disabled", "local", "local-only",
         }
         if self.config.enable_web and external_web_usable:
             allowed.update(names & {"search_web", "fetch_web_page"})
@@ -382,7 +384,9 @@ class CentralAgent:
 
     def _target_plan_adequate(self, state, target) -> bool:
         rows = list(state.source_by_id.values())
-        if state.question_analysis.question_type == "cause":
+        if state.question_analysis.administrative_level:
+            return self._evidence_sufficient(state)
+        if state.question_analysis.question_type in {"cause", "comparison"}:
             rows = select_synthesis_evidence(rows, state.question_analysis, self.config)
         if state.question_analysis.comparison_targets:
             rows = [row for row in rows if target in evidence_targets(row)]
@@ -452,7 +456,11 @@ class CentralAgent:
             relevant = [row for row in annotated if row["target_consistent"]]
             if not relevant:
                 continue
-            best = coverage_select(relevant, state.question_analysis, 1)[0]
+            # Entity and canonical overview beat generic facet keywords and rank 1.
+            best = max(relevant, key=lambda row: (bool(row.get("overview_anchor")),
+                bool(row.get("canonical_target_consistent", True)),
+                bool(row.get("administrative_time_consistent", True)),
+                row.get("cause_facet_score", 0), -int(row.get("retrieval_rank", 999))))
             metadata = best.get("metadata") or {}
             page = metadata.get("page_id") or best.get("page_id") or best.get("title")
             if not page:
@@ -476,13 +484,39 @@ class CentralAgent:
             if balance["adequate"]:
                 continue
             call_id = f"central_wiki_search_{len(calls)}"
-            calls.append(CentralToolCall(call_id, "search_wikipedia", {"query": target, "language": "vi", "top_k": self.config.max_tool_results}))
+            calls.append(CentralToolCall(call_id, "search_wikipedia", {"query": canonical_for(state.question_analysis, target), "language": "vi", "top_k": self.config.max_tool_results}))
             targets[call_id] = target
             if target not in state.target_specific_queries.setdefault(target, []):
                 state.target_specific_queries[target].append(target)
         if calls:
             await self._execute_tool_calls(state, tuple(calls), context=context, trace_phase="wikipedia_search", grounding_targets=targets, progress=progress)
             await self._fetch_wikipedia_results(state, context, progress)
+
+    async def _current_source_fallback(self, state, context, progress):
+        """At most one current search/fetch per provider, without action generations."""
+        state.reliability["current_source_fallback_reason"] = state.evidence_debug["evidence_sufficiency_reason"]
+        query = next(iter(plan_analytical_queries(state.question_analysis).values()))[0]
+        if {"search_wikipedia", "fetch_wikipedia_page"} <= state.allowed_tools:
+            state.reliability["current_source_fallback_used"] = True
+            await self._execute_tool_calls(state, (CentralToolCall("current_wiki", "search_wikipedia",
+                {"query": query, "language": "vi", "top_k": self.config.max_tool_results}),),
+                context=context, trace_phase="current_source_search", progress=progress)
+            await self._fetch_wikipedia_results(state, context, progress)
+        if self._evidence_sufficient(state) or "search_web" not in state.allowed_tools:
+            return
+        state.reliability["current_source_fallback_used"] = True
+        await self._execute_tool_calls(state, (CentralToolCall("current_web", "search_web",
+            {"query": query, "top_k": self.config.max_tool_results}),),
+            context=context, trace_phase="current_source_search", progress=progress)
+        if "fetch_web_page" in state.allowed_tools:
+            rows = [row for row in state.retrieval_candidates if row.get("retrieval_tool") == "search_web" and row.get("url")]
+            relevant = [annotate_evidence({**row, "text": str(row.get("title") or "") + ". "
+                         + str(row.get("text") or row.get("snippet") or "")}, state.question_analysis) for row in rows]
+            relevant = [row for row in relevant if row["target_consistent"]]
+            if relevant:
+                best = coverage_select(relevant, state.question_analysis, 1)[0]
+                await self._execute_tool_calls(state, (CentralToolCall("current_web_fetch", "fetch_web_page",
+                    {"url": best["url"], "max_chars": 6000}),), context=context, trace_phase="current_source_fetch", progress=progress)
 
     async def _relationship_fallback(self, state, context, progress):
         # Identity and co-occurrence local queries already ran in initial grounding.
@@ -555,6 +589,7 @@ class CentralAgent:
         if telemetry is not None:
             telemetry.central_quality.update(state.evidence_debug)
         instruction = SYNTHESIS_CONTRACT + "\n" + VIEWPOINT_CONTRACT
+        instruction += administrative_contract(state.question_analysis)
         if state.question_analysis.question_type == "biography":
             instruction += "\n" + BIOGRAPHY_CONTRACT
         if state.question_analysis.relation_requested:
@@ -578,6 +613,10 @@ class CentralAgent:
         risks = grounding_risks(citations.answer, state.question, packet)
         state.grounding_risk_checks.append({"stage": stage, **risks})
         issues: list[str] = []
+        premise_issues = administrative_answer_issues(citations.answer, state.question_analysis, packet)
+        issues.extend(premise_issues)
+        if state.question_analysis.administrative_level and state.question_analysis.premise_requires_validation:
+            state.evidence_debug["premise_validation_status"] = "unsupported_start_claim" if premise_issues else "evidence_qualified"
         if not citations.answer.strip():
             issues.append("empty_answer")
         if risks["unsupported_named_claims"] or risks["unsupported_years"]:
@@ -635,6 +674,9 @@ class CentralAgent:
             self._schema_cache[schema_key] = qwen_tool_schemas(self.tool_registry, allowed_tools)
         schemas = self._schema_cache[schema_key]
         analysis = analyze_central_question(question)
+        if analysis.comparison_targets:
+            resolver = getattr(self.tool_registry.get("search_history"), "resolve_entity_title", None) if "search_history" in allowed_tools else None
+            analysis = await asyncio.to_thread(resolve_comparison_targets, analysis, resolver)
         history_debug = {}
         history = compact_history(question, history, max_messages=self.config.history_max_messages, char_budget=self.config.history_char_budget, debug=history_debug)
         decision = self.request_policy.grounding_for(question)
@@ -652,6 +694,7 @@ class CentralAgent:
         if progress is not None:
             progress["state"] = state
             state.reliability.update(progress.get("readiness", {}))
+        state.reliability.update(repair_reasons=[], current_source_fallback_used=False, current_source_fallback_reason=None)
         state.evidence_debug.update(history_input_chars=sum(len(item["content"]) for item in history), history_input_turns=len(history))
         state.evidence_debug.update(history_debug)
         context = ToolExecutionContext(
@@ -686,9 +729,12 @@ class CentralAgent:
         if not sufficient and analysis.comparison_targets:
             await self._comparison_fallback(state, context, progress)
             sufficient = self._evidence_sufficient(state)
+        if not sufficient and analysis.administrative_level:
+            await self._current_source_fallback(state, context, progress)
+            sufficient = self._evidence_sufficient(state)
         # Comparison retrieval is fully deterministic and bounded. Exhausting its
         # search/fetch plan returns insufficient evidence, not a speculative answer.
-        if not sufficient and not analysis.comparison_targets and not analysis.relation_requested and schemas and self.config.max_action_rounds > 0:
+        if not sufficient and not analysis.comparison_targets and not analysis.relation_requested and not analysis.administrative_level and schemas and self.config.max_action_rounds > 0:
             state.transition(CentralPhase.ACTION)
             for round_index in range(self.config.max_action_rounds):
                 state.messages.append({"role": "user", "content": (
@@ -775,6 +821,7 @@ class CentralAgent:
             ):
                 state.repair_attempted = True
                 state.repair_reason = quality_issues[0]
+                state.reliability["repair_reasons"] = list(quality_issues)
                 state.repair_budget = self._repair_budget(generation, state.final_answer)
                 state.reliability["full_quality_repair_used"] = True
                 state.transition(CentralPhase.QUALITY_REPAIR)
@@ -783,7 +830,7 @@ class CentralAgent:
                     {
                         "role": "user",
                         "content": (
-                            REPAIR_CONTRACT + "\nLỗi cần sửa: " + ", ".join(quality_issues) + "."
+                            REPAIR_CONTRACT + "\nLỗi cần sửa (tất cả): " + json.dumps(state.reliability["repair_reasons"], ensure_ascii=False) + "."
                             "\nRủi ro: " + json.dumps(state.grounding_risk_checks[-1], ensure_ascii=False)
                             + "\nTên không được hỗ trợ: " + json.dumps(state.grounding_risk_checks[-1].get("unsupported_named_claims", []), ensure_ascii=False)
                             + ". Xóa hoàn toàn các tên này và khẳng định tùy chọn liên quan nếu gói bằng chứng không hỗ trợ. Không thay bằng một dữ kiện thiếu căn cứ khác."
@@ -812,6 +859,8 @@ class CentralAgent:
                 "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases", "uncited_factual_paragraphs",
                 "comparison_citation_target_mismatch", "comparison_target_missing", "unattributed_viewpoint",
                 "comparison_similarity_missing", "comparison_difference_missing",
+                "historical_significance_missing", "explanatory_content_missing",
+                "unsupported_administrative_premise",
                 "empty_answer",
                 "unsupported_relationship_claim", "relationship_primary_identity_missing",
             )):
@@ -837,6 +886,17 @@ class CentralAgent:
             else:
                 failure_reason = "evidence_insufficient"
             state.final_answer = FAILURE_ANSWERS[failure_reason]
+            if failure_reason == "evidence_insufficient" and analysis.administrative_level:
+                state.final_answer = ("Kho tư liệu hiện tại chưa đủ nguồn cập nhật, đúng "
+                    + LEVEL_NAMES[analysis.administrative_level] + " để xác nhận "
+                    + ("nguyên nhân " if analysis.question_type == "cause" else "nội dung ")
+                    + "của đợt sắp xếp được hỏi" + (" năm " + ", ".join(map(str, analysis.time_scope)) if analysis.time_scope else "") + ".")
+            elif failure_reason == "evidence_insufficient" and analysis.comparison_targets:
+                balance = state.evidence_debug.get("comparison_balance", {})
+                found = [target for target, item in balance.items() if item["adequate"]]
+                missing = [target for target, item in balance.items() if not item["adequate"]]
+                state.final_answer = (("Đã tìm thấy nguồn về " + ", ".join(found) + " nhưng " if found else "")
+                    + "chưa đủ nguồn đáng tin cậy về " + ", ".join(missing) + " để thực hiện so sánh đầy đủ.")
         state.reliability["final_failure_reason"] = failure_reason
         status = "insufficient_evidence" if failure_reason == "evidence_insufficient" else failure_reason or "ok"
         final_risks = state.grounding_risk_checks[-1] if state.grounding_risk_checks else {}

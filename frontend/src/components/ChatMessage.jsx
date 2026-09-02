@@ -2,7 +2,7 @@ import { createContext, useContext, useState } from "react";
 import { BookOpenText, Check, Copy, Info } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import LogoMark from "./LogoMark";
+import BrandMark from "./BrandMark";
 import DeveloperTrace from "./DeveloperTrace";
 import { CHAT_MODES } from "../config/chatModes";
 import { displayAnswer, indexedSources, remarkSourceCitations } from "../services/citations";
@@ -61,7 +61,7 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
     <article className={`message-row ${isUser ? "user-message" : "assistant-message"}`}>
       <div className="message-body">
         <div className="message-author">
-          {!isUser && <LogoMark />}
+          {!isUser && <BrandMark size={28} />}
           <span>{isUser ? "Bạn" : "Sử Việt AI"}</span>
           {!isUser && modeLabel && <small>{modeLabel}</small>}
         </div>

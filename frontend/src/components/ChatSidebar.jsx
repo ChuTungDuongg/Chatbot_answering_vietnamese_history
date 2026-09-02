@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import LogoMark from "./LogoMark";
+import BrandMark from "./BrandMark";
 
 function ChatSidebar({
   conversations,
@@ -59,7 +59,7 @@ function ChatSidebar({
     <aside className={`chat-sidebar ${isOpen ? "is-open" : ""}`} aria-label="Lịch sử trò chuyện" inert={!isOpen} aria-hidden={!isOpen}>
       <div className="sidebar-brand-row">
         <div className="sidebar-brand">
-          <LogoMark />
+          <BrandMark size={32} />
           <span>
             <strong>Sử Việt AI</strong>
             <small>Một góc nhìn về quá khứ</small>

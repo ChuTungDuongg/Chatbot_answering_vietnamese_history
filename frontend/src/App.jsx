@@ -13,7 +13,7 @@ import AttachmentTray from "./components/AttachmentTray";
 import ChatInput from "./components/ChatInput";
 import ChatMessage from "./components/ChatMessage";
 import ChatSidebar, { SidebarOpenButton } from "./components/ChatSidebar";
-import LogoMark from "./components/LogoMark";
+import BrandMark from "./components/BrandMark";
 import EmptyState from "./components/EmptyState";
 import SourcesDrawer from "./components/SourcesDrawer";
 import StatusIndicator from "./components/StatusIndicator";
@@ -553,7 +553,7 @@ function App() {
         <header className="chat-header">
           <div className="chat-header-main">
             {!sidebarOpen && <SidebarOpenButton onClick={() => setSidebarOpen(true)} />}
-            {!sidebarOpen && <LogoMark className="header-logo" />}
+            {!sidebarOpen && <BrandMark size={27} className="header-logo" label="Sử Việt AI" />}
             <div className="chat-title">
               <h1>{activeConversation?.title || "Sử Việt AI"}</h1>
               <span>

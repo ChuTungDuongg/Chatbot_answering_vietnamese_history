@@ -3,7 +3,6 @@
 .chat-sidebar > * { flex-shrink: 0; min-width: calc(var(--sidebar-width) - 1px); }
 .sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; padding: 22px 13px 26px 22px; }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; }
-.sidebar-brand .logo-mark { width: 32px; height: 32px; }
 .sidebar-brand span { display: grid; gap: 5px; }
 .sidebar-brand strong { font-size: 14px; font-weight: 600; letter-spacing: -.3px; }
 .sidebar-brand small { font-size: 8.5px; color: var(--text-muted); }

@@ -15,7 +15,7 @@ from app.agents.central_relationships import select_relationship_evidence, menti
 from app.agents.central_entity_aliases import evidence_aliases
 from app.agents.config import CentralAgentConfig
 from app.agents.central_analytical import (
-    annotate_evidence, coverage_select, evidence_targets, strong_evidence, entity_consistency, normalize_entity,
+    annotate_evidence, coverage_select, evidence_targets, strong_evidence, normalize_entity,
 )
 
 
@@ -201,7 +201,7 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
         if analysis.comparison_targets:
             # Merging versions or truncating text must not confer another target's
             # support on a source that no longer contains that evidence.
-            verified = [target for target in evidence_targets(item) if entity_consistency(item, target)[0]]
+            verified = [target for target in evidence_targets(item) if annotate_evidence(item, analysis, target)["target_consistent"]]
             if not verified:
                 continue
             item.update(comparison_target=verified[0], comparison_targets=verified)

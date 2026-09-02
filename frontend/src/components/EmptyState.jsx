@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { ArrowUpRight, Compass, Landmark, ScrollText, Swords } from "lucide-react";
-import LogoMark from "./LogoMark";
+import BrandMark from "./BrandMark";
 
 const SUGGESTIONS = [
   { icon: Compass, label: "Tìm hiểu nguyên nhân", question: "Vì sao Cách mạng Tháng Tám thành công?" },
@@ -13,7 +13,7 @@ function EmptyState({ children, onSuggestion }) {
   const rootRef = useRef(null);
   return (
     <section className="welcome-state" ref={rootRef} aria-labelledby="welcome-title">
-      <div className="welcome-identity"><LogoMark /><span>Sử Việt AI</span></div>
+      <div className="welcome-identity"><BrandMark size={33} /><span>Sử Việt AI</span></div>
       <h2 id="welcome-title">Lịch sử bắt đầu từ<br /><span>một câu hỏi.</span></h2>
       <p>Khám phá lịch sử Việt Nam qua nguồn tư liệu và phân tích.</p>
       <div className="welcome-composer">{children}</div>

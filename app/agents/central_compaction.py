@@ -36,7 +36,12 @@ def excerpt_evidence(text: str, analysis, limit: int) -> str:
         words = set(folded.split())
         dims = {dim for dim, cues in DIMENSION_CUES.items() if any(cue in folded for cue in cues)}
         cause = 8 * cause_sentence_relevance(value) if analysis.question_type == "cause" and not requested & {"result", "significance", "consequence"} else 0
-        return len(words & query) + 3 * len(dims & requested) + len(dims) + cause
+        administrative = 0
+        if analysis.administrative_level:
+            from app.agents.central_administration import annotate_administration
+            relevance = annotate_administration({"text": value}, analysis)
+            administrative = 30 * relevance["administrative_level_consistent"] + 15 * bool(relevance["policy_cause_spans"])
+        return len(words & query) + 3 * len(dims & requested) + len(dims) + cause + administrative
     ranked = sorted(range(len(units)), key=lambda i: (-score(units[i]), i))
     chosen: set[int] = set()
     window_count = 0

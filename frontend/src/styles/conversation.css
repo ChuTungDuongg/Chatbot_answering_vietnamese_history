@@ -1,7 +1,6 @@
 .message-row { position: relative; margin-bottom: 40px; min-width: 0; }
 .message-body { min-width: 0; }
 .message-author { display: flex; align-items: center; gap: 10px; margin-bottom: 19px; font-size: 13px; font-weight: 550; }
-.message-author .logo-mark { width: 28px; height: 28px; }
 .message-author small { margin-left: 2px; color: var(--text-muted); font-size: 10px; font-weight: 400; }
 .message-content { font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; color: var(--text-primary); }
 .user-message { display: flex; justify-content: flex-end; margin-bottom: 42px; }
