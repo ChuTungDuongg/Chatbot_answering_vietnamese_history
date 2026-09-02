@@ -190,6 +190,40 @@ export function chatSessionReducer(state, action) {
     case "SOURCES_SHOWN":
       return { ...state, sources: action.sources };
 
+    case "UPLOAD_QUEUED":
+      return { ...state, pendingUploads: [...state.pendingUploads, ...action.items], error: "" };
+
+    case "UPLOAD_PROGRESS":
+      return {
+        ...state,
+        pendingUploads: state.pendingUploads.map((item) =>
+          item.id === action.id ? { ...item, status: action.status } : item),
+      };
+
+    case "UPLOAD_SETTLED": {
+      const pendingUploads = state.pendingUploads.filter((item) => item.id !== action.id);
+      if (!action.attachment) {
+        return { ...state, pendingUploads, error: action.error ?? state.error };
+      }
+      return {
+        ...state,
+        pendingUploads,
+        attachments: [
+          ...state.attachments.filter((item) => item.id !== action.attachment.id),
+          action.attachment,
+        ],
+      };
+    }
+
+    case "ATTACHMENT_REMOVED":
+      return {
+        ...state,
+        attachments: state.attachments.filter((item) => item.id !== action.attachmentId),
+      };
+
+    case "ATTACHMENTS_SYNCED":
+      return { ...state, conversations: action.conversations, attachments: action.attachments };
+
     case "ERROR_SET":
       return { ...state, error: action.message };
 
