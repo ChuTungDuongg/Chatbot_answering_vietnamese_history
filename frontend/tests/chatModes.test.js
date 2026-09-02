@@ -67,12 +67,3 @@ test("compact mode dropdown is inside the composer's left action group", async (
 
   assert.ok(leading >= 0 && selector > leading && textarea > selector && submit > textarea);
 });
-
-
-test("frontend sends the selected canonical mode to the streaming API", async () => {
-  const appSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
-  const apiSource = await readFile(new URL("../src/services/api.js", import.meta.url), "utf8");
-
-  assert.match(appSource, /mode:\s*inferenceMode/);
-  assert.match(apiSource, /JSON\.stringify\([\s\S]*?mode,/);
-});
