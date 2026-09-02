@@ -45,6 +45,8 @@ Hệ quả cụ thể:
 
 ```
 src/config/messages.js            hằng số thông báo, thuần, không chạm import.meta.env
+src/state/ids.js                  createLocalId, thuần
+src/state/normalizers.js          chuẩn hoá payload backend, thuần
 src/state/chatSessionReducer.js   thuần, không import React
 src/state/uploadQueue.js          thuần: validate file, chuẩn hoá MIME, dựng queue
 src/hooks/useChatSession.js       useReducer + action async cho CRUD hội thoại
@@ -132,7 +134,9 @@ Tất cả action đều thuần và đồng bộ. Gọi API là việc của ho
 
 ### 4.1 Test thuần cho reducer và upload queue
 
-Sau khi đổi `npm test` sang Vitest thì mọi test đều chạy qua một runner. Nhưng test cho `chatSessionReducer.js` và `uploadQueue.js` vẫn viết bằng API `node:test` + `node:assert/strict`, và hai module đó **không được import bất cứ thứ gì chạm `import.meta.env`** — nhờ vậy chúng chạy được bằng cả `vitest run` lẫn `node --test` trực tiếp, không cần DOM, không cần Vite. Đây là ràng buộc kiến trúc chứ không phải sở thích: nó ép logic nghiệp vụ tách khỏi tầng vận chuyển.
+Test cho `chatSessionReducer.js`, `uploadQueue.js`, `normalizers.js`, `ids.js` viết bằng API `node:test` + `node:assert/strict`, đặt ở `tests/*.test.js` và chạy bằng `node --test` — đúng như repo đang làm.
+
+Ràng buộc đi kèm: các module này **không được import bất cứ thứ gì chạm `import.meta.env`**. Đây là ràng buộc kiến trúc chứ không phải sở thích. Vì test chạy bằng `node` trần, không có Vite, nên nếu ai đó lỡ để reducer phụ thuộc vào tầng vận chuyển thì test vỡ ngay lúc import — một cái phanh tự động, không cần lint rule.
 
 Các case cần phủ:
 
@@ -155,9 +159,36 @@ Mock `src/services/api.js`:
 
 ### 4.3 Thay đổi package.json
 
-Thêm `vitest`, `jsdom`, `@testing-library/react`, `@testing-library/jest-dom` vào `devDependencies`. `npm test` đổi từ `node --test tests/*.test.js` sang `vitest run`.
+Thêm `vitest`, `jsdom`, `@testing-library/react`, `@testing-library/jest-dom` vào `devDependencies`.
 
-Ba file test hiện có viết bằng `node:assert/strict` và `node:test`; Vitest chạy được cả ba không cần đổi runner API. Mốc đối chiếu hiện tại: `npm test` xanh 9/9.
+**Hai runner, phân chia theo thư mục.** Đã kiểm chứng bằng thực nghiệm (Vitest 4.1.11, Node 24.16): Vitest **không** chạy được test viết bằng API `node:test`. Nó nạp file, Node chạy ké phần thân, còn Vitest đếm `(0 test)` rồi fail cả suite với `Error: No test suite found in file`. Giả định ban đầu rằng "Vitest chạy được ba file cũ không cần sửa" là sai.
+
+Bố cục thay thế, đã chạy thử và xanh cả hai phía:
+
+```
+tests/*.test.js          node:test  -> node --test tests/*.test.js
+tests/ui/*.test.jsx      Vitest+RTL -> vitest run
+```
+
+```js
+// vitest.config.js
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    include: ["tests/ui/**/*.test.{js,jsx}"],
+    environment: "jsdom",
+    setupFiles: ["tests/ui/setup.js"],
+  },
+});
+```
+
+```json
+"test": "node --test tests/*.test.js && vitest run"
+```
+
+Phải giới hạn `include` cho Vitest, nếu không nó vơ luôn ba file cũ ở `tests/` rồi fail. Chiều ngược lại tự an toàn: glob `tests/*.test.js` không đệ quy nên `node --test` không chạm vào `tests/ui/`.
+
+Đánh đổi: hai runner, hai bản báo cáo. Đổi lại ba file test hiện có không phải sửa một dòng nào, và test thuần vẫn chạy bằng `node` trần nên giữ được cái phanh nói ở mục 4.1. Mốc đối chiếu hiện tại: `npm test` xanh 9/9.
 
 **Một test sẽ đỏ, và đó là test cần thay.** `tests/chatModes.test.js` có case `"frontend sends the selected canonical mode to the streaming API"` không kiểm tra hành vi mà đọc `App.jsx` như văn bản rồi so khớp chuỗi:
 
@@ -208,7 +239,7 @@ Sửa trong cùng nhánh vì refactor đi ngang qua đúng đoạn code này.
 
 | Rủi ro | Giảm thiểu |
 |---|---|
-| Đổi `npm test` ảnh hưởng người khác trong repo và CI | Ba file test cũ chạy được dưới Vitest không đổi runner API; mốc đối chiếu 9/9 xanh |
+| Đổi `npm test` ảnh hưởng người khác trong repo và CI | Ba file test cũ không phải sửa; `npm test` vẫn là một lệnh duy nhất, chỉ chạy thêm runner thứ hai; mốc đối chiếu 9/9 xanh |
 | Repo có thói quen viết test so khớp văn bản nguồn, loại test này đỏ theo mọi refactor | Case đã biết được thay bằng test hành vi (mục 4.3); test mới viết trong nhánh này không được so khớp văn bản nguồn |
 | Refactor lớn làm lọt bug hành vi | Test đặc tả hành vi cũ được viết trước khi chuyển code |
 | Diff lớn khó review | Chia commit theo từng đơn vị: hạ tầng test, hook độc lập, reducer, hook stream, hook upload, dọn App.jsx |
