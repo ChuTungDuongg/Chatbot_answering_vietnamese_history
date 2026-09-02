@@ -21,7 +21,11 @@
 
 > [!NOTE]
 > Central V2 hiện chạy `Qwen/Qwen3-8B` base với `CENTRAL_AGENT_ADAPTER_PATH` để trống. Adapter Central V1 có thể còn được lưu làm baseline nhưng không nằm trong config/manifest/lock production. Adapter V2 tương lai chỉ được nạp khi cấu hình rõ `adapters/central-v2`.
-![alt text](image-1.png)
+
+<p align="center">
+  <img src="image-1.png" alt="Demo giao diện trợ lý lịch sử Việt Nam" width="100%" />
+</p>
+
 ## ✨ Tổng quan
 
 Hệ thống có ba mode user-facing tách biệt:
