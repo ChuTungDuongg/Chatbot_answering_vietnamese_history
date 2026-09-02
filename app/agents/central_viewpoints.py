@@ -102,8 +102,9 @@ def _direct_quote_match(claim: str, excerpt: str) -> tuple[float, str] | None:
             return match.size / len(quoted), "answer_quotation_matches_sensitive_span"
     match = SequenceMatcher(None, claim_words, quote_words, autojunk=False).find_longest_match()
     meaningful = set(claim_words[match.a:match.a + match.size]) - _FUNCTION_WORDS
-    if match.size >= 8 and len(meaningful) >= 4:
-        return match.size / min(len(claim_words), len(quote_words)), "contiguous_sensitive_span_copy"
+    overlap = match.size / max(1, min(len(claim_words), len(quote_words)))
+    if match.size >= 8 and len(meaningful) >= 4 and overlap >= .8:
+        return overlap, "contiguous_sensitive_span_copy"
     # A complete short first-person utterance is distinctive even without marks:
     # e.g. "chúng ta nhất định thắng lợi". This exception cannot admit topic labels.
     if 5 <= len(quote_words) < 8 and match.size == len(quote_words) and _FIRST_PERSON.search(_fold(excerpt)) and len(meaningful) >= 3:
@@ -125,7 +126,43 @@ def _opinion_match(claim: str, excerpt: str) -> float:
             matcher = SequenceMatcher(None, window, quote_words, autojunk=False)
             if matcher.ratio() >= .86 and matcher.find_longest_match().size >= 3 and len((set(window) & set(quote_words)) - _FUNCTION_WORDS) >= 4:
                 return matcher.ratio()
+    # Reformulations of a longer quotation can omit first-person framing. Require
+    # the proposition's content, not merely shared historical topic vocabulary.
+    if (set(claim_words) & _NEGATION) != (set(quote_words) & _NEGATION):
+        return 0.0
+    content = set(claim_words) - _FUNCTION_WORDS
+    shared = content & (set(quote_words) - _FUNCTION_WORDS)
+    ratio = len(shared) / max(1, len(content))
+    if len(shared) >= 5 and ratio >= .75 and SequenceMatcher(None, claim_words, quote_words, autojunk=False).find_longest_match().size >= 3:
+        return ratio
     return 0.0
+
+
+def claim_neutral_support_sources(claim: str, sources: list[Any]) -> list[str]:
+    """Require a close proposition in a neutral sentence of a cited excerpt.
+
+    Titles, other sentences' keyword bags, sensitive spans, and opposite polarity
+    cannot confer support. This intentionally errs toward explicit attribution.
+    """
+    claim_words = _words(re.sub(r"\[[^\]\n]+\]", "", claim))
+    content = set(claim_words) - _FUNCTION_WORDS
+    if len(content) < 4 or _LOADED.search(_fold(claim)) or _FIRST_PERSON.search(_fold(claim)) or _QUOTES.search(claim):
+        return []
+    supported = []
+    for source in sources:
+        for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|$)", source.text):
+            if any(a.get("requires_attribution") and isinstance(a.get("start"), int) and isinstance(a.get("end"), int)
+                   and a["start"] < match.end() and a["end"] > match.start() for a in source.viewpoint_annotations):
+                continue
+            words = _words(match.group())
+            if (set(claim_words) & _NEGATION) != (set(words) & _NEGATION):
+                continue
+            # All content is required: a shared subject cannot neutralize a new
+            # evaluation, quantifier, date, or predicate grafted onto that subject.
+            if content <= set(words) and SequenceMatcher(None, claim_words, words, autojunk=False).ratio() >= .78:
+                supported.append(source.alias)
+                break
+    return list(dict.fromkeys(supported))
 
 
 def _concrete_span(source: Any, annotation: dict[str, Any]) -> str | None:
@@ -149,10 +186,10 @@ def _attributed(sentence: str, hint: str | None) -> bool:
                 or re.search(r"\b(?:la|trich) (?:loi tuyen bo|loi ke|khau hieu|nhan dinh|quan diem)\b", folded))
 
 
-def viewpoint_attribution_issues(paragraph: str, cited_sources: list[Any]) -> list[dict[str, Any]]:
+def viewpoint_attribution_issues(paragraph: str, cited_sources: list[Any], *, packet=None, cross_support=None) -> list[dict[str, Any]]:
     """Only actual answer claims matter; never inspect viewpoint_sensitive booleans."""
     issues = []
-    source_annotations = [(source.alias, annotation, span) for source in cited_sources
+    source_annotations = [(source.alias, annotation, span) for source in (packet if packet is not None else cited_sources)
                           for annotation in source.viewpoint_annotations if annotation.get("requires_attribution")
                           if (span := _concrete_span(source, annotation))]
     for sentence in re.split(r"(?<=[.!?])\s+|\n", paragraph):
@@ -163,7 +200,7 @@ def viewpoint_attribution_issues(paragraph: str, cited_sources: list[Any]) -> li
             direct = _direct_quote_match(sentence, span) if annotation["type"] == "direct_quote" else None
             if direct:
                 matched.append((alias, annotation, "direct_quote", direct[0], direct[1]))
-            elif (annotation.get("attribution_hint") or annotation.get("reason") == "attributed_speech" or annotation["type"] in {"attributed_opinion", "evaluative_language"}) and (score := _opinion_match(sentence, span)):
+            elif (score := _opinion_match(sentence, span)):
                 matched.append((alias, annotation, "viewpoint_paraphrase", score, "close_match_to_specific_attributed_proposition"))
         # High-confidence loaded language or first-person speech is also unsafe
         # when invented by the answer rather than copied from a supplied source.
@@ -177,10 +214,18 @@ def viewpoint_attribution_issues(paragraph: str, cited_sources: list[Any]) -> li
             # An answer's quotation may inherit a known speaker from the matching source.
             if alias is None and any(_attributed(sentence, a.get("attribution_hint")) for _, a, _, _, _ in matched):
                 continue
+            neutral_sources = claim_neutral_support_sources(sentence, cited_sources) if kind in {"viewpoint_paraphrase", "direct_quote"} else []
+            if neutral_sources:
+                if cross_support is not None:
+                    item = {"claim": sentence.strip(), "claim_neutral_support_sources": neutral_sources}
+                    if item not in cross_support:
+                        cross_support.append(item)
+                continue
             issues.append({"source_alias": alias, "type": kind,
                            "answer_claim": sentence.strip(), "matched_sensitive_span": annotation["text"] if alias else None,
                            "overlap_score": round(score, 4) if score is not None else None,
                            "attribution_hint": annotation.get("attribution_hint"), "reason": reason,
+                           "claim_neutral_support_sources": neutral_sources,
                            # Retain existing debug/repair consumers while providing explicit fields.
                            "claim": sentence.strip(), "source_excerpt": annotation["text"] if alias else None})
     # Multiple annotations can describe the same claim; report it once.
@@ -188,3 +233,12 @@ def viewpoint_attribution_issues(paragraph: str, cited_sources: list[Any]) -> li
     for issue in issues:
         by_claim.setdefault(issue["answer_claim"], issue)
     return list(by_claim.values())
+
+
+def viewpoint_repair_plan(issues):
+    return [{"issue_type": issue["type"], "claim": issue["answer_claim"],
+             "matched_sensitive_span": issue.get("matched_sensitive_span"),
+             "attribution_hint": issue.get("attribution_hint"),
+             "recommended_action": ("remove_or_neutralize" if not issue.get("attribution_hint") else
+                                    "attribute_or_remove_quote" if issue["type"] == "direct_quote" else "attribute_or_remove")}
+            for issue in issues]

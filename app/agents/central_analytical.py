@@ -11,6 +11,7 @@ from app.agents.central_relationships import annotate_relationship, relationship
 from app.agents.central_targets import canonical_for, entity_type_consistent
 from app.agents.central_administration import annotate_administration, administrative_coverage
 from app.agents.central_facets import evidence_facets, facet_coverage, multi_facet, neutral_preference, viewpoint_cost
+from app.agents.central_depth import dimension_spans, actor_scope
 
 
 def normalize_entity(value: str) -> str:
@@ -55,7 +56,16 @@ _ARTIFACT = re.compile(r"\b(?:bai hat|ca khuc|nhac pham|tac pham am nhac|duong p
 
 
 def viewpoint_sensitive(text: str) -> bool:
-    return bool(annotate_viewpoints(text))
+    return any(a["requires_attribution"] for a in annotate_viewpoints(text))
+
+
+def source_role(row, sensitive):
+    title = normalize_entity(str(row.get("title") or ""))
+    if re.search(r"\b(?:huyen thoai|su hoc|su ky|tranh luan|quan diem|cach dien giai)\b", title):
+        return "historiography"
+    if not row.get("target_consistent", True) or row.get("cause_focus_downranked") or row.get("chronology_downranked"):
+        return "incidental"
+    return "viewpoint" if sensitive else "primary_factual"
 
 
 def cause_sentence_relevance(text: str) -> int:
@@ -110,8 +120,12 @@ def entity_consistency(row: dict[str, Any], target: str, *, person: bool = False
         if re.search(r"\((?:thành phố|city|địa danh)\)", raw_title, re.I):
             return False, False, "event_city_collision"
         # A calendar/month page is not the revolution, even if its body mentions it.
-        if re.match(r"^(?:cach mang|chien tranh|khoi nghia)\b", key) and title and not associated:
-            return False, False, "event_entity_mismatch"
+        if title and not associated:
+            from app.agents.central_targets import entity_head
+            # An explicitly different named event is a mismatch. An untyped
+            # overview lacking the exact query wording is only unconfirmed.
+            if entity_head(raw_title)[0]:
+                return False, False, "event_entity_mismatch"
         if key.startswith("cach mang ") and title == key.removeprefix("cach mang "):
             return False, False, "event_calendar_collision"
     return associated, canonical, None
@@ -123,6 +137,11 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
     folded = f" {normalize_entity(text)} "
     target = target or row.get("comparison_target") or analysis.event or analysis.subject
     associated, overview, reason = entity_consistency(row, target, person=analysis.question_type == "biography") if target else (True, False, None)
+    if analysis.question_type == "cause" and not analysis.event and analysis.actors and analysis.subject == " và ".join(analysis.actors):
+        associated = bool(actor_scope(text, analysis.actors))
+        overview = any(normalize_entity(str(row.get("title") or "")) == normalize_entity(actor) for actor in analysis.actors)
+        if associated:
+            reason = None
     type_match = entity_type_consistent(row, target) if target and analysis.comparison_targets else True
     canonical_match = True
     if target in analysis.comparison_targets:
@@ -158,30 +177,72 @@ def annotate_evidence(row: dict[str, Any], analysis: CentralQuestionAnalysis, ta
         "entity_filter_reason": reason, "evidence_dimensions": dimensions,
         "causal_relevance": cause_score > 0 or any(f" {cue} " in dimension_text for cue in _CAUSAL),
         "cause_facet_score": cause_score, "cause_focus_downranked": cause_downranked,
-        "chronology_downranked": chronology, "viewpoint_sensitive": bool(viewpoints),
+        "chronology_downranked": chronology, "viewpoint_sensitive": any(a["requires_attribution"] for a in viewpoints),
         "viewpoint_annotations": viewpoints,
         "viewpoint_cost": viewpoint_cost(text),
+        "target_match_uncertain": not associated and reason is None and type_match,
     })
     row["evidence_facets"] = evidence_facets(row)
     if analysis.administrative_level:
-        return annotate_administration(row, analysis)
-    return annotate_relationship(row, analysis) if analysis.relation_requested else row
+        row = annotate_administration(row, analysis)
+        row["target_match_uncertain"] = not row["target_consistent"] and not row["evidence_administrative_levels"]
+        if not row["target_consistent"]:
+            # Explicit wrong level is incompatible; absence of a unit is unknown.
+            if not row["target_match_uncertain"]:
+                row["entity_filter_reason"] = "administrative_level_mismatch"
+    elif analysis.relation_requested:
+        row = annotate_relationship(row, analysis)
+        row["target_match_uncertain"] = not row["target_consistent"] and reason is None
+    row["source_role"] = source_role(row, row["viewpoint_sensitive"])
+    row["strong_evidence_dimensions"] = sorted(dimension_spans(text)) if row["target_consistent"] and not chronology and not cause_downranked else []
+    row["actor_scope"] = actor_scope(text, analysis.actors)
+    return row
 
 
 def evidence_targets(row: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys([*(row.get("comparison_targets") or []), *([row["comparison_target"]] if row.get("comparison_target") else [])]))
 
 
-def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysis, limit: int) -> list[dict[str, Any]]:
+def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysis, limit: int, *, min_chars: int = 100) -> list[dict[str, Any]]:
     """Greedy new-dimension gain with an overview reservation; ranks are batch-local."""
     pending = list(rows)
     selected: list[dict[str, Any]] = []
     covered: set[str] = set()
     requested = set(analysis.facets)
     facet_covered = set()
+    actors_covered = set()
     while pending and len(selected) < limit:
         def priority(row):
             dims = set(row.get("evidence_dimensions") or [])
+            if analysis.answer_depth == "broad_analysis" and neutral_preference(analysis):
+                dims = set(row.get("strong_evidence_dimensions") or [])
+                gain = dims - covered
+                actor_gain = set(row.get("actor_scope", [])) - actors_covered
+                usable = strong_evidence(row, min_chars=min_chars)
+                # Compare actual excerpt coverage, including a single causal dimension.
+                # Any required sensitive span has a cost; quote density is not a gate.
+                equivalent_neutral = row.get("viewpoint_sensitive") and any(
+                    not other.get("viewpoint_sensitive") and other.get("source_role") == "primary_factual"
+                    and strong_evidence(other, min_chars=min_chars)
+                    and gain <= set(other.get("strong_evidence_dimensions", []))
+                    and actor_gain <= set(other.get("actor_scope", []))
+                    and row.get("cause_facet_score", 0) <= other.get("cause_facet_score", 0) + 1
+                    for other in pending + selected if other is not row)
+                factual_gain = any(other.get("source_role") == "primary_factual"
+                    and strong_evidence(other, min_chars=min_chars)
+                    and (set(other.get("strong_evidence_dimensions", [])) - covered or other.get("overview_anchor"))
+                    for other in pending if other is not row)
+                return (
+                    bool(row.get("target_consistent")), not row.get("chronology_downranked", False),
+                    not row.get("cause_focus_downranked", False), usable,
+                    len((set(row.get("evidence_facets", [])) & requested) - facet_covered) if multi_facet(analysis) else 0,
+                    not (row.get("source_role") == "historiography" and factual_gain),
+                    not equivalent_neutral,
+                    bool(row.get("overview_anchor")) and row.get("source_role") == "primary_factual" and not any(s.get("overview_anchor") for s in selected),
+                    bool(actor_gain), len(gain),
+                    row.get("source_role") == "primary_factual", -row.get("viewpoint_cost", 0),
+                    bool(row.get("overview_anchor")), -int(row.get("retrieval_rank", 999)),
+                )
             neutral_alternative = neutral_preference(analysis) and row.get("viewpoint_cost", 0) > .25 and any(
                 other.get("viewpoint_cost", 0) <= .1 and other.get("target_consistent") and len(str(other.get("text") or "")) >= 100
                 and len(dims & set(other.get("evidence_dimensions", []))) >= 2
@@ -204,8 +265,9 @@ def coverage_select(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysi
         best = max(pending, key=priority)
         pending.remove(best)
         selected.append(best)
-        covered.update(best.get("evidence_dimensions") or [])
+        covered.update(best.get("strong_evidence_dimensions" if analysis.answer_depth == "broad_analysis" and neutral_preference(analysis) else "evidence_dimensions") or [])
         facet_covered.update(best.get("evidence_facets") or [])
+        actors_covered.update(best.get("actor_scope") or [])
     return selected
 
 
@@ -220,6 +282,8 @@ def strong_evidence(row: dict[str, Any], *, min_chars: int) -> bool:
 
 def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, Any]], analysis: CentralQuestionAnalysis, config) -> tuple[bool, dict[str, Any]]:
     dims = sorted({dim for row in selected for dim in row.get("evidence_dimensions", [])})
+    strong_dims = sorted({dim for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)
+                          for dim in dimension_spans(str(row.get("text") or ""))})
     balance = {}
     for target in analysis.comparison_targets:
         group = [annotate_evidence(row, analysis, target) for row in selected if target in evidence_targets(row)]
@@ -249,7 +313,7 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
     elif analysis.question_type == "cause" and (analysis.event or analysis.subject):
         strong = [row for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
         causal = any(row.get("causal_relevance") for row in strong)
-        breadth = {dim for row in strong for dim in row.get("evidence_dimensions", [])} & CAUSE_DIMENSIONS
+        breadth = set(strong_dims) if analysis.answer_depth == "broad_analysis" else {dim for row in strong for dim in row.get("evidence_dimensions", [])} & CAUSE_DIMENSIONS
         sufficient = bool(strong and causal and len(breadth) >= 2)
         reason = "causal_target_and_dimension_coverage" if sufficient else "causal_coverage_insufficient"
     elif analysis.question_type == "biography" and analysis.subject:
@@ -263,6 +327,7 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
         "comparison_target_evidence_counts": {target: item["selected_count"] for target, item in balance.items()},
         "overview_anchor_selected": [row.get("chunk_id") for row in selected if row.get("overview_anchor")],
         "evidence_dimensions_covered": dims, "evidence_sufficiency_reason": reason,
+        "strong_evidence_dimensions": strong_dims,
         "evidence_sufficient": sufficient,
         "viewpoint_sensitive_evidence_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
         **(relationship if analysis.relation_requested else {}),
@@ -271,4 +336,8 @@ def coverage_report(selected: list[dict[str, Any]], candidates: list[dict[str, A
         "neutral_evidence_selected_count": sum(not row.get("viewpoint_sensitive") for row in selected),
         "viewpoint_evidence_selected_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
         "neutral_evidence_preference": neutral_preference(analysis),
+        "selected_neutral_evidence_count": sum(not row.get("viewpoint_sensitive") for row in selected),
+        "selected_viewpoint_evidence_count": sum(bool(row.get("viewpoint_sensitive")) for row in selected),
+        "selected_historiography_evidence_count": sum(row.get("source_role") == "historiography" for row in selected),
+        "selected_actor_coverage": {actor: [row.get("chunk_id") for row in selected if actor in row.get("actor_scope", [])] for actor in analysis.actors},
     }

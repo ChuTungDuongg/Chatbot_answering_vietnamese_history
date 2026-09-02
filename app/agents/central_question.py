@@ -14,8 +14,8 @@ _COMPARISON_PATTERNS = (
     re.compile(r"\b(.+?)\s+v[aà]\s+(.+?)\s+c[oó]\s+g[iì]\s+gi[oố]ng\s*/?\s*kh[aá]c\s+nhau(?:[.?!]|$)", re.I),
 )
 
-_CAUSE_CUES = (
-    "nguyen nhan", "vi sao", "tai sao", "boi canh", "dieu kien",
+CAUSE_MARKERS = ("nguyen nhan", "vi sao", "tai sao", "ly do")
+_CAUSE_CUES = (*CAUSE_MARKERS, "boi canh", "dieu kien",
     "dan den", "thuc day", "hinh thanh", "ra doi",
 )
 _SIGNIFICANCE_CUES = (
@@ -53,10 +53,13 @@ class CentralQuestionAnalysis:
     freshness_reason: str | None = None
     premise_requires_validation: bool = False
     raw_event_clause: str | None = None
+    answer_depth: str = "simple_fact"
+    viewpoint_requested: bool = False
 
     def telemetry(self) -> dict:
         return {
-            "question_type": self.question_type, "subject": self.subject,
+            "question_type": self.question_type, "answer_depth": self.answer_depth, "subject": self.subject,
+            "viewpoint_requested": self.viewpoint_requested,
             "event": self.event, "actors": list(self.actors), "outcome": self.outcome,
             "comparison_targets": list(self.comparison_targets),
             "facet": self.facets[0] if self.facets else None, "facets": list(self.facets),
@@ -178,6 +181,8 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
     from app.agents.central_administration import administrative_question
     from app.agents.central_targets import resolve_comparison_targets
     admin = administrative_question(question) if not targets and question_type != "biography" else {}
+    from app.agents.central_depth import answer_depth
+    facets = ("identity", "relationship") if relation else extract_requested_facets(question, question_type)
     return resolve_comparison_targets(CentralQuestionAnalysis(
         question=question,
         question_type=question_type,
@@ -187,7 +192,10 @@ def analyze_central_question(question: str) -> CentralQuestionAnalysis:
         event=admin.get("event", event if not targets and question_type != "biography" else None),
         actors=actors if question_type != "biography" else (),
         outcome=outcome if question_type != "biography" else None,
-        facets=("identity", "relationship") if relation else extract_requested_facets(question, question_type),
+        facets=facets,
+        answer_depth=answer_depth(question_type, event=event, subject=analytical_subject,
+                                  facets=facets, administrative=bool(admin)),
+        viewpoint_requested=bool(re.search(r"\b(?:quan diem|nhan dinh cua|theo nhan dinh|trich dan|loi noi|phat bieu cua)\b", normalized)),
         related_entities=(relation[1],) if relation else (),
         relation_requested=bool(relation), relation_phrase=relation[2] if relation else None,
         raw_event_clause=raw_event_clause(question) if event else None,
@@ -229,10 +237,42 @@ _OUTCOMES = ((r"\b(?:suy yeu|suy thoai)\b", "suy yếu"),
              (r"\b(?:that bai|thua)\b", "thất bại"),
              (r"\b(?:thanh cong|thang loi)\b", "thành công"),
              (r"\b(?:sup do|suy vong)\b", "sụp đổ"))
+# Existing abbreviation metadata; applied to any parsed actor rather than to a
+# particular question. Unlisted entities keep the user's name verbatim.
+ACTOR_ALIASES = ((r"\b(?:my|hoa ky)\b", "Mỹ"), (r"\b(?:vnch|viet nam cong hoa)\b", "Việt Nam Cộng hòa"))
+
+
+def normalized_actor_text(text):
+    folded = _ascii_fold_vietnamese(text)
+    for pattern, name in ACTOR_ALIASES:
+        folded = re.sub(pattern, _ascii_fold_vietnamese(name), folded)
+    return " ".join(re.findall(r"[a-z0-9]+", folded))
+
+
+def causal_subject_phrase(question):
+    """Reusable cause/outcome grammar; names are captures, never policy keys."""
+    compact = unicodedata.normalize("NFC", " ".join(question.split())).strip(" .?!")
+    folded = _ascii_fold_vietnamese(compact)
+    outcomes = "(?:" + "|".join(pattern for pattern, _ in _OUTCOMES) + ")"
+    markers = "(?:" + "|".join(CAUSE_MARKERS) + ")"
+    patterns = (
+        rf"^{markers}(?: nao)?(?: dan (?:den|toi))?\s+(?:su )?{outcomes}\s+cua\s+(?P<subject>.+?)(?:\s+(?:trong|la gi|va he qua)\b|$)",
+        rf"^{markers}\s+(?P<subject>.+?)\s+(?:lai\s+)?{outcomes}\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, folded)
+        if match:
+            subject = compact[slice(*match.span("subject"))].strip(" ,;:")
+            if re.search(r"\b(?:nay|do|ay)$", _ascii_fold_vietnamese(subject)):
+                return None  # Anaphora requires history; it is not an actor name.
+            return subject
+    return None
+
+
 _EVENT_START = r"(?:chien tranh|cach mang|chien dich|chien thang|tran|hiep dinh|khoi nghia|phong trao)"
 _TARGET_END = r"\s+(?:thanh cong|that bai|thang loi|suy yeu|sup do|ket thuc|co\s|da\s|dan den|de lai|ve\s|la gi|nhu the nao|vi sao|tai sao)|(?:\s+va|[,;])\s+(?:dieu do|no|he qua|hau qua|anh huong|tac dong|y nghia|nguyen nhan|ket qua|boi canh|dien bien|co y nghia)\b"
 _FACET_CUES = {
-    "cause": ("vi sao", "tai sao", "nguyen nhan"),
+    "cause": CAUSE_MARKERS,
     "context": ("boi canh", "dieu kien"), "objective": ("muc tieu", "muc dich"),
     "actors": ("luc luong", "chu the"), "method": ("tinh chat", "phuong phap", "dien bien"),
     "result": ("ket qua",), "consequence": ("he qua", "hau qua", "anh huong lau dai", "tac dong lau dai"),
@@ -266,10 +306,18 @@ def extract_analytical_target(question: str) -> tuple[str | None, str | None, tu
             event = {"chien tranh viet nam": "Chiến tranh Việt Nam", "cach mang thang tam": "Cách mạng Tháng Tám"}[_ascii_fold_vietnamese(event)]
     dynasty = re.search(r"\b(?:nha|trieu dai(?:\s+nha)?)\s+([^\s,;.?!]+)", folded)
     subject = "Nhà " + compact[dynasty.start(1):dynasty.end(1)] if dynasty else None
+    from app.agents.central_targets import entity_head
+    captured = causal_subject_phrase(question)
     actors = []
-    for pattern, name in ((r"\b(?:my|hoa ky)\b", "Mỹ"), (r"\b(?:vnch|viet nam cong hoa)\b", "Việt Nam Cộng hòa")):
-        if re.search(pattern, folded):
-            actors.append(name)
+    if captured and not entity_head(captured)[0]:
+        for actor in re.split(r"\s+(?:và|cùng)\s+|\s*,\s*", captured, flags=re.I):
+            # Bound free-form captures; do not turn explanatory clauses into entities.
+            if 1 <= len(actor.split()) <= 7:
+                actors.append(next((name for pattern, name in ACTOR_ALIASES if re.fullmatch(pattern, _ascii_fold_vietnamese(actor))), actor))
+        if actors and not event and not subject:
+            subject = " và ".join(actors)
+    elif not captured:
+        actors = [name for pattern, name in ACTOR_ALIASES if re.search(pattern, folded)]
     return event, subject, tuple(actors), outcome
 
 
@@ -315,7 +363,8 @@ def plan_analytical_queries(analysis: CentralQuestionAnalysis, max_variants: int
     if analysis.question_type == "cause" and target:
         causal = f"{target} nguyên nhân" + (f" {analysis.outcome}" if analysis.outcome else "")
         actors = " ".join(analysis.actors)
-        return {target: list(dict.fromkeys([f"{causal} {actors}".strip(), analysis.question]))[:max_variants]}
+        followup = f"{target} bối cảnh quân sự chính trị {actors}".strip() if analysis.answer_depth == "broad_analysis" else analysis.question
+        return {target: list(dict.fromkeys([f"{causal} {actors}".strip(), followup]))[:max_variants]}
     return {analysis.question: [analysis.question]}
 
 

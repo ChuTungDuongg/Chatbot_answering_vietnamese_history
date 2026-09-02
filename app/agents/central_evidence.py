@@ -17,7 +17,7 @@ from app.agents.central_facets import multi_facet
 from app.chat.attachments import is_attachment_question
 from app.agents.config import CentralAgentConfig
 from app.agents.central_analytical import (
-    annotate_evidence, coverage_select, evidence_targets, strong_evidence, normalize_entity,
+    annotate_evidence, coverage_select, evidence_targets, strong_evidence, normalize_entity, source_role,
 )
 
 
@@ -64,8 +64,8 @@ def select_evidence(
     if (analysis.question_type in {"cause", "comparison"} or multi_facet(analysis)) and (target or analysis.event or analysis.subject):
         annotated = [annotate_evidence(row, analysis, target) for row in rows]
         reasons = Counter(row["entity_filter_reason"] or "analytical_target_mismatch"
-                          for row in annotated if not row["target_consistent"])
-        kept = [row for row in annotated if row["target_consistent"]]
+                          for row in annotated if not row["target_consistent"] and not row["target_match_uncertain"])
+        kept = [row for row in annotated if row["target_consistent"] or row["target_match_uncertain"]]
         # Ranks are only comparable within this batch. Never apply a global score floor
         # that could drop a whole target or a distinct analytical dimension.
         if compare_scores:
@@ -76,6 +76,7 @@ def select_evidence(
             "retrieval_filtered_count": len(rows) - len(kept), "retrieval_filter_reasons": dict(reasons),
             "entity_disambiguation_filtered_count": sum(reasons.values()),
             "entity_disambiguation_filter_reasons": dict(reasons),
+            "retrieval_downrank_reasons": {"target_match_unconfirmed": sum(row["target_match_uncertain"] for row in kept)},
             "chronology_downranked_count": sum(row["chronology_downranked"] for row in kept),
             "biography_entity": None, "biography_exact_title_hits": 0,
         }
@@ -147,6 +148,8 @@ def select_evidence(
 
 
 def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuestionAnalysis, config: CentralAgentConfig) -> list[dict[str, Any]]:
+    # Score the same excerpt budget that can fit the final packet, before ranking.
+    preview_chars = min(config.evidence_excerpt_chars, max(0, config.synthesis_char_budget // max(1, min(len(rows), config.analytical_max_sources)) - 200))
     if analysis.relation_requested:
         previews = [{**row, "text": excerpt_evidence(str(row.get("text") or ""), analysis, config.evidence_excerpt_chars),
                      "evidence_chars_before_compaction": len(str(row.get("text") or ""))} for row in rows]
@@ -176,11 +179,11 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
     else:
         filtered, _ = select_evidence(rows, analysis, config, compare_scores=False)
         selected = [annotate_evidence(row, analysis) for row in filtered]
-        if analysis.question_type == "cause" or multi_facet(analysis):
+        if analysis.answer_depth == "broad_analysis" or analysis.question_type == "cause" or multi_facet(analysis):
             # Rank the excerpt that synthesis can actually receive, not the
             # dimensions aggregated over a larger source that will be discarded.
             selected = [annotate_evidence({**row,
-                "text": excerpt_evidence(str(row.get("text") or ""), analysis, config.evidence_excerpt_chars),
+                "text": excerpt_evidence(str(row.get("text") or ""), analysis, preview_chars),
                 "evidence_chars_before_compaction": len(str(row.get("text") or "")),
             }, analysis) for row in selected]
             selected = [row for row in selected if row["text"]]
@@ -188,7 +191,7 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
             strong = [row for row in selected if strong_evidence(row, min_chars=config.strong_evidence_min_chars)]
             if len(strong) >= 3 and not multi_facet(analysis):
                 selected = strong
-            selected = coverage_select(selected, analysis, config.analytical_max_sources)
+            selected = coverage_select(selected, analysis, config.analytical_max_sources, min_chars=config.strong_evidence_min_chars)
         else:
             if is_attachment_question(analysis.question):
                 selected.sort(key=lambda row: row.get("source_kind") != "attachment")
@@ -209,7 +212,12 @@ def select_synthesis_evidence(rows: list[dict[str, Any]], analysis: CentralQuest
             if not verified:
                 continue
             item.update(comparison_target=verified[0], comparison_targets=verified)
-        bounded.append(annotate_evidence(item, analysis))
+        item = annotate_evidence(item, analysis)
+        # Unconfirmed candidates remain available for recovery, but are not
+        # model-visible evidence until their target association is established.
+        if item.get("target_match_uncertain"):
+            continue
+        bounded.append(item)
     return bounded
 
 
@@ -227,6 +235,7 @@ class SynthesisEvidence:
     entity_aliases: tuple[dict[str, Any], ...] = ()
     evidence_facets: tuple[str, ...] = ()
     attachment_metadata: dict[str, Any] | None = None
+    source_role: str = "primary_factual"
 
     def __post_init__(self):
         if self.comparison_target and not self.comparison_targets:
@@ -235,7 +244,8 @@ class SynthesisEvidence:
         # annotations that may refer to text discarded by the packet budget.
         annotations = tuple(annotate_viewpoints(self.text))
         object.__setattr__(self, "viewpoint_annotations", annotations)
-        object.__setattr__(self, "viewpoint_sensitive", bool(annotations))
+        object.__setattr__(self, "viewpoint_sensitive", any(a["requires_attribution"] for a in annotations))
+        object.__setattr__(self, "source_role", source_role({"title": self.title}, self.viewpoint_sensitive))
         # A truncated-away identity cannot confer aliases through stale metadata.
         aliases = [pair for pair in self.entity_aliases if mentions(f"{self.title} {self.text}", pair["name"])
                    and (pair["origin"] == "selected_entity_metadata" or mentions(self.text, pair["alias"]))]
@@ -275,7 +285,7 @@ def render_evidence_packet(packet: list[SynthesisEvidence]) -> str:
             note += "\nevidence_facets: " + ", ".join(item.evidence_facets)
         if item.attachment_metadata:
             note += "\nATTACHMENT — extracted text (may contain OCR errors): " + json.dumps(item.attachment_metadata, ensure_ascii=False)
-        return f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}{note}\ntext: {item.text}"
+        return f"[{item.alias}]\ntitle: {item.title}\nsource_kind: {item.source_kind}\nsource_role: {item.source_role}{note}\ntext: {item.text}"
     targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
     if targets:
         return "\n\n".join(f"TARGET {chr(65 + i)} — {target}\n" + "\n\n".join(

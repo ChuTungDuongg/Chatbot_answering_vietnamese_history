@@ -229,6 +229,8 @@ async def lifespan(app: FastAPI):
                         analytical_max_sources=settings.central_analytical_max_sources,
                         comparison_min_strong_sources=settings.central_comparison_min_strong_sources,
                         strong_evidence_min_chars=settings.central_strong_evidence_min_chars,
+                        analytical_coverage_support_threshold=settings.central_analytical_coverage_support_threshold,
+                        analytical_coverage_min_dimensions=settings.central_analytical_coverage_min_dimensions,
                         synthesis_char_budget=settings.central_synthesis_char_budget,
                         reranker_tail_gap_ratio=settings.central_reranker_tail_gap_ratio,
                         reranker_score_mode=settings.central_reranker_score_mode,

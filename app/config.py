@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     central_analytical_max_sources: int = 4
     central_comparison_min_strong_sources: int = 1
     central_strong_evidence_min_chars: int = 100
+    central_analytical_coverage_support_threshold: int = 4
+    central_analytical_coverage_min_dimensions: int = 3
     central_synthesis_char_budget: int = 12_000
     central_reranker_tail_gap_ratio: float = 0.75
     central_reranker_score_mode: Literal["raw", "probability"] = "raw"

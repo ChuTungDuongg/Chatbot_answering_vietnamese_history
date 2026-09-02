@@ -15,7 +15,7 @@ from app.agents.config import CentralAgentConfig
 from tests.test_central_agent import FakeCentralRuntime, FakeTool, build_agent
 from tests.test_central_consolidated import COMPARE, GOOD_COMPARE, comparison_tool, row
 from tests.test_central_reliability import QUESTION, FACTS
-from tests.test_central_viewpoints import WAR, production_sources
+from tests.test_central_viewpoints import WAR, production_sources, NEUTRAL
 
 
 SUMMARY = (
@@ -143,7 +143,7 @@ def test_sensitive_claim_does_not_poison_another_claim_in_the_same_paragraph():
 
 def test_repair_recomputes_all_answer_derived_issues_without_stale_synthesis_state(monkeypatch):
     bad = "Lũ tay sai gây chiến tranh phi nghĩa vào năm 2099. [S999]\n\nNguyễn Văn A lãnh đạo cuộc chiến."
-    good = "Thất bại liên quan đến nhiều yếu tố quân sự, chính trị và chiến lược. [S1]"
+    good = NEUTRAL
     runtime = FakeCentralRuntime([CentralGeneration(content=bad), CentralGeneration(content=good)])
     agent = build_agent(runtime, FakeTool("search_history", production_sources()), config=CentralAgentConfig())
     snapshots = []

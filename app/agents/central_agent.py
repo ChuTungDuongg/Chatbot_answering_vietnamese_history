@@ -11,6 +11,9 @@ from app.agents.central_citations import check_citations, expand_citations, cita
 from app.agents.central_evidence import SynthesisEvidence, build_evidence_packet, render_evidence_packet, select_evidence, select_synthesis_evidence
 from app.agents.central_analytical import annotate_evidence, coverage_report, coverage_select, evidence_targets, target_mentions, strong_evidence, normalize_entity
 from app.agents.central_compaction import compact_history
+from app.agents.central_depth import evidence_plan, depth_contract, answer_coverage
+from app.agents.central_repair import issue_fingerprint, issue_count, remove_optional_viewpoint
+from app.agents.central_viewpoints import viewpoint_repair_plan
 from app.agents.central_citation_recovery import PURE_CITATION_ISSUES, align_citations, apply_citation_mapping, citation_repair_messages
 from app.agents.central_grounding import grounding_risks, entity_alias_matches
 from app.agents.central_relationships import (RELATION_CAVEAT, has_relation_caveat, relationship_answer_issues,
@@ -411,6 +414,8 @@ class CentralAgent:
         if not requested <= dims:
             return False
         if state.question_analysis.question_type == "cause":
+            if not set(state.question_analysis.actors) <= {actor for row in strong.values() for actor in row.get("actor_scope", [])}:
+                return False
             sufficient, _ = coverage_report(list(strong.values()), rows, state.question_analysis, self.config)
             return sufficient
         return len(dims) >= 2
@@ -452,12 +457,32 @@ class CentralAgent:
         reasons = Counter()
         for event in events:
             reasons.update(event.get("entity_disambiguation_filter_reasons", {}))
-        state.evidence_debug["suspected_filter_collapse"] = bool(raw and not kept and reasons and max(reasons.values()) / raw >= .8)
+        downranked = sum(event.get("retrieval_downrank_reasons", {}).get("target_match_unconfirmed", 0) for event in events)
+        useful = sum(strong_evidence(row, min_chars=self.config.strong_evidence_min_chars) for row in state.selected_sources)
+        state.evidence_debug["suspected_filter_collapse"] = bool(
+            (raw and not kept and reasons and max(reasons.values()) / raw >= .8)
+            or (raw >= 4 and useful <= 1 and downranked / raw >= .8))
+        state.evidence_debug["unconfirmed_target_candidate_count"] = downranked
         checker = getattr(self.request_policy, "evidence_is_sufficient", None)
         if callable(checker):
             sufficient = sufficient and bool(checker(state))
         state.evidence_debug["evidence_sufficient"] = sufficient
         return sufficient
+
+    async def _recover_filter_collapse(self, state, context, progress):
+        if not state.evidence_debug.get("suspected_filter_collapse") or state.reliability.get("filter_collapse_recovery_used") or "search_history" not in state.allowed_tools:
+            return
+        # Recovery retrieves new evidence under the same filters. It never promotes
+        # weak matches or overrides known entity, date, granularity or citation errors.
+        analysis = state.question_analysis
+        target = next((target for target, item in state.evidence_debug.get("comparison_balance", {}).items() if not item["adequate"]), None)
+        target = target or analysis.event or analysis.subject
+        if not target or len(state.retrieval_candidates) < 4 or not state.evidence_debug.get("unconfirmed_target_candidate_count"):
+            return
+        state.reliability["filter_collapse_recovery_used"] = True
+        call = CentralToolCall("central_filter_recovery", "search_history", {"query": canonical_for(analysis, target), "top_k": self._retrieval_limit(state, "search_history")})
+        await self._execute_tool_calls(state, (call,), context=context, grounding_targets={call.id: target},
+                                       trace_phase="filter_collapse_recovery", progress=progress)
 
     async def _fetch_wikipedia_results(self, state: CentralAgentState, context: ToolExecutionContext, progress) -> None:
         if "fetch_wikipedia_page" not in state.allowed_tools:
@@ -584,6 +609,7 @@ class CentralAgent:
         self._evidence_sufficient(state)
         selected = state.selected_sources
         packet = build_evidence_packet(selected)
+        state.evidence_debug.update(evidence_plan(packet, state.question_analysis, self.config))
         rendered = render_evidence_packet(packet)
         reasons: Counter[str] = Counter()
         entity_reasons: Counter[str] = Counter()
@@ -623,7 +649,10 @@ class CentralAgent:
         telemetry = current_request_telemetry()
         if telemetry is not None:
             telemetry.central_quality.update(state.evidence_debug)
-        instruction = SYNTHESIS_CONTRACT + "\n" + VIEWPOINT_CONTRACT
+        instruction = SYNTHESIS_CONTRACT
+        if state.question_analysis.viewpoint_requested or any(item.viewpoint_sensitive for item in packet):
+            instruction += "\n" + VIEWPOINT_CONTRACT
+        instruction += depth_contract(state.question_analysis, state.evidence_debug)
         instruction += administrative_contract(state.question_analysis)
         if multi_facet(state.question_analysis):
             instruction += facet_contract(state.evidence_debug)
@@ -660,6 +689,8 @@ class CentralAgent:
         risks = grounding_risks(citations.answer, state.question, packet)
         state.grounding_risk_checks.append({"stage": stage, **risks})
         issues: list[str] = []
+        coverage = answer_coverage(citations.answer, state.evidence_debug, state.question_analysis, self.config)
+        state.evidence_debug.update(coverage)
         if multi_facet(state.question_analysis):
             issues.extend(facet_answer_issues(citations.answer, state.evidence_debug))
         premise_issues = administrative_answer_issues(citations.answer, state.question_analysis, packet)
@@ -680,10 +711,15 @@ class CentralAgent:
             issues.append("comparison_citation_target_mismatch")
         if citations.unattributed_viewpoints:
             issues.append("unattributed_viewpoint")
+        if coverage["analytical_coverage_too_shallow"]:
+            issues.append("analytical_coverage_too_shallow")
         state.evidence_debug.update({
             "answer_validation_stage": stage,
             "citation_target_mismatches": citations.target_mismatches,
             "viewpoint_attribution_issues": citations.viewpoint_issues,
+            "viewpoint_issue_type": list(dict.fromkeys(issue["type"] for issue in citations.viewpoint_issues)),
+            "viewpoint_claim_cross_supported": bool(citations.viewpoint_cross_support),
+            "claim_neutral_support_sources": citations.viewpoint_cross_support,
             "uncited_factual_paragraphs": citations.uncited_paragraphs,
             "invalid_citation_aliases": citations.invalid,
             "entity_alias_matches": entity_alias_matches(citations.answer, packet),
@@ -716,6 +752,7 @@ class CentralAgent:
         started: float,
         progress: dict[str, Any] | None,
         model_ready_task: asyncio.Task | None = None,
+        question_analysis=None,
         attachment_ids: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         allowed_tools = self._allowed_tools(owner_id, conversation_id)
@@ -723,12 +760,12 @@ class CentralAgent:
         if schema_key not in self._schema_cache:
             self._schema_cache[schema_key] = qwen_tool_schemas(self.tool_registry, allowed_tools)
         schemas = self._schema_cache[schema_key]
-        analysis = analyze_central_question(question)
+        analysis = question_analysis or analyze_central_question(question)
         if analysis.comparison_targets:
             resolver = getattr(self.tool_registry.get("search_history"), "resolve_entity_title", None) if "search_history" in allowed_tools else None
             analysis = await asyncio.to_thread(resolve_comparison_targets, analysis, resolver)
         history_debug = {}
-        history = compact_history(question, history, max_messages=self.config.history_max_messages, char_budget=self.config.history_char_budget, debug=history_debug)
+        history = compact_history(question, history, max_messages=self.config.history_max_messages, char_budget=self.config.history_char_budget, debug=history_debug, analysis=analysis)
         decision = self.request_policy.grounding_for(question)
         state = CentralAgentState(
             question=question,
@@ -744,7 +781,11 @@ class CentralAgent:
         if progress is not None:
             progress["state"] = state
             state.reliability.update(progress.get("readiness", {}))
-        state.reliability.update(repair_reasons=[], repair_viewpoint_action=None, current_source_fallback_used=False, current_source_fallback_reason=None)
+        state.reliability.update(repair_reasons=[], repair_viewpoint_action=None, repair_viewpoint_plan=[],
+                                 repair_progress=None, repair_issue_count_before=0, repair_issue_count_after=0,
+                                 deterministic_claim_removal_used=False,
+                                 filter_collapse_recovery_used=False,
+                                 current_source_fallback_used=False, current_source_fallback_reason=None)
         state.evidence_debug.update(history_input_chars=sum(len(item["content"]) for item in history), history_input_turns=len(history))
         state.evidence_debug.update(history_debug)
         context = ToolExecutionContext(
@@ -774,6 +815,9 @@ class CentralAgent:
             progress["stage"] = "central_tools"
 
         sufficient = self._evidence_sufficient(state)
+        if not sufficient:
+            await self._recover_filter_collapse(state, context, progress)
+            sufficient = self._evidence_sufficient(state)
         if multi_facet(analysis):
             await self._facet_fallback(state, context, progress)
             sufficient = self._evidence_sufficient(state)
@@ -843,6 +887,22 @@ class CentralAgent:
                 state.final_answer = generation.content.strip()
 
             quality_issues, citations = self._check_answer(state, packet, stage="synthesis")
+            candidate = remove_optional_viewpoint(state.final_answer, quality_issues, citations,
+                                                  analysis, state.evidence_debug, self.config)
+            if candidate is not None and not generation.generation_hit_time_limit:
+                original = state.final_answer
+                before_count = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
+                original_plan = viewpoint_repair_plan(citations.viewpoint_issues)
+                state.final_answer = candidate
+                quality_issues, citations = self._check_answer(state, packet, stage="optional_claim_removal")
+                if not quality_issues:
+                    state.reliability.update(deterministic_claim_removal_used=True, repair_viewpoint_action="neutralize",
+                        repair_viewpoint_plan=original_plan, repair_progress=True,
+                        repair_issue_count_before=before_count, repair_issue_count_after=0)
+                    state.repair_avoided_reason = "optional_viewpoint_claim_removed"
+                else:
+                    state.final_answer = original
+                    quality_issues, citations = self._check_answer(state, packet, stage="claim_removal_reverted")
             if quality_issues and set(quality_issues) <= PURE_CITATION_ISSUES and not generation.generation_hit_time_limit:
                 alignment_started = time.perf_counter()
                 state.reliability["citation_alignment_used"] = True
@@ -877,6 +937,14 @@ class CentralAgent:
                 state.repair_reason = quality_issues[0]
                 state.reliability["repair_reasons"] = list(quality_issues)
                 state.repair_budget = self._repair_budget(generation, state.final_answer)
+                if "analytical_coverage_too_shallow" in quality_issues:
+                    state.repair_budget = self.config.repair_max_new_tokens
+                before_fingerprint = issue_fingerprint(quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug)
+                state.reliability["repair_issue_count_before"] = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
+                repair_plan = viewpoint_repair_plan(citations.viewpoint_issues)
+                state.reliability["repair_viewpoint_plan"] = repair_plan
+                if repair_plan:
+                    state.reliability["repair_viewpoint_action"] = "neutralize" if any(not item["attribution_hint"] for item in repair_plan) else "attribute_or_remove"
                 state.reliability["full_quality_repair_used"] = True
                 state.transition(CentralPhase.QUALITY_REPAIR)
                 state.messages.extend([
@@ -889,7 +957,10 @@ class CentralAgent:
                             + "\nTên không được hỗ trợ: " + json.dumps(state.grounding_risk_checks[-1].get("unsupported_named_claims", []), ensure_ascii=False)
                             + ". Xóa hoàn toàn các tên này và khẳng định tùy chọn liên quan nếu gói bằng chứng không hỗ trợ. Không thay bằng một dữ kiện thiếu căn cứ khác."
                             + "\nCác khẳng định cần bỏ, trung lập hóa hoặc quy thuộc: "
-                            + json.dumps(citations.viewpoint_issues, ensure_ascii=False)
+                            + json.dumps(repair_plan, ensure_ascii=False)
+                            + "\nremove_or_neutralize: xóa nhận định hoặc thay bằng sự kiện được nguồn trung lập hỗ trợ; không đoán người nói khi attribution_hint là null."
+                            + depth_contract(analysis, state.evidence_debug)
+                            + "\nCác phương diện đã thể hiện: " + json.dumps(state.evidence_debug.get("answer_dimensions_expressed", []), ensure_ascii=False)
                         ),
                     },
                 ])
@@ -905,8 +976,12 @@ class CentralAgent:
                 if repaired.content.strip() and not repaired.tool_calls:
                     state.final_answer = repaired.content.strip()
                 quality_issues, citations = self._check_answer(state, packet, stage="quality_repair")
+                after_fingerprint = issue_fingerprint(quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug)
+                state.reliability["repair_issue_count_after"] = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
+                state.reliability["repair_progress"] = after_fingerprint != before_fingerprint and (
+                    not quality_issues or state.reliability["repair_issue_count_after"] < state.reliability["repair_issue_count_before"])
                 if "unattributed_viewpoint" in state.reliability["repair_reasons"] and not citations.viewpoint_issues:
-                    state.reliability["repair_viewpoint_action"] = "attribute" if any(hint in state.final_answer for hint in state.evidence_debug.get("viewpoint_attribution_hints_provided", [])) else "neutralize"
+                    state.reliability["repair_viewpoint_action"] = "attribute" if all(item["attribution_hint"] and item["attribution_hint"] in state.final_answer for item in repair_plan) else "neutralize"
             elif not quality_issues:
                 state.repair_avoided_reason = state.repair_avoided_reason or ("citation_normalized" if state.reliability["citation_normalization_used"] else "valid_first_synthesis")
             else:
@@ -918,6 +993,7 @@ class CentralAgent:
                 "historical_significance_missing", "explanatory_content_missing",
                 "unsupported_administrative_premise",
                 "empty_answer",
+                "analytical_coverage_too_shallow",
                 "unsupported_relationship_claim", "relationship_primary_identity_missing",
             )):
                 # Recovery is bounded; persistent failures never pass as grounded answers.
@@ -1198,6 +1274,7 @@ class CentralAgent:
             return await asyncio.wait_for(
                 self._run(
                     question=question,
+                    question_analysis=analysis,
                     history=kwargs.get("history"),
                     owner_id=kwargs.get("owner_id"),
                     conversation_id=kwargs.get("conversation_id"),

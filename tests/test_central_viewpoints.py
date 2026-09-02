@@ -99,7 +99,8 @@ def test_attribution_applies_to_the_actual_claim(answer, fails):
     'Theo nguồn, “lũ tay sai gây chiến tranh phi nghĩa” là khẩu hiệu trong tài liệu. [S1]',
 ])
 def test_real_viewpoint_failure_can_be_neutralized_or_attributed_once(repaired):
-    runtime = FakeCentralRuntime([CentralGeneration(content="Lũ tay sai gây chiến tranh phi nghĩa. [S1]"), CentralGeneration(content=repaired)])
+    # A repaired viewpoint must also retain the supported causal depth.
+    runtime = FakeCentralRuntime([CentralGeneration(content="Lũ tay sai gây chiến tranh phi nghĩa. [S1]"), CentralGeneration(content=repaired + "\n\n" + NEUTRAL)])
     result = build_agent(runtime, FakeTool("search_history", production_sources()), config=CentralAgentConfig()).chat(WAR)
     assert result["status"] == "ok" and len(runtime.calls) == 2
     assert result["central_debug"]["repair_reason"] == "unattributed_viewpoint"

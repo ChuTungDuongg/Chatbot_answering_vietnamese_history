@@ -39,8 +39,7 @@ def evidence_facets(row):
 
 
 def neutral_preference(analysis):
-    return analysis.question_type in {"cause", "comparison", "consequence", "significance", "evaluation"} and not re.search(
-        r"\b(?:quan diem|nhan dinh cua|theo nhan dinh|trich dan|loi noi|phat bieu cua)\b", _ascii_fold_vietnamese(analysis.question))
+    return analysis.question_type in {"cause", "comparison", "consequence", "significance", "evaluation"} and not analysis.viewpoint_requested
 
 
 def viewpoint_cost(text):

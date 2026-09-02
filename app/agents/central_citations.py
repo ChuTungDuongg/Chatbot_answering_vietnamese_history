@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.agents.central_evidence import SynthesisEvidence
 from app.agents.central_question import _ascii_fold_vietnamese
@@ -23,6 +23,7 @@ class CitationCheck:
     target_mismatches: list[str]
     unattributed_viewpoints: int
     viewpoint_issues: list[dict]
+    viewpoint_cross_support: list[dict] = field(default_factory=list)
 
 
 def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationCheck:
@@ -65,6 +66,7 @@ def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationChe
     mismatches: list[str] = []
     unattributed = 0
     viewpoint_issues = []
+    cross_support = []
     evidence_by_alias = {item.alias: item for item in packet}
     targets = list(dict.fromkeys(target for item in packet for target in item.comparison_targets))
     alias_targets = {item.alias: set(item.comparison_targets) for item in packet}
@@ -112,13 +114,14 @@ def check_citations(answer: str, packet: list[SynthesisEvidence]) -> CitationChe
         if cited_aliases:
             mismatches.extend(sorted(discussed - supported_targets))
         # Missing citations must not conceal copied opinions from host alignment.
-        paragraph_viewpoints = viewpoint_attribution_issues(plain, [evidence_by_alias[alias] for alias in cited_aliases] if cited_aliases else packet)
+        paragraph_viewpoints = viewpoint_attribution_issues(plain, [evidence_by_alias[alias] for alias in cited_aliases],
+                                                           packet=packet, cross_support=cross_support)
         viewpoint_issues.extend(paragraph_viewpoints)
         if paragraph_viewpoints:
             unattributed += 1
     return CitationCheck(
         normalized_answer, source_ids, list(dict.fromkeys(invalid)),
-        normalized_answer != answer, uncited, list(dict.fromkeys(mismatches)), unattributed, viewpoint_issues,
+        normalized_answer != answer, uncited, list(dict.fromkeys(mismatches)), unattributed, viewpoint_issues, cross_support,
     )
 
 

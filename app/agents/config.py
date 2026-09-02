@@ -57,6 +57,8 @@ class CentralAgentConfig:
     analytical_max_sources: int = 4
     comparison_min_strong_sources: int = 1
     strong_evidence_min_chars: int = 100
+    analytical_coverage_support_threshold: int = 4
+    analytical_coverage_min_dimensions: int = 3
     synthesis_char_budget: int = 12_000
     observation_char_budget: int = 12_000
     timeout_seconds: float = 180.0
@@ -113,6 +115,8 @@ class CentralAgentConfig:
             raise ValueError("Central synthesis budget must fit both comparison targets.")
         if self.strong_evidence_min_chars < 40 or self.synthesis_char_budget < 1000:
             raise ValueError("Central evidence quality and character budgets are too small.")
+        if not 1 <= self.analytical_coverage_min_dimensions <= self.analytical_coverage_support_threshold <= 8:
+            raise ValueError("Invalid Central analytical coverage thresholds.")
         if self.observation_char_budget < 1_000:
             raise ValueError("Central observation_char_budget must be at least 1000 characters.")
         if self.timeout_seconds <= 0:

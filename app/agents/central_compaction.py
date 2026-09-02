@@ -30,7 +30,9 @@ def excerpt_evidence(text: str, analysis, limit: int) -> str:
     if len(text) <= limit:
         return text
     units = sentence_units(text)
-    query = set(normalize_entity(" ".join(filter(None, [analysis.question, analysis.event, analysis.subject, *analysis.facets]))).split())
+    # Equivalent resolved cause questions score excerpts from the same semantic query.
+    question = " ".join(filter(None, [analysis.event, analysis.subject, *analysis.actors, analysis.outcome])) if analysis.answer_depth == "broad_analysis" else analysis.question
+    query = set(normalize_entity(" ".join(filter(None, [question, analysis.event, analysis.subject, *analysis.facets]))).split())
     requested = set(analysis.facets)
     def score(value):
         folded = normalize_entity(value)
@@ -76,8 +78,8 @@ def excerpt_evidence(text: str, analysis, limit: int) -> str:
     return "\n\n[…]\n\n".join(" ".join(units[i] for i in group) for group in groups[:2]) if groups else ""
 
 
-def compact_history(question: str, history, *, max_messages: int, char_budget: int, debug: dict | None = None) -> list[dict[str, str]]:
-    analysis = analyze_central_question(question)
+def compact_history(question: str, history, *, max_messages: int, char_budget: int, debug: dict | None = None, analysis=None) -> list[dict[str, str]]:
+    analysis = analysis or analyze_central_question(question)
     unresolved = re.search(r"\b(?:ong ay|ba ay|nguoi nay|nguoi do|su kien do|cuoc chien do|chuc vu do|con cai kia|vay thi sao|con|vay)\b", normalize_entity(question))
     standalone = not unresolved and bool(analysis.subject or analysis.event or analysis.comparison_targets)
     if debug is not None:
