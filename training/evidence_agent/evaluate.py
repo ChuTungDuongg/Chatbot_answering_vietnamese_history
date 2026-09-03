@@ -4,8 +4,8 @@ import argparse
 import json
 from typing import Any
 
-from app.agents.schemas import EvidenceModelOutput
-from app.agents.evidence_validation import (
+from app.agents.evidence.schemas import EvidenceModelOutput
+from app.agents.evidence.validation import (
     compressed_derived_from_own_claims,
     grounded_in_source,
     referenced_evidence_ids,

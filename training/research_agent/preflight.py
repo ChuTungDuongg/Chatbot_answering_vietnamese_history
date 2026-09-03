@@ -10,7 +10,7 @@ from typing import Any
 
 from training.common.jsonl import read_jsonl
 from training.research_agent.validate_dataset import validate_rows
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import SHARED_BASE_MODEL_ID
 from training.common.datasets import split_rows
 from training.common.sft import assistant_only_token_stats
 

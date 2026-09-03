@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agents.policy_schema import ResearchPolicyState, validate_runtime_decision
+from app.agents.research.policy import ResearchPolicyState, validate_runtime_decision
 
 
 def test_policy_schema_rejects_unobserved_evidence_and_bad_decisions():

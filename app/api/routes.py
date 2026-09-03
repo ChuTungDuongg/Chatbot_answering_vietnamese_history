@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.api.conversations import OwnerId, StoreDependency, require_conversation
-from app.agents.evidence_agent import EvidenceModelContractError
+from app.agents.evidence.agent import EvidenceModelContractError
 from app.chat.store import ConversationStore
 from app.chat_modes import ChatMode, normalize_chat_mode
 from app.config import settings
@@ -54,6 +54,12 @@ def _source_kind(chunk: dict[str, Any]) -> str:
 def _context_to_api(chunk: dict[str, Any]) -> RetrievalContextItem:
     return RetrievalContextItem(
         chunk_id=str(chunk.get("chunk_id", "")),
+        source_id=chunk.get("source_id"),
+        display_index=chunk.get("display_index"),
+        comparison_target=chunk.get("comparison_target"),
+        comparison_targets=chunk.get("comparison_targets") or [],
+        viewpoint_sensitive=bool(chunk.get("viewpoint_sensitive")),
+        url=chunk.get("url"),
         title=chunk.get("title"),
         text=chunk.get("text"),
         source_kind=_source_kind(chunk),
@@ -81,6 +87,11 @@ def _source_to_api(
 
     return SourceItem(
         chunk_id=source_id,
+        source_id=chunk.get("source_id") if chunk else None,
+        display_index=chunk.get("display_index") if chunk else None,
+        comparison_target=chunk.get("comparison_target") if chunk else None,
+        comparison_targets=chunk.get("comparison_targets") or [] if chunk else [],
+        viewpoint_sensitive=bool(chunk.get("viewpoint_sensitive")) if chunk else False,
         title=chunk.get("title") if chunk else None,
         source_kind=_source_kind(chunk or {"chunk_id": source_id}),
         attachment_id=chunk.get("attachment_id") if chunk else None,
@@ -97,10 +108,13 @@ def _result_sources(service: Any, result: dict[str, Any]) -> list[SourceItem]:
         if chunk.get("chunk_id")
     }
 
-    return [
+    sources = [
         _source_to_api(service, source_id, context_by_id)
         for source_id in result.get("source_ids", [])
     ]
+    if sources and all(source.display_index is not None for source in sources):
+        sources.sort(key=lambda source: source.display_index)
+    return sources
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -265,6 +279,10 @@ def _trace_candidate(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "reranker_score": item.get("reranker_score"),
         "final_retrieval_score": item.get("final_retrieval_score"),
         "comparison_target": item.get("comparison_target"),
+        "comparison_targets": item.get("comparison_targets") or [],
+        "display_index": item.get("display_index"),
+        "evidence_dimensions": item.get("evidence_dimensions") or [],
+        "viewpoint_sensitive": bool(item.get("viewpoint_sensitive")),
         "incidental_target_penalty": item.get("incidental_target_penalty"),
         "text_preview": str(item.get("text_preview") or item.get("text") or "")[:260],
     }
@@ -333,6 +351,9 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             "chunk_id": str(item.get("chunk_id") or ""),
             "title": item.get("title"),
             "source_kind": item.get("source_kind") or item.get("source_type") or "history",
+            "source_id": item.get("source_id"),
+            "display_index": item.get("display_index"),
+            "comparison_target": item.get("comparison_target"),
         }
         for item in source_chunks
         if item.get("chunk_id")
@@ -357,6 +378,9 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
             ),
             "facet": analysis.get("facet"),
             "subject": analysis.get("subject"),
+            "event": analysis.get("event"),
+            "actors": analysis.get("actors") or [],
+            "outcome": analysis.get("outcome"),
             "facets": analysis.get("facets") or [],
             "comparison_targets": evidence.get("comparison_targets") or analysis.get("comparison_targets") or [],
             "domain_result": retrieval.get("domain_gate_result"),
@@ -455,6 +479,7 @@ def _execute_chat(
     payload: ChatRequest,
     request_id: str,
     selected_mode: InferenceMode,
+    request_progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_mode = normalize_chat_mode(selected_mode)
     telemetry = RequestTelemetry(
@@ -476,22 +501,33 @@ def _execute_chat(
         )
 
         history = store.get_recent_history(owner_id, conversation_id, limit=history_limit)
+        requested_ids = [str(value) for value in getattr(payload, "attachment_ids", [])]
+        ready = {str(item["id"]): item for item in store.list_attachments(owner_id, conversation_id)
+                 if item["status"] == "ready" and item.get("chunk_count", 0) > 0} if requested_ids else {}
+        if any(value not in ready for value in requested_ids):
+            raise ValueError("Tài liệu không tồn tại, chưa đọc xong hoặc đã bị xóa.")
+        attachment_sources = [{"chunk_id": f"attachment:{value}", "attachment_id": value,
+                               "title": ready[value]["filename"], "source_kind": "attachment"} for value in requested_ids]
+        effective_question = payload.question.strip() or "Phân tích nội dung ảnh đính kèm."
 
         user_message = store.add_message(
             owner_id=owner_id,
             conversation_id=conversation_id,
             role="user",
             content=payload.question,
+            sources=attachment_sources,
             status="done",
         )
 
         result = generator.chat(
-            question=payload.question,
+            question=effective_question,
             final_k=payload.final_k,
             history=history,
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
+            **({"request_progress": request_progress} if selected_mode == ChatMode.CENTRAL and getattr(generator, "supports_request_progress", False) else {}),
+            **({"attachment_ids": tuple(requested_ids)} if requested_ids and getattr(generator, "supports_attachment_scope", False) else {}),
         )
         result["inference_mode"] = selected_mode
         result.setdefault("answer_provenance", {})["mode"] = selected_mode
@@ -694,6 +730,7 @@ async def chat_stream(
     async def event_stream():
         stream_started = time.perf_counter()
         task: asyncio.Task | None = None
+        request_progress: dict[str, Any] = {}
 
         if selected_mode == ChatMode.CENTRAL:
             status_messages = [
@@ -724,6 +761,7 @@ async def chat_stream(
                 payload,
                 request_id,
                 selected_mode,
+                request_progress,
             )
         )
         task.add_done_callback(_consume_task_exception)
@@ -739,11 +777,19 @@ async def chat_stream(
                         int((time.perf_counter() - stream_started) // 8),
                         len(status_messages) - 1,
                     )
+                    stage, message = status_messages[status_index]
+                    if selected_mode == ChatMode.CENTRAL:
+                        stage = request_progress.get("stage", "central_analyzing")
+                        message = {
+                            "central_loading": "Đang khởi động mô hình...",
+                            "central_tools": "Đang tìm tư liệu...",
+                            "central_answering": "Đang tổng hợp câu trả lời...",
+                        }.get(stage, "Đang chuẩn bị câu hỏi...")
                     yield _sse(
                         "status",
                         {
-                            "stage": status_messages[status_index][0],
-                            "message": status_messages[status_index][1],
+                            "stage": stage,
+                            "message": message,
                             "mode": selected_mode,
                         },
                     )

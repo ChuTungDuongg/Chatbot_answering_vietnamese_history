@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.agents.schemas import EvidenceModelOutput
-from app.agents.schemas import SelectedEvidence
+from app.agents.evidence.schemas import EvidenceModelOutput
+from app.agents.evidence.schemas import SelectedEvidence
 from tests.evidence_v2_fixtures import sanity_rows
 from training.evidence_agent.conflicts import (
     conflict_values_incompatible,

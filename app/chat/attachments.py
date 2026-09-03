@@ -1,5 +1,7 @@
 import io
 import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -15,6 +17,7 @@ from app.services.rag_service import RAGService
 
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
+MAX_CHAT_ATTACHMENTS = 5
 MAX_PDF_PAGES = 100
 MAX_TEMPORARY_CHUNKS = 400
 
@@ -44,6 +47,7 @@ ATTACHMENT_QUERY_TERMS = {
     "trang",
     "dinh kem",
     "van ban nay",
+    "doan nay",
     "tai lieu nay",
     "noi dung nay",
     "theo tai lieu",
@@ -55,7 +59,7 @@ class AttachmentProcessingError(ValueError):
 
 
 def sanitize_filename(filename: str | None) -> str:
-    safe_name = Path(filename or "document").name
+    safe_name = Path((filename or "document").replace("\\", "/")).name
     safe_name = re.sub(r"[\x00-\x1f\x7f]", "", safe_name)
     safe_name = re.sub(r"\s+", " ", safe_name).strip()
 
@@ -128,6 +132,36 @@ def run_ocr(image: Image.Image) -> str:
     return normalize_document_text(text)
 
 
+@dataclass(frozen=True)
+class OCRResult:
+    text: str
+    confidence: float | None = None
+
+
+class TesseractOCRProvider:
+    name = "tesseract-vie-eng"
+
+    def extract(self, image: Image.Image) -> OCRResult:
+        return OCRResult(run_ocr(image))
+
+
+def extract_ocr(image, provider, debug):
+    provider = provider or TesseractOCRProvider()
+    started = time.perf_counter()
+    debug.update(ocr_attempted=True, ocr_provider=provider.name, ocr_success=False)
+    try:
+        result = provider.extract(image)
+        text = normalize_document_text(result.text)
+        debug.update(ocr_success=bool(text), ocr_char_count=len(text), ocr_confidence=result.confidence)
+        return text
+    except Exception as exc:
+        # Do not send executable paths or provider internals to normal users.
+        debug["ocr_error"] = "Không thể đọc chữ trong ảnh. Kiểm tra bộ OCR và thử ảnh rõ hơn."
+        raise AttachmentProcessingError(debug["ocr_error"]) from exc
+    finally:
+        debug["ocr_latency_ms"] = (time.perf_counter() - started) * 1000
+
+
 def split_page_into_chunks(
     text: str,
     filename: str,
@@ -177,6 +211,7 @@ def split_page_into_chunks(
 
 def extract_pdf_pages(
     data: bytes,
+    *, ocr_provider=None, ocr_debug=None,
 ) -> list[tuple[int, str]]:
     if not data.startswith(b"%PDF-"):
         raise AttachmentProcessingError(
@@ -237,7 +272,7 @@ def extract_pdf_pages(
                     pixmap.samples,
                 )
 
-                extracted_text = run_ocr(image)
+                extracted_text = extract_ocr(image, ocr_provider, ocr_debug if ocr_debug is not None else {})
 
             if extracted_text:
                 pages.append(
@@ -260,6 +295,7 @@ def extract_pdf_pages(
 def extract_image_text(
     data: bytes,
     expected_mime_type: str,
+    *, ocr_provider=None, ocr_debug=None,
 ) -> list[tuple[int, str]]:
     try:
         with Image.open(io.BytesIO(data)) as image:
@@ -289,7 +325,7 @@ def extract_image_text(
             "File tải lên không phải hình ảnh hợp lệ."
         ) from exc
 
-    text = run_ocr(image_copy)
+    text = extract_ocr(image_copy, ocr_provider, ocr_debug if ocr_debug is not None else {})
 
     if not contains_enough_text(text):
         raise AttachmentProcessingError(
@@ -331,9 +367,11 @@ class AttachmentService:
         self,
         store: ConversationStore,
         rag_service: RAGService,
+        ocr_provider=None,
     ):
         self.store = store
         self.rag_service = rag_service
+        self.ocr_provider = ocr_provider or TesseractOCRProvider()
 
     def _ensure_embedder(self) -> None:
         if self.rag_service.embedder is None:
@@ -367,17 +405,19 @@ class AttachmentService:
                 "Tên file không hợp lệ."
             )
 
-    @staticmethod
     def extract_pages(
+        self,
         mime_type: str,
         data: bytes,
+        ocr_debug=None,
     ) -> list[tuple[int, str]]:
         if mime_type == "application/pdf":
-            return extract_pdf_pages(data)
+            return extract_pdf_pages(data, ocr_provider=self.ocr_provider, ocr_debug=ocr_debug)
 
         return extract_image_text(
             data,
             expected_mime_type=mime_type,
+            ocr_provider=self.ocr_provider, ocr_debug=ocr_debug,
         )
 
     def build_chunks(
@@ -451,6 +491,7 @@ class AttachmentService:
         filename: str,
         mime_type: str,
         data: bytes,
+        upload_origin: str = "file",
     ) -> dict[str, Any]:
         filename = sanitize_filename(filename)
         mime_type = (mime_type or "").lower().strip()
@@ -460,21 +501,24 @@ class AttachmentService:
             mime_type,
             data,
         )
-
-        attachment = self.store.create_attachment(
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            filename=filename,
-            mime_type=mime_type,
-            size_bytes=len(data),
-        )
+        try:
+            attachment = self.store.create_attachment(
+                owner_id=owner_id, conversation_id=conversation_id, filename=filename,
+                mime_type=mime_type, size_bytes=len(data), max_attachments=MAX_CHAT_ATTACHMENTS,
+            )
+        except ValueError as exc:
+            raise AttachmentProcessingError(str(exc)) from exc
 
         attachment_id = str(attachment["id"])
+        ocr_debug = {"ocr_attempted": False, "ocr_success": False, "ocr_latency_ms": 0,
+                     "ocr_char_count": 0, "ocr_provider": None, "ocr_error": None, "ocr_confidence": None}
+        metadata = {"upload_origin": "clipboard" if upload_origin == "clipboard" else "file", "ocr": ocr_debug}
 
         try:
             pages = self.extract_pages(
                 mime_type,
                 data,
+                ocr_debug,
             )
 
             chunks = self.build_chunks(
@@ -518,6 +562,7 @@ class AttachmentService:
                     attachment_id=attachment_id,
                     status="ready",
                     chunk_count=len(stored_chunks),
+                    metadata=metadata,
                 )
             )
 
@@ -529,13 +574,17 @@ class AttachmentService:
             return ready_attachment
 
         except Exception as exc:
+            if ocr_debug["ocr_attempted"]:
+                ocr_debug["ocr_success"] = False
+                ocr_debug["ocr_error"] = "Không thể trích xuất nội dung ảnh."
             self.store.update_attachment_status(
                 owner_id=owner_id,
                 conversation_id=conversation_id,
                 attachment_id=attachment_id,
                 status="failed",
                 chunk_count=0,
-                error=str(exc)[:500],
+                error=str(exc)[:500] if isinstance(exc, AttachmentProcessingError) else "Không thể xử lý tài liệu.",
+                metadata=metadata,
             )
 
             raise
@@ -556,11 +605,14 @@ class TemporaryCorpusRetriever:
         conversation_id: str | UUID,
         question: str,
         top_k: int = 8,
+        attachment_ids: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         chunks = self.store.list_temporary_chunks(
             owner_id,
             conversation_id,
         )
+        if attachment_ids is not None:
+            chunks = [chunk for chunk in chunks if str(chunk["attachment_id"]) in attachment_ids]
 
         if not chunks:
             return []

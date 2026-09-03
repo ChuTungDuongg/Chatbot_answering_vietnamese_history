@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from app.agents.policy_schema import (
+from app.agents.research.policy import (
     PolicyLimits,
     ResearchPolicyState,
     ToolObservation,

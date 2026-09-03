@@ -207,6 +207,9 @@ class ConversationStore:
                     connection.execute(
                         "ALTER TABLE messages ADD COLUMN debug_json TEXT NOT NULL DEFAULT '{}'"
                     )
+                attachment_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(attachments)").fetchall()}
+                if "metadata_json" not in attachment_columns:
+                    connection.execute("ALTER TABLE attachments ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
 
                 connection.commit()
 
@@ -217,7 +220,10 @@ class ConversationStore:
         if row is None:
             return None
 
-        return dict(row)
+        item = dict(row)
+        if "metadata_json" in item:
+            item.update(json.loads(item.pop("metadata_json") or "{}"))
+        return item
 
     def conversation_exists(
         self,
@@ -421,7 +427,7 @@ class ConversationStore:
 
         content = content.strip()
 
-        if not content:
+        if not content and not (role == "user" and sources and all(source.get("source_kind") == "attachment" for source in sources)):
             raise ValueError(
                 "Message content must not be empty."
             )
@@ -482,7 +488,7 @@ class ConversationStore:
                     and next_title
                     == DEFAULT_CONVERSATION_TITLE
                 ):
-                    next_title = title_from_question(content)
+                    next_title = title_from_question(content or sources[0].get("title") or "Ảnh đính kèm")
 
                 connection.execute(
                     """
@@ -662,6 +668,7 @@ class ConversationStore:
         filename: str,
         mime_type: str,
         size_bytes: int,
+        max_attachments: int | None = None,
     ) -> dict[str, Any]:
         conversation_id = normalize_id(conversation_id)
         attachment_id = str(uuid4())
@@ -675,6 +682,11 @@ class ConversationStore:
 
         with self._write_lock:
             with self.connection() as connection:
+                if max_attachments is not None:
+                    connection.execute("BEGIN IMMEDIATE")
+                    count = connection.execute("SELECT COUNT(*) FROM attachments WHERE conversation_id = ?", (conversation_id,)).fetchone()[0]
+                    if count >= max_attachments:
+                        raise ValueError(f"Mỗi cuộc trò chuyện chỉ nhận tối đa {max_attachments} tài liệu. Hãy xóa tài liệu cũ trước.")
                 connection.execute(
                     """
                     INSERT INTO attachments (
@@ -745,6 +757,7 @@ class ConversationStore:
                     a.status,
                     a.chunk_count,
                     a.error,
+                    a.metadata_json,
                     a.created_at
                 FROM attachments a
                 JOIN conversations c
@@ -780,6 +793,7 @@ class ConversationStore:
                     a.status,
                     a.chunk_count,
                     a.error,
+                    a.metadata_json,
                     a.created_at
                 FROM attachments a
                 JOIN conversations c
@@ -795,7 +809,7 @@ class ConversationStore:
                 ),
             ).fetchall()
 
-        return [dict(row) for row in rows]
+        return [self._row_to_dict(row) for row in rows]
 
     def update_attachment_status(
         self,
@@ -805,6 +819,7 @@ class ConversationStore:
         status: str,
         chunk_count: int = 0,
         error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if status not in {
             "processing",
@@ -823,7 +838,8 @@ class ConversationStore:
                     SET
                         status = ?,
                         chunk_count = ?,
-                        error = ?
+                        error = ?,
+                        metadata_json = COALESCE(?, metadata_json)
                     WHERE
                         id = ?
                         AND conversation_id = ?
@@ -837,6 +853,7 @@ class ConversationStore:
                         status,
                         max(0, chunk_count),
                         error,
+                        json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
                         normalize_id(attachment_id),
                         normalize_id(conversation_id),
                         owner_id,
@@ -979,6 +996,9 @@ class ConversationStore:
                     tc.title,
                     tc.text,
                     tc.page_number,
+                    a.filename,
+                    a.mime_type,
+                    a.metadata_json,
                     tc.embedding,
                     tc.embedding_dim
                 FROM temporary_chunks tc
@@ -1001,7 +1021,8 @@ class ConversationStore:
         chunks: list[dict[str, Any]] = []
 
         for row in rows:
-            item = dict(row)
+            item = self._row_to_dict(row)
+            item.update(item.pop("ocr", {}))
 
             embedding = np.frombuffer(
                 item.pop("embedding"),

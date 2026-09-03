@@ -1,6 +1,6 @@
 import json
 
-from app.agents.policy_schema import ResearchPolicyState, default_research_tool_definitions, serialize_policy_state
+from app.agents.research.policy import ResearchPolicyState, default_research_tool_definitions, serialize_policy_state
 
 
 def test_training_and_runtime_share_state_and_full_tool_definitions():

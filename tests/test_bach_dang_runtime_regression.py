@@ -4,10 +4,10 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from app.agents.evidence_agent import EvidenceCriticAgent
-from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.orchestrator import AgentOrchestrator
-from app.agents.research_agent import ResearchAgent
+from app.agents.evidence.agent import EvidenceCriticAgent
+from app.agents.history_answerer.agent import HistoryAnswererAgent
+from app.agents.three_llm.orchestrator import AgentOrchestrator
+from app.agents.research.agent import ResearchAgent
 from app.api.routes import _build_debug
 from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.tools.evidence_tools import (

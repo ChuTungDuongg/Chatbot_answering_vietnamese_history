@@ -40,6 +40,7 @@ class SearchUploadedDocumentsTool:
             conversation_id=context.conversation_id,
             question=arguments.query,
             top_k=arguments.top_k,
+            **({"attachment_ids": context.attachment_ids} if context.attachment_ids is not None else {}),
         )
 
         return [

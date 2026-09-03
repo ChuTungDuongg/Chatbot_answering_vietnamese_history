@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.agents.policy_schema import PolicyLimits, ResearchPolicyState, ToolObservation, policy_messages
+from app.agents.research.policy import PolicyLimits, ResearchPolicyState, ToolObservation, policy_messages
 
 
 ACTION_RE = re.compile(r"(?im)^\s*Act\s*:\s*([a-zA-Z_][\w.-]*)")

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
-from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceModelOutput
 
 
 def candidate(evidence_id: str, text: str, *, source_type: str = "local") -> dict[str, Any]:

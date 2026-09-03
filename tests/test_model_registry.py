@@ -6,8 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.agents.model_runtime import VLLMOpenAIBackend
-from app.agents.model_registry import (
+from app.agents.common.model_runtime import VLLMOpenAIBackend
+from app.agents.common.model_registry import (
     CENTRAL_BASE_MODEL_ID,
     CENTRAL_MODEL,
     ROLE_MODELS,

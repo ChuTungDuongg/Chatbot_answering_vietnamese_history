@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from app.agents.policy_schema import PolicyLimits, ResearchPolicyState, policy_messages
+from app.agents.research.policy import PolicyLimits, ResearchPolicyState, policy_messages
 
 
 def _json_value(value: Any, *, field: str, expected: type) -> Any:

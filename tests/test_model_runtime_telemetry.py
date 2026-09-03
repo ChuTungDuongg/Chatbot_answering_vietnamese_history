@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from app.agents.model_runtime import SharedAgentModelRuntime
+from app.agents.common.model_runtime import SharedAgentModelRuntime
 from app.telemetry import RequestTelemetry, reset_request_telemetry, set_request_telemetry
 
 

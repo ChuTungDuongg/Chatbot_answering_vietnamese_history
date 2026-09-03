@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from training.common.qlora import LoRASettings
-from app.agents.model_registry import SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import SHARED_BASE_MODEL_ID
 
 
 @dataclass(frozen=True)

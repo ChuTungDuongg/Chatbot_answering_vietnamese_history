@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.agents.model_registry import (
+from app.agents.common.model_registry import (
     CENTRAL_BASE_MODEL_ID,
     CENTRAL_MODEL,
     ROLE_MODELS,
@@ -293,7 +293,7 @@ def validate_artifact_lock(root: str | Path) -> dict[str, Any]:
     registry_central = model_registry.get("central") if isinstance(model_registry.get("central"), dict) else {}
     configured_path = registry_central.get("adapter_path")
     if model_registry != registry_manifest(central_adapter_path=configured_path):
-        raise RuntimeError("model_registry.json does not match app.agents.model_registry.")
+        raise RuntimeError("model_registry.json does not match app.agents.common.model_registry.")
     expected_central_manifest = registry_manifest(central_adapter_path=configured_path)["central"]
     if manifest.get("central") != expected_central_manifest:
         raise RuntimeError("manifest Central adapter contract does not match model_registry.json.")

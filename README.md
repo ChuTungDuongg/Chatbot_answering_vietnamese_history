@@ -22,6 +22,10 @@
 > [!NOTE]
 > Central V2 hiện chạy `Qwen/Qwen3-8B` base với `CENTRAL_AGENT_ADAPTER_PATH` để trống. Adapter Central V1 có thể còn được lưu làm baseline nhưng không nằm trong config/manifest/lock production. Adapter V2 tương lai chỉ được nạp khi cấu hình rõ `adapters/central-v2`.
 
+<p align="center">
+  <img src="image-1.png" alt="Demo giao diện trợ lý lịch sử Việt Nam" width="100%" />
+</p>
+
 ## ✨ Tổng quan
 
 Hệ thống có ba mode user-facing tách biệt:
@@ -136,28 +140,22 @@ Không cần Jupyter hoặc `ipykernel`. Toàn bộ entry point là Python CLI.
 
 ## 🧩 Central V2 dataset và adapter
 
-Pipeline ở [`training/trajectory_dataset/`](training/trajectory_dataset/) chuẩn bị behavioral SFT cho adapter Central V2 tương lai. Default mix chỉ dùng:
+Pipeline tại [`training/central/`](training/central/README.md) chuẩn bị Central V2 từ **Hermes function-calling + grounded UIT-ViQuAD2.0**. Tỉ lệ khởi đầu 65/35 nằm duy nhất trong [`mix.json`](training/central/configs/mix.json). Không đưa JSON-mode, direct history SFT, Agent-FLAN hoặc mix V1 vào mặc định V2.
 
-- `NousResearch/hermes-function-calling-v1` — ba subset function-calling, không lấy JSON-mode.
-- `taidng/UIT-ViQuAD2.0` — chỉ các row lịch sử vượt deterministic filter; mọi row bắt đầu bằng `search_history`.
-
-Tỉ lệ khởi đầu nằm trong [`central_v2_mix.json`](training/trajectory_dataset/configs/central_v2_mix.json): Hermes 65%, grounded UIT-ViQuAD2 35%, không duplicate row để ép capacity. Stored JSONL giữ semantic `tools`, `assistant.tool_calls` và `tool` observations; Qwen chat template chỉ render ở preprocess với `enable_thinking=False`. System/user/tool-observation bị mask, assistant tool calls và final answers được supervise.
-
-Corpus runtime vẫn là knowledge source chính; QLoRA này dạy function calling, grounded synthesis và insufficient-evidence behavior, không thay thế RAG. Chưa có adapter V2 nào là dependency production mặc định.
-
-Hướng dẫn đầy đủ: [`training/trajectory_dataset/README.md`](training/trajectory_dataset/README.md). CLI chính:
+Normalizer giữ structured tools/calls/results, kiểm tra schema/thứ tự và dùng context để trả lời hoặc báo thiếu bằng chứng. Native Qwen chat template chạy với `enable_thinking=False`; chỉ assistant calls/final answers được supervise. Trainer cấu hình bằng [`train.json`](training/central/configs/train.json), có dry-run, tokenizer preflight và resume guards.
 
 ```bash
-python -m training.trajectory_dataset.cli --help
-python -m training.trajectory_dataset.cli normalize-public --source hermes_function_calling --help
-python -m training.trajectory_dataset.cli normalize-public --source uit_viquad2 --help
-python -m training.trajectory_dataset.cli mix --config training/trajectory_dataset/configs/central_v2_mix.json --help
-python -m training.trajectory_dataset.cli validate --help
-python -m training.trajectory_dataset.cli audit --help
-python -m training.trajectory_dataset.cli split --help
+python -m training.central.data.prepare --help
+python -m training.central.train.cli --config training/central/configs/train.json --dump-config
 ```
 
-Hai normalizer hỗ trợ `--input-jsonl` để test hoàn toàn offline. Workflow Colab đầy đủ tạo `central_v2/intermediate`, `mixed.jsonl`, `validated.jsonl`, ba final splits và reports; xem README chuyên sâu trước khi tải dataset thật. Trainer Python-only chạy bằng `python -m training.train_qwen3_8b_agent`; luôn dùng `--dry-run` trước.
+`python -m training.train_qwen3_8b_agent` là compatibility CLI cùng implementation. Base Qwen3-8B vẫn hoạt động khi adapter path trống; artifact V2 tương lai là `/artifacts/adapters/central-v2`. Chưa train hoặc upload adapter trong đợt refactor này.
+
+## Runtime packages và evaluation tương lai
+
+[`app/agents/`](app/agents/README.md) tách `research/`, `evidence/`, `history_answerer/`, `central/`, `common/` và `three_llm/`. Central độc lập, không fallback sang các role agent cũ. Các sửa lỗi generalization hiện tại được giữ nguyên.
+
+[`evaluation/`](evaluation/README.md) chứa schema, hai fixture giả nhỏ, raw JSONL logging, metric groups và paired BASE/ADAPTED reports. Production không import training/evaluation. Raw logs và reports được gitignore; có thể chấm lại offline mà không inference. Chưa tạo benchmark thật hoặc chạy model comparison.
 
 ## 🚀 Chạy local
 

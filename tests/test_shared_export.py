@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 from app.artifact_contract import validate_artifact_lock
 from training.scripts.export_artifacts import main
 

@@ -6,10 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.evidence_agent import EvidenceCriticAgent, EvidenceModelContractError
-from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.orchestrator import AgentOrchestrator, HybridRAGOrchestrator
-from app.agents.research_agent import ResearchAgent
+from app.agents.evidence.agent import EvidenceCriticAgent, EvidenceModelContractError
+from app.agents.history_answerer.agent import HistoryAnswererAgent
+from app.agents.three_llm.orchestrator import AgentOrchestrator
+from app.agents.hybrid import HybridRAGOrchestrator
+from app.agents.research.agent import ResearchAgent
 from app.rag.research_runtime import ResearchRetrievalRuntime
 from app.rag.retrieval import extract_comparison_targets
 from app.tools.evidence_tools import InspectEvidenceTool, RetrieveEvidenceTool, SessionEvidenceStore

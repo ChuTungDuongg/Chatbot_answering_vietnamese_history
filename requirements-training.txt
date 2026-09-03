@@ -18,3 +18,4 @@ tqdm>=4.67.0
 requests>=2.32.0
 modal>=1.2.4
 pytest>=9.0.0
+jsonschema>=4.23,<5

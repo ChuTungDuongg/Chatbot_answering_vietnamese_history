@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from app.agents.prompts import EVIDENCE_AGENT_SYSTEM
-from app.agents.schemas import EvidenceAgentRequest, EvidenceModelOutput
+from app.agents.evidence.prompts import EVIDENCE_AGENT_SYSTEM
+from app.agents.evidence.schemas import EvidenceAgentRequest, EvidenceModelOutput
 from tests.evidence_v2_fixtures import sanity_rows
 from training.history_answerer.evaluate import parse_source_ids
 from training.evidence_agent.prepare_dataset import build_dataset_v2

@@ -1,5 +1,5 @@
-from app.agents.comparison import comparison_target_relevance
-from app.agents.evidence_agent import (
+from app.agents.common.comparison import comparison_target_relevance
+from app.agents.evidence.agent import (
     BROAD_SUMMARY_FACETS,
     EvidenceCriticAgent,
     _broad_summary_facets_for_text,
@@ -7,7 +7,7 @@ from app.agents.evidence_agent import (
     _candidate_quality,
     _evidence_question_type,
 )
-from app.agents.history_answerer import HistoryAnswererAgent
+from app.agents.history_answerer.agent import HistoryAnswererAgent
 from app.rag.retrieval import balance_comparison_candidates
 
 

@@ -36,6 +36,7 @@ class ToolExecutionContext:
     conversation_id: str | None = None
     session_id: str = "default"
     request_id: str | None = None
+    attachment_ids: tuple[str, ...] | None = None
 
 
 class ToolRegistry:

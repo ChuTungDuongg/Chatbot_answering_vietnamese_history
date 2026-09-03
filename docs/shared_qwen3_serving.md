@@ -6,7 +6,7 @@ The active architecture is one frozen `Qwen/Qwen3-4B-Instruct-2507` base with th
 - `evidence`: selects, validates, deduplicates, detects conflicts, and compresses evidence using `EvidenceModelOutput`; never orchestrates retrieval or writes final prose.
 - `history`: writes the final grounded Vietnamese answer and citations; never retrieves or manages the evidence pool.
 
-The role registry is `app/agents/model_registry.py`. Adapter startup validation reads each `adapter_config.json` and rejects any `base_model_name_or_path` other than the shared Qwen3 ID. The old Qwen2.5 History model is explicitly `legacy_only` and may be retained only for same-input benchmark comparisons.
+The role registry is `app/agents/common/model_registry.py`. Adapter startup validation reads each `adapter_config.json` and rejects any `base_model_name_or_path` other than the shared Qwen3 ID. The old Qwen2.5 History model is explicitly `legacy_only` and may be retained only for same-input benchmark comparisons.
 
 ## Transformers/PEFT backend
 

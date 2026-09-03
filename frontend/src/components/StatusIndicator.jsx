@@ -1,43 +1,15 @@
-import { LoaderCircle } from "lucide-react";
-
-const STATUS_LABELS = {
-  processing: "Đang tìm bằng chứng phù hợp",
-  retrieval_started: "Đang truy xuất kho sử liệu",
-  reranking: "Đang xếp hạng bằng chứng",
-  generating: "Đang soạn câu trả lời",
-  validating: "Đang kiểm tra độ chính xác",
-  agentic_analyzing: "Đang phân tích câu hỏi...",
-  agentic_local_search: "Đang tìm trong kho sử liệu...",
-  agentic_external_check: "Đang kiểm tra thêm nguồn ngoài...",
-  agentic_evidence_check: "Đang đối chiếu bằng chứng...",
-  agentic_answering: "Đang soạn câu trả lời...",
-  hybrid_retrieval: "Đang truy xuất kho sử liệu...",
-  hybrid_answering: "Đang soạn câu trả lời...",
-  three_llm_research: "Research Agent đang thu thập bằng chứng...",
-  three_llm_evidence: "Evidence Agent đang kiểm tra bằng chứng...",
-  three_llm_answering: "History Answerer đang soạn câu trả lời...",
-  central_analyzing: "Central Agent đang phân tích câu hỏi...",
-  central_tools: "Central Agent đang thu thập bằng chứng...",
-  central_answering: "Central Agent đang tổng hợp câu trả lời...",
-  fast_retrieval: "Đang tìm nhanh trong kho sử liệu...",
-  fast_answering: "Đang chuẩn bị câu trả lời...",
-  validated: "Đã kiểm tra câu trả lời",
-  streaming: "Đang trả lời",
-  cancelled: "Đã dừng tạo câu trả lời",
-  error: "Không thể hoàn tất câu trả lời",
-};
+import { progressLabel } from "../services/progressLabels";
 
 function StatusIndicator({ status }) {
   if (!status || ["idle", "done"].includes(status)) return null;
-
-  const isActive = !["error", "cancelled"].includes(status);
-
-  return (
-    <div className={`status-indicator status-${status}`} role="status">
-      {isActive && <LoaderCircle className="spin" />}
-      <span>{STATUS_LABELS[status] ?? "Đang xử lý"}</span>
-    </div>
-  );
+  const inactive = ["error", "cancelled"].includes(status);
+  const label = status === "error" ? "Không thể hoàn tất câu trả lời"
+    : status === "cancelled" ? "Đã dừng tạo câu trả lời"
+      : progressLabel(status);
+  return <div className={`status-indicator ${inactive ? `status-${status}` : ""}`} role="status">
+    {!inactive && <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>}
+    <span>{label}</span>
+  </div>;
 }
 
 export default StatusIndicator;

@@ -14,7 +14,7 @@ from app.artifact_contract import (
     validate_artifact_lock,
     write_artifact_lock,
 )
-from app.agents.model_registry import (
+from app.agents.common.model_registry import (
     FUTURE_CENTRAL_V2_ADAPTER_PATH,
     ROLE_MODELS,
     registry_manifest,

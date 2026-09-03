@@ -18,7 +18,7 @@ from app.rag.retrieval import (
     match_norm,
 )
 from app.services.rag_service import RAGService
-from app.agents.model_runtime import RoleLLMBackend
+from app.agents.common.model_runtime import RoleLLMBackend
 
 
 STRUCTURED_SECTION_SPECS = (

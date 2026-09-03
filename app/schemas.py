@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.chat_modes import ChatMode, normalize_chat_mode
 
@@ -69,6 +69,12 @@ class QuestionAnalysis(BaseModel):
 
 class RetrievalContextItem(BaseModel):
     chunk_id: str
+    source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    display_index: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    comparison_target: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    comparison_targets: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    viewpoint_sensitive: bool = Field(default=False, exclude_if=lambda value: not value)
+    url: str | None = Field(default=None, exclude_if=lambda value: value is None)
     title: str | None = None
     text: str | None = None
 
@@ -121,6 +127,11 @@ class RetrieveResponse(BaseModel):
 
 class SourceItem(BaseModel):
     chunk_id: str
+    source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    display_index: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    comparison_target: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    comparison_targets: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    viewpoint_sensitive: bool = Field(default=False, exclude_if=lambda value: not value)
     title: str | None = None
 
     source_kind: Literal[
@@ -207,6 +218,8 @@ class AttachmentItem(BaseModel):
     chunk_count: int = 0
     error: str | None = None
     created_at: datetime
+    upload_origin: Literal["file", "clipboard"] = "file"
+    ocr: dict[str, Any] = Field(default_factory=dict)
 
 
 class AttachmentUploadResponse(BaseModel):
@@ -238,7 +251,7 @@ class ChatRequest(BaseModel):
 
     question: str = Field(
         ...,
-        min_length=2,
+        min_length=0,
         max_length=1000,
     )
 
@@ -251,6 +264,13 @@ class ChatRequest(BaseModel):
     mode: InferenceMode | None = None
 
     debug: bool = False
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def require_text_or_attachment(self):
+        if len(self.question.strip()) < 2 and not self.attachment_ids:
+            raise ValueError("Câu hỏi không được để trống khi chưa có tài liệu.")
+        return self
 
     @field_validator("mode", mode="before")
     @classmethod

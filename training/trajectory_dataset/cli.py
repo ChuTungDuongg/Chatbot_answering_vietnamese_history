@@ -9,12 +9,12 @@ from typing import Any, Callable, Iterable
 
 from .adapters import (
     normalize_agent_flan,
-    normalize_hermes_function_calling,
     normalize_multihop,
-    normalize_uit_viquad2,
     normalize_vietnam_history,
 )
-from .adapters.hermes_function_calling import HERMES_FUNCTION_FILES
+from training.central.normalization.hermes import normalize_hermes_function_calling
+from training.central.normalization.viquad import normalize_uit_viquad2
+from training.central.normalization.hermes import HERMES_FUNCTION_FILES
 from .adapters.common import AdapterError, get_messages, semantic_messages
 from .audit import audit_rows, central_v2_audit, tokenizer_audit
 from .builders.custom_history import (

@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from app.agents.policy_schema import (
+from app.agents.research.policy import (
     FinishDecision,
     ResearchPolicyState,
     ToolDecision,

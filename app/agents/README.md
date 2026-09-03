@@ -2,6 +2,43 @@
 
 [⬅️ Backend](../README.md) · [🧰 Tool contracts](../tools/README.md)
 
+## Package ownership
+
+```text
+app/agents/
+  common/            shared runtime/lazy loading, registry, cache, tool codec,
+                     EvidenceChunk, comparison helpers and domain gate
+  research/          ResearchAgent, research config/policy/result
+  evidence/          EvidenceCriticAgent, evidence schemas/prompts/validation
+  history_answerer/  HistoryAnswererAgent and answer contract
+  central/           independent CentralAgent/model/config, semantic parsing,
+                     evidence selection, synthesis, citations and repairs
+  three_llm/         AgentOrchestrator for the three legacy roles
+  hybrid.py          existing HybridRAGOrchestrator
+  config.py, schemas.py, prompts.py, orchestrator.py  compatibility re-exports
+```
+
+Public role imports are `from app.agents.research import ResearchAgent`,
+`from app.agents.evidence import EvidenceCriticAgent`,
+`from app.agents.history_answerer import HistoryAnswererAgent`, and
+`from app.agents.central import CentralAgent, CentralAgentConfig, CentralModelRuntime`.
+`from app.agents.three_llm import AgentOrchestrator` owns legacy orchestration.
+Public package exports resolve lazily; imports do not construct models.
+
+`common` contains only shared runtime/data helpers and does not import concrete
+agents. Central imports its own modules, shared helpers and tool/RAG infrastructure;
+it does not import/delegate to legacy agents or `three_llm`. Production imports
+neither `training` nor `evaluation`. The four flat compatibility files have no
+classes, functions or business logic; callers are migrated to canonical packages.
+
+Within Central, `semantics.py` owns value types and lexical normalization;
+`question.py` owns parsing/query planning; `depth.py` owns causal breadth policy;
+`evidence.py` owns evidence packet planning. `citation_support.py` classifies
+supported paragraphs below `citations.py`; `citation_recovery.py` performs bounded
+recovery above validation. These boundaries remove deferred import cycles without
+changing the existing generalization algorithms. Package dependency and duplicate
+implementation gates live in `tests/test_agent_package_architecture.py`.
+
 ## 🎭 Ba vai trò
 
 | Thành phần | Model/adapter | Trách nhiệm |

@@ -13,6 +13,7 @@ from app.rag.retrieval import (
 class SearchHistoryInput(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=8, ge=1, le=20)
+    candidate_pool: bool = Field(default=False, description="Return ranked candidates before final diversity selection for host-side analytical selection.")
 
 
 class SearchHistoryTool:
@@ -22,6 +23,29 @@ class SearchHistoryTool:
 
     def __init__(self, retriever: Any):
         self.retriever = retriever
+        self._entity_title_index = None
+        self._indexed_chunks = None
+
+    def resolve_entity_title(self, target: str, expected_type: str | None = None) -> str | None:
+        # Use the already loaded corpus. Never initialize embeddings/models here.
+        from app.agents.central.targets import EntityTitleIndex
+        chunks = getattr(getattr(self.retriever, "service", None), "chunks", None)
+        if chunks is None:
+            return None
+        if self._indexed_chunks is not chunks:
+            titles = (str(row.get("title") or row.get("page_title") or row.get("source_title")
+                          or (row.get("metadata") or {}).get("title") or "") for row in chunks)
+            self._entity_title_index = EntityTitleIndex(titles)
+            self._indexed_chunks = chunks
+        return self._entity_title_index.resolve(target, expected_type)
+
+    def can_overlap_model_load_and_retrieval(self) -> bool:
+        # RAGService loads both models onto settings.device. Inspect the already
+        # loaded objects without invoking loaders; unknown/same-CUDA stays serial.
+        service = getattr(self.retriever, "service", None)
+        devices = [str(getattr(getattr(service, name, None), "device", "unknown"))
+                   for name in ("embedder", "reranker")]
+        return all(device == "cpu" for device in devices)
 
     def run(self, arguments: SearchHistoryInput) -> list[dict[str, Any]]:
         analysis_fn = getattr(self.retriever, "analyze_question", None)
@@ -55,7 +79,8 @@ class SearchHistoryTool:
             return chunks
 
         result = self.retriever.retrieve(arguments.query, final_k=arguments.top_k)
-        chunks = result.get("final_context") or []
+        chunks = (result.get("candidates20") or result.get("final_context") or [])[:arguments.top_k] if arguments.candidate_pool else result.get("final_context") or []
+        chunks = [dict(chunk) for chunk in chunks]
         for chunk in chunks:
             chunk.setdefault("source_kind", "history")
         return chunks

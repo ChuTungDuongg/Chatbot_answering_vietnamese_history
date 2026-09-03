@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.history_answerer import HistoryAnswererAgent
-from app.agents.history_contract import HistoryAnswerContractError
+from app.agents.history_answerer.agent import HistoryAnswererAgent
+from app.agents.history_answerer.contract import HistoryAnswerContractError
 
 
 FORBIDDEN_META = (

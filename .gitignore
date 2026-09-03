@@ -191,6 +191,8 @@ frontend/.env.*.local
 
 frontend/.vite/
 frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
 
 # =========================
 # npm
@@ -208,3 +210,13 @@ node_modules/
 !examples/
 !examples/*.jsonl
 !examples/*.md
+
+# Central V2 offline tooling: generated data/logs/reports never enter Git.
+/training/central/data/generated/
+/training/central/cache/
+/training/central/outputs/
+!/evaluation/logs/
+/evaluation/logs/*
+!/evaluation/logs/.gitkeep
+/evaluation/reports/*
+!/evaluation/reports/.gitkeep

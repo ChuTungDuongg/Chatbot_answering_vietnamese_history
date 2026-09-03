@@ -7,7 +7,7 @@ import time
 from contextlib import suppress
 from types import SimpleNamespace
 
-from app.agents.evidence_agent import EvidenceModelContractError
+from app.agents.evidence.agent import EvidenceModelContractError
 from app.api.routes import chat_stream
 from app.chat.store import ConversationStore
 from app.schemas import ChatRequest

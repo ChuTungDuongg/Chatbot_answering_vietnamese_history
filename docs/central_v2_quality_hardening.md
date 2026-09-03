@@ -1,5 +1,7 @@
 # Central V2 quality and performance hardening
 
+This document records the earlier biography-focused pass. Current behavior and verification are in [Central V2 consolidated hardening](central_v2_consolidated_hardening.md). In particular, the former expansion to visible real chunk IDs described below has been replaced by numeric display citations.
+
 Central retains PREPARE → INITIAL_GROUNDING → optional ACTION / TOOL_EXECUTION → SYNTHESIS → optional QUALITY_REPAIR → FINAL. The public mode is `central`; the Qwen3-8B base, optional future Central V2 adapter, Hermes function calling, host-side `search_history`, and future request-policy hook remain intact. This work changes deterministic selection and answer validation around that state machine.
 
 ## Confirmed causes
@@ -72,13 +74,13 @@ Debug/provenance/performance include candidate counts before/after filtering, fi
 
 ## Files changed
 
-- `app/agents/central_question.py`: biography analysis and subject extraction; remove length-only repair trigger.
-- `app/agents/central_evidence.py`: new deterministic selection and synthesis packet.
-- `app/agents/central_citations.py`: new alias checking, normalization, paragraph coverage, and expansion.
-- `app/agents/central_grounding.py`: new conservative factual-token risk checks.
-- `app/agents/central_agent.py`: integrate selection, packets, validation, bounded repair, and telemetry.
-- `app/agents/central_state.py`: request-local filter/repair/risk debug state.
-- `app/agents/central_prompt.py`: synthesis, biography, and dedicated repair contracts.
+- `app/agents/central/question.py`: biography analysis and subject extraction; remove length-only repair trigger.
+- `app/agents/central/evidence.py`: new deterministic selection and synthesis packet.
+- `app/agents/central/citations.py`: new alias checking, normalization, paragraph coverage, and expansion.
+- `app/agents/central/grounding.py`: new conservative factual-token risk checks.
+- `app/agents/central/agent.py`: integrate selection, packets, validation, bounded repair, and telemetry.
+- `app/agents/central/state.py`: request-local filter/repair/risk debug state.
+- `app/agents/central/prompt.py`: synthesis, biography, and dedicated repair contracts.
 - `app/agents/config.py`, `app/config.py`, `app/main.py`, `.env.example`: validated configuration and wiring.
 - `app/telemetry.py`, `app/api/routes.py`: quality telemetry and subject visibility.
 - `tests/test_central_quality_hardening.py`: fake-runtime regressions and deterministic contracts.

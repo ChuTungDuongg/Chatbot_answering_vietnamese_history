@@ -31,7 +31,7 @@ function DeveloperTrace({ trace }) {
     <details className="developer-trace">
       <summary>
         <Braces />
-        <span>Agent Trace</span>
+        <span>Agent trace</span>
         <ChevronDown className="trace-chevron" />
       </summary>
 

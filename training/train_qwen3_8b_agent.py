@@ -1,14 +1,14 @@
 """Backward-compatible CLI for the modular central-agent training package.
 
-The implementation lives in ``training.central_agent`` so configuration,
+The implementation lives in ``training.central.train`` so configuration,
 dataset/preflight, runtime/resume, and GPU training concerns can be tested and
 debugged independently. Existing one-command invocations remain unchanged.
 """
 
 from __future__ import annotations
 
-from training.central_agent.cli import main
-from training.central_agent.config import (
+from training.central.train.cli import main
+from training.central.train.config import (
     build_lora_settings,
     build_parser,
     build_qlora_settings,
@@ -18,15 +18,15 @@ from training.central_agent.config import (
     safe_cli_arguments as _safe_cli_arguments,
     validate_args,
 )
-from training.central_agent.constants import DEFAULT_MODEL_ID, MANIFEST_SCHEMA_VERSION
-from training.central_agent.data import (
+from training.central.train.constants import DEFAULT_MODEL_ID, MANIFEST_SCHEMA_VERSION
+from training.central.train.data import (
     audit_tokenized_split,
     load_datasets,
     resolve_paths,
     sha256_file,
 )
-from training.central_agent.engine import create_training_arguments, load_model as _load_model, load_tokenizer
-from training.central_agent.runtime import (
+from training.central.train.engine import create_training_arguments, load_model as _load_model, load_tokenizer
+from training.central.train.runtime import (
     build_run_manifest,
     checkpoint_is_valid,
     find_latest_checkpoint,

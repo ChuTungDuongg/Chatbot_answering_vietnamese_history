@@ -10,7 +10,7 @@ from training.common.datasets import load_messages, split_rows, split_statistics
 from training.common.qlora import QLoRASettings, resolve_precision
 from training.research_agent.config import ResearchAgentConfig
 from training.research_agent.validate_dataset import validate_rows
-from app.agents.model_registry import validate_role_adapter
+from app.agents.common.model_registry import validate_role_adapter
 
 
 def build_parser() -> argparse.ArgumentParser:

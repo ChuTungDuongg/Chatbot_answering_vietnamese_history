@@ -10,7 +10,7 @@ from training.common.jsonl import read_jsonl
 from training.evidence_agent.config import EvidenceAgentConfig
 from training.evidence_agent.sft import prepare_evidence_split
 from training.evidence_agent.validate_dataset import validate_rows
-from app.agents.model_registry import validate_role_adapter
+from app.agents.common.model_registry import validate_role_adapter
 
 
 def build_parser() -> argparse.ArgumentParser:

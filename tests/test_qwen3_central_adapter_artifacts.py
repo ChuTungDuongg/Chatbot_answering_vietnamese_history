@@ -7,15 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from training.central_agent.config import parse_args, validate_args
-from training.central_agent.engine import (
+from training.central.train.config import parse_args, validate_args
+from training.central.train.engine import (
     adapter_artifacts_exist,
     create_training_arguments,
     final_state_preserving_trainer_class,
     finalize_adapter_artifacts,
     print_adapter_metadata,
 )
-from training.central_agent.runtime import find_latest_checkpoint, resolve_resume_checkpoint
+from training.central.train.runtime import find_latest_checkpoint, resolve_resume_checkpoint
 
 
 def write_adapter(path: Path, payload: bytes) -> None:

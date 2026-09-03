@@ -7,11 +7,11 @@ from collections import deque
 
 from pydantic import BaseModel, Field
 
-from app.agents.central_agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER
-from app.agents.central_model_runtime import CentralGeneration, CentralToolCall, parse_central_generation_detailed
-from app.agents.central_question import analyze_central_question
-from app.agents.config import CentralAgentConfig
-from app.agents.lazy_runtime import LazyRuntime
+from app.agents.central.agent import CentralAgent, INSUFFICIENT_EVIDENCE_ANSWER, FAILURE_ANSWERS
+from app.agents.central.model_runtime import CentralGeneration, CentralToolCall, parse_central_generation_detailed
+from app.agents.central.question import analyze_central_question
+from app.agents.central.config import CentralAgentConfig
+from app.agents.common.lazy_runtime import LazyRuntime
 from app.tools.registry import ToolRegistry
 
 
@@ -103,13 +103,16 @@ def test_factual_biography_and_cause_questions_are_grounded_before_synthesis():
         "Vì sao Cách mạng Tháng Tám năm 1945 thành công?",
     )
     for question in questions:
-        history = FakeTool("search_history", [{"chunk_id": "hist_1", "text": "Bằng chứng lịch sử phù hợp."}])
+        evidence = "Trương Định là một nhân vật lịch sử."
+        if "Vì sao" in question:
+            evidence = "Cách mạng Tháng Tám thành công do bối cảnh thuận lợi, lực lượng nhân dân đấu tranh giành chính quyền. Các nguyên nhân chính trị và xã hội góp phần vào kết quả thành công."
+        history = FakeTool("search_history", [{"chunk_id": "hist_1", "text": evidence}])
         answer = ("Phân tích nguyên nhân từ bằng chứng. " * 130 if "Vì sao" in question else "Câu trả lời có căn cứ. ") + "[hist_1]"
         runtime = FakeCentralRuntime([CentralGeneration(content=answer, generation_stage="synthesis")])
 
         result = build_agent(runtime, history).chat(question)
 
-        assert len(history.calls) == 1
+        assert len(history.calls) == (2 if "Vì sao" in question else 1)
         assert len(runtime.calls) == 1
         assert runtime.calls[0]["stage"] == "synthesis"
         assert "Gói bằng chứng:" in runtime.calls[0]["messages"][-1]["content"]
@@ -129,17 +132,20 @@ def test_comparison_targets_are_clean_and_both_are_retrieved_concurrently():
     assert analysis.comparison_targets == ("Hiệp định Genève năm 1954", "Hiệp định Paris năm 1973")
     history = FakeTool(
         "search_history",
-        lambda args: [{"chunk_id": "src_" + str(len(args["query"])), "text": args["query"]}],
+        lambda args: [{"chunk_id": "src_a" if "Genève" in args["query"] else "src_b", "text":
+                       (analysis.comparison_targets[0] if "Genève" in args["query"] else analysis.comparison_targets[1])
+                       + " có bối cảnh đấu tranh ngoại giao, mục tiêu chính trị và kết quả có ý nghĩa lịch sử. Các lực lượng tham gia có phương pháp đấu tranh riêng."}],
         delay=0.06,
     )
-    runtime = FakeCentralRuntime([CentralGeneration(content=deep_comparison("src_27"))])
+    runtime = FakeCentralRuntime([CentralGeneration(content=deep_comparison("src_a") + " [src_b]")])
 
-    started = time.perf_counter()
     result = build_agent(runtime, history).chat(question)
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 0.115
-    assert {call["query"] for call in history.calls} == set(analysis.comparison_targets)
+    # Each target's primary is independent; secondary variants form a later stage.
+    assert history.calls[0]["query"] == analysis.comparison_targets[0]
+    assert history.calls[1]["query"] == analysis.comparison_targets[1]
+    assert set(analysis.comparison_targets) <= {call["query"] for call in history.calls}
+    assert len(history.calls) == 4
+    assert result["status"] == "ok"
     assert result["central_debug"]["initial_grounding_coverage"] == {
         analysis.comparison_targets[0]: 1,
         analysis.comparison_targets[1]: 1,
@@ -148,19 +154,21 @@ def test_comparison_targets_are_clean_and_both_are_retrieved_concurrently():
 
 def test_insufficient_local_evidence_enters_structured_action_then_synthesis():
     history = FakeTool("search_history", [])
-    wikipedia = FakeTool("search_wikipedia", [{"chunk_id": "wiki_1", "text": "Đối chiếu."}])
+    wikipedia = FakeTool("search_wikipedia", [{"chunk_id": "wiki_1", "title": "Trương Định", "text": "Đối chiếu."}])
+    fetch = FakeTool("fetch_wikipedia_page", {"chunk_id": "wiki_1", "title": "Trương Định", "text": "Trương Định là một nhân vật lịch sử."})
     runtime = FakeCentralRuntime([
         generation_call("search_wikipedia", {"query": "Trương Định", "top_k": 4}),
         CentralGeneration(content="Thông tin đã được đối chiếu. [wiki_1]", generation_stage="synthesis"),
     ])
 
-    result = build_agent(runtime, history, wikipedia).chat("Trương Định là ai?")
+    result = build_agent(runtime, history, wikipedia, fetch).chat("Trương Định là ai?")
 
     assert [call["stage"] for call in runtime.calls] == ["action", "synthesis"]
     assert runtime.calls[0]["max_new_tokens"] == 256
     assert runtime.calls[1]["max_new_tokens"] == 1536
     assert runtime.calls[0]["tools"][0]["type"] == "function"
     assert wikipedia.calls[0]["query"] == "Trương Định"
+    assert len(fetch.calls) == 1
     assert result["source_ids"] == ["wiki_1"]
     assert result["central_debug"]["phase_trace"] == [
         "prepare", "initial_grounding", "action", "tool_execution", "synthesis", "final",
@@ -169,11 +177,13 @@ def test_insufficient_local_evidence_enters_structured_action_then_synthesis():
 
 def test_multiple_independent_action_calls_execute_in_parallel():
     history = FakeTool("search_history", [])
-    wikipedia = FakeTool(
-        "search_wikipedia",
-        lambda args: [{"chunk_id": "wiki_" + args["query"], "text": args["query"]}],
-        delay=0.06,
-    )
+    rendezvous = threading.Barrier(2)
+    def search(args):
+        # Both calls must enter before either completes; total test wall time
+        # includes unrelated scheduler/import overhead and cannot prove this.
+        rendezvous.wait(timeout=2)
+        return [{"chunk_id": "wiki_" + args["query"], "text": args["query"]}]
+    wikipedia = FakeTool("search_wikipedia", search)
     runtime = FakeCentralRuntime([
         CentralGeneration(tool_calls=(
             CentralToolCall("a", "search_wikipedia", {"query": "A"}),
@@ -182,11 +192,8 @@ def test_multiple_independent_action_calls_execute_in_parallel():
         CentralGeneration(content="Đối chiếu A và B. [wiki_A] [wiki_B]"),
     ])
 
-    started = time.perf_counter()
     result = build_agent(runtime, history, wikipedia).chat("Đối chiếu sự kiện lịch sử này")
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 0.115
+    assert not rendezvous.broken
     assert len(wikipedia.calls) == 2
     assert result["answer_provenance"]["central_tool_calls_by_type"]["search_wikipedia"] == 2
 
@@ -211,7 +218,7 @@ def test_duplicate_and_invalid_calls_become_bounded_observations_without_executi
         invalid_history,
         config=CentralAgentConfig(max_action_rounds=1, repair_max_generations=0),
     ).chat("q lịch sử")
-    assert invalid["status"] == "insufficient_evidence"
+    assert invalid["status"] == "tool_failed"
     invalid_events = invalid["central_debug"]["tools"]
     assert invalid_events[0]["name"] == "search_history"
     assert invalid_events[1]["error"] == "tool_not_available"
@@ -227,9 +234,9 @@ def test_tool_error_is_recoverable_and_action_rounds_are_bounded():
     result = build_agent(runtime, history, wikipedia).chat("q lịch sử")
 
     assert len(runtime.calls) == 2
-    assert result["status"] == "insufficient_evidence"
+    assert result["status"] == "tool_failed"
     assert result["central_debug"]["tools"][1]["error"] == "network timeout"
-    assert "network timeout" in runtime.calls[1]["messages"][-1]["content"]
+    assert any("network timeout" in str(message.get("content")) for message in runtime.calls[1]["messages"])
 
 
 def test_local_only_web_provider_hides_web_tools_but_keeps_wikipedia():
@@ -248,7 +255,7 @@ def test_local_only_web_provider_hides_web_tools_but_keeps_wikipedia():
 def test_quality_repair_is_single_and_uses_repair_budget():
     history = FakeTool("search_history", [{"chunk_id": "h1", "text": "evidence"}])
     runtime = FakeCentralRuntime([
-        CentralGeneration(content="Quá ngắn."),
+        CentralGeneration(content="Nguyễn Huệ sinh năm 999. [h1]"),
         CentralGeneration(content=("Phân tích có bằng chứng. " * 140) + "[h1]"),
     ])
     config = CentralAgentConfig(repair_max_generations=1)
@@ -317,7 +324,7 @@ def test_agent_timeout_reports_generation_stage():
         history,
         config=CentralAgentConfig(timeout_seconds=0.2, repair_max_generations=0),
     ).chat("q")
-    assert result["answer"] == INSUFFICIENT_EVIDENCE_ANSWER
+    assert result["answer"] == FAILURE_ANSWERS["generation_timeout"]
     assert result["answer_provenance"]["source"] == "central_timeout"
     assert result["answer_provenance"]["timeout_stage"] == "generation_synthesis"
 

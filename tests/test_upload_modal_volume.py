@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID, registry_manifest
+from app.agents.common.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID, registry_manifest
 from app.artifact_contract import (
     build_artifact_lock,
     inference_config_payload,

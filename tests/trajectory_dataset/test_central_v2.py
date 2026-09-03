@@ -6,8 +6,8 @@ import json
 import pytest
 
 from training.trajectory_dataset.adapters.common import AdapterError
-from training.trajectory_dataset.adapters.hermes_function_calling import normalize_hermes_function_calling
-from training.trajectory_dataset.adapters.uit_viquad2 import (
+from training.central.normalization.hermes import normalize_hermes_function_calling
+from training.central.normalization.viquad import (
     answer_sentence,
     history_relevance,
     normalize_uit_viquad2,

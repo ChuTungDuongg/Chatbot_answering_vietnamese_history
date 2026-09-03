@@ -1,0 +1,67 @@
+.composer-shell { flex: 0 0 auto; padding: 12px 32px max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
+.composer-content { width: 100%; max-width: var(--content-width); margin-inline: auto; }
+.chat-composer { position: relative; display: flex; flex-direction: column; padding: 17px 16px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elevated); box-shadow: var(--shadow-sm); transition: border-color var(--transition), box-shadow var(--transition); }
+.chat-composer:focus-within { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.chat-composer textarea { display: block; width: 100%; min-height: 54px; max-height: 180px; resize: none; border: 0; padding: 1px 3px 10px; background: transparent; color: var(--text-primary); font-size: 15px; line-height: 1.65; }
+.chat-composer textarea:focus-visible { outline: none; }
+.chat-composer:has(textarea:focus-visible) { border-color: var(--accent); }
+.chat-composer textarea::placeholder { color: var(--text-muted); }
+.composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 5px; }
+.composer-leading-actions { display: flex; align-items: center; gap: 10px; }
+.composer-attach { width: 34px; height: 34px; }
+.composer-attach svg { width: 17px; height: 17px; }
+.composer-submit { width: 36px; height: 36px; border-radius: 11px; }
+.send-button { background: var(--button-accent); color: var(--button-ink); }
+.send-button:hover:not(:disabled) { background: var(--accent-hover); color: var(--button-ink); }
+.send-button:disabled { opacity: .4; }
+.stop-button { background: var(--surface-hover); color: var(--text-primary); }
+.stop-button svg { width: 13px; height: 13px; }
+.composer-disclaimer { margin: 11px 0 0; color: var(--text-muted); font-size: 10px; text-align: center; line-height: 1.6; }
+.composer-mode-selector { position: relative; }
+.composer-mode-trigger { display: flex; align-items: center; gap: 9px; height: 32px; padding: 6px 9px; border: 1px solid var(--border-subtle); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 11px; }
+.composer-mode-trigger svg { width: 12px; height: 12px; }
+.composer-mode-trigger:hover, .composer-mode-trigger[aria-expanded="true"] { background: var(--surface-hover); }
+.composer-mode-menu { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 20; width: 290px; max-width: calc(100vw - 70px); padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); box-shadow: var(--shadow-md); }
+.composer-mode-menu button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; }
+.composer-mode-menu button:hover, .composer-mode-menu button.is-selected { background: var(--surface-hover); }
+.mode-option-copy { display: grid; gap: 5px; }
+.mode-option-copy strong { color: var(--text-primary); font-size: 12px; font-weight: 550; }
+.mode-option-copy small { color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.composer-mode-menu button > svg { width: 15px; height: 15px; color: var(--accent); }
+.composer-drop-label { position: absolute; inset: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); border: 1px dashed var(--accent); border-radius: var(--radius-lg); pointer-events: none; font-size: 13px; }
+.attachment-tray { display: flex; gap: 8px; max-width: 100%; max-height: 86px; overflow-x: auto; overflow-y: hidden; padding: 0 0 10px; }
+.attachment-item { display: flex; align-items: center; gap: 9px; min-width: 210px; max-width: 270px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); }
+.attachment-icon { color: var(--accent); }
+.attachment-icon svg { width: 19px; height: 19px; }
+.attachment-copy { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.attachment-copy strong, .attachment-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-copy strong { font-size: 11px; font-weight: 500; }
+.attachment-copy small { font-size: 9px; color: var(--text-muted); }
+.attachment-status { color: var(--success); }
+.attachment-status svg { width: 14px; height: 14px; }
+.attachment-failed .attachment-status, .attachment-failed .attachment-copy small { color: var(--danger); }
+.attachment-remove { padding: 4px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); }
+.attachment-remove:hover { background: var(--surface-hover); }
+.attachment-remove svg { width: 13px; height: 13px; }
+@media (max-width: 540px) {
+  .composer-shell { padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
+  .chat-composer { padding: 13px 12px 10px; border-radius: var(--radius-lg); }
+  .chat-composer textarea { font-size: 16px; min-height: 52px; }
+  .composer-submit { height: 40px; width: 40px; }
+  .composer-mode-trigger { height: 36px; }
+  .composer-disclaimer { font-size: 9px; margin-top: 9px; padding-inline: 10px; }
+}
+.attachment-preview {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.user-attachment {
+  display: block;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
+}

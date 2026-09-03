@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from training.common.qlora import PrecisionSettings
-from training.central_agent.engine import _tokenized_dataset
+from training.central.train.engine import _tokenized_dataset
 from training.train_qwen3_8b_agent import (
     MANIFEST_SCHEMA_VERSION,
     _safe_cli_arguments,
@@ -61,10 +61,11 @@ class CharacterTokenizer:
 
 
 def canonical_row(row_id: str, group: str) -> dict:
+    from training.trajectory_dataset.schema import QWEN3_TOOL_TEMPLATE_CONTRACT
     call = tool_call(f"call-{row_id}", "search_history", {"query": "Nhà Mạc", "top_k": 2})
     return make_trajectory(
         trajectory_id=row_id,
-        source_dataset="fixture",
+        source_dataset="hermes_function_calling",
         task_type="factual",
         tools=[SEARCH_HISTORY_TOOL],
         messages=[
@@ -77,7 +78,8 @@ def canonical_row(row_id: str, group: str) -> dict:
             },
             {"role": "assistant", "content": "Nhà Mạc là một triều đại."},
         ],
-        provenance={"requires_final_answer": True, "source_group": group},
+        provenance={"requires_final_answer": True, "source_group": group,
+                    "chat_template_contract": QWEN3_TOOL_TEMPLATE_CONTRACT},
     )
 
 
@@ -413,11 +415,11 @@ def test_preflight_rows_with_heterogeneous_metadata_reach_trainer_arrow_safely(m
 def test_dry_run_loads_neither_tokenizer_nor_model(tmp_path: Path, monkeypatch):
     root = dataset_root(tmp_path, include_test=False)
     monkeypatch.setattr(
-        "training.central_agent.cli.load_tokenizer",
+        "training.central.train.cli.load_tokenizer",
         lambda *_: pytest.fail("dry-run loaded tokenizer"),
     )
     monkeypatch.setattr(
-        "training.central_agent.cli.train",
+        "training.central.train.cli.train",
         lambda *_: pytest.fail("dry-run entered training engine"),
     )
     assert main([
@@ -433,9 +435,9 @@ def test_preflight_loads_tokenizer_but_not_model(tmp_path: Path, monkeypatch):
         loaded["tokenizer"] += 1
         return CharacterTokenizer()
 
-    monkeypatch.setattr("training.central_agent.cli.load_tokenizer", fake_tokenizer)
+    monkeypatch.setattr("training.central.train.cli.load_tokenizer", fake_tokenizer)
     monkeypatch.setattr(
-        "training.central_agent.cli.train",
+        "training.central.train.cli.train",
         lambda *_: pytest.fail("preflight entered training engine"),
     )
     assert main([

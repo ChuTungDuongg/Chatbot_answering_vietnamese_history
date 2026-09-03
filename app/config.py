@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.agents.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
+from app.agents.common.model_registry import CENTRAL_BASE_MODEL_ID, SHARED_BASE_MODEL_ID
 from app.chat_modes import ChatMode, normalize_chat_mode
 
 
@@ -64,8 +64,26 @@ class Settings(BaseSettings):
     central_repair_max_new_tokens: int = 1024
     central_repair_min_new_tokens: int = 192
     central_repair_token_margin: int = 96
+    central_citation_repair_max_new_tokens: int = 128
+    central_citation_alignment_threshold: float = 0.88
+    central_citation_alignment_margin: float = 0.08
+    central_citation_full_rewrite_fallback: bool = False
+    central_model_load_retrieval_overlap: bool = True
+    central_evidence_excerpt_chars: int = 1600
+    central_history_char_budget: int = 2400
+    central_history_max_messages: int = 4
     central_biography_max_sources: int = 4
     central_biography_min_exact_hits: int = 2
+    central_analytical_retrieval_candidates: int = 10
+    central_analytical_query_variants: int = 2
+    central_analytical_max_sources: int = 4
+    central_comparison_min_strong_sources: int = 1
+    central_strong_evidence_min_chars: int = 100
+    central_analytical_coverage_support_threshold: int = 4
+    central_analytical_coverage_min_dimensions: int = 3
+    central_focused_coverage_support_threshold: int = 3
+    central_focused_coverage_min_dimensions: int = 2
+    central_synthesis_char_budget: int = 12_000
     central_reranker_tail_gap_ratio: float = 0.75
     central_reranker_score_mode: Literal["raw", "probability"] = "raw"
     central_reranker_score_floor: float | None = None
