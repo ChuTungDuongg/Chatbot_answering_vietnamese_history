@@ -16,6 +16,7 @@ function ChatInput({
   isRunning,
   isUploading,
   hasAttachments = false,
+  disabled = false,
 }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -34,10 +35,11 @@ function ChatInput({
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 
     event.preventDefault();
-    if (!isRunning && !isUploading && (question.trim() || hasAttachments)) onSubmit(event);
+    if (!disabled && !isRunning && !isUploading && (question.trim() || hasAttachments)) onSubmit(event);
   };
 
   const handlePaste = (event) => {
+    if (disabled) return;
     const files = clipboardImages(event.clipboardData, clipboardSequence.current);
     if (!files.length) return;
     clipboardSequence.current += files.length;
@@ -63,7 +65,7 @@ function ChatInput({
     event.preventDefault();
     setIsDragging(false);
 
-    if (isRunning || isUploading) return;
+    if (disabled || isRunning || isUploading) return;
     const files = Array.from(event.dataTransfer.files ?? []);
     if (files.length > 0) onFilesSelected(files);
   };
@@ -99,12 +101,12 @@ function ChatInput({
 
       <div className="composer-toolbar">
       <div className="composer-leading-actions">
-        <ModeSelector mode={mode} onModeChange={onModeChange} disabled={isRunning} />
+        <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled || isRunning} />
         <button
           type="button"
           className="icon-button composer-attach"
           onClick={() => fileInputRef.current?.click()}
-          disabled={isRunning || isUploading}
+          disabled={disabled || isRunning || isUploading}
           aria-label="Tải PDF hoặc hình ảnh"
           title="Tải PDF hoặc hình ảnh"
         >
@@ -126,7 +128,7 @@ function ChatInput({
         <button
           type="submit"
           className="icon-button composer-submit send-button"
-          disabled={isUploading || (!question.trim() && !hasAttachments)}
+          disabled={disabled || isUploading || (!question.trim() && !hasAttachments)}
           aria-label="Gửi câu hỏi"
           title="Gửi câu hỏi"
         >

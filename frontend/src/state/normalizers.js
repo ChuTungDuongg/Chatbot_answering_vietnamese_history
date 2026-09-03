@@ -20,7 +20,7 @@ export function getSources(data) {
 export function getLatestSources(messages) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message.role === "assistant" && message.sources?.length) return message.sources;
+    if (message.role === "assistant") return message.sources ?? [];
   }
   return [];
 }

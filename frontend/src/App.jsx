@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Moon,
@@ -25,6 +25,7 @@ import {
 import { useAttachments } from "./hooks/useAttachments";
 import { useChatMode } from "./hooks/useChatMode";
 import { useChatSession } from "./hooks/useChatSession";
+import { useChatScroll } from "./hooks/useChatScroll";
 import { useChatStream } from "./hooks/useChatStream";
 import { useTheme } from "./hooks/useTheme";
 import { shouldShowDebugTrace } from "./services/debugTrace";
@@ -35,10 +36,11 @@ const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 840);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [activeSourceIndex, setActiveSourceIndex] = useState(null);
   const [question, setQuestion] = useState("");
   const [conversationToDelete, setConversationToDelete] = useState(null);
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
-  const bottomRef = useRef(null);
+  const conversationActionRef = useRef(false);
 
   const { theme, toggleTheme } = useTheme();
   const { mode: inferenceMode, setMode: setInferenceMode } = useChatMode();
@@ -56,10 +58,15 @@ function App() {
     error,
     isLoadingConversations,
     isLoadingConversation,
+    isCreatingConversation,
+    isUploading,
   } = state;
 
   const stream = useChatStream({
     dispatch,
+    activeConversationId,
+    attachments,
+    isUploading,
     isRunning,
     mode: inferenceMode,
     showDebugTrace: SHOW_DEBUG_TRACE,
@@ -69,20 +76,20 @@ function App() {
   const uploads = useAttachments({
     dispatch,
     activeConversationId,
+    attachments,
     isRunning,
     ensureActiveConversation,
   });
 
-  const isUploading = pendingUploads.length > 0;
+  const readyAttachments = attachments.filter((item) => item.status === "ready");
+  const { scrollerRef, contentRef, onScroll, followLatest } = useChatScroll(messages, status);
+  const isLoading = isLoadingConversations || isLoadingConversation || isCreatingConversation;
+  const isBusy = isRunning || isUploading || isLoading || isDeletingConversation;
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId),
     [activeConversationId, conversations],
   );
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: status === "streaming" ? "auto" : "smooth" });
-  }, [messages, status]);
 
   const closeSidebarOnMobile = () => {
     if (window.matchMedia("(max-width: 839px)").matches) setSidebarOpen(false);
@@ -91,11 +98,15 @@ function App() {
   const setError = (message) => dispatch({ type: "ERROR_SET", message });
 
   const handleSelectConversation = async (conversationId) => {
-    if (isRunning || uploadBusyRef.current || conversationId === activeConversationId) return;
+    if (isRunning || stream.isBusy() || uploads.isBusy() || conversationActionRef.current || isLoadingConversations || isCreatingConversation
+      || (conversationId === activeConversationId && !isLoadingConversation)) return;
 
     try {
-      await session.loadConversation(conversationId);
-      closeSidebarOnMobile();
+      if (await session.loadConversation(conversationId)) {
+        followLatest();
+        setActiveSourceIndex(null);
+        closeSidebarOnMobile();
+      }
     } catch (requestError) {
       // loadConversation đã dispatch CONVERSATION_LOAD_FAILED, ở đây chỉ ghi log.
       console.error(requestError);
@@ -103,14 +114,19 @@ function App() {
   };
 
   const handleNewConversation = async () => {
-    if (uploadBusyRef.current) return;
+    if (isRunning || stream.isBusy() || uploads.isBusy() || conversationActionRef.current || isLoadingConversations) return;
+    conversationActionRef.current = true;
     try {
       await session.createNewConversation();
       setQuestion("");
+      setActiveSourceIndex(null);
+      followLatest();
       closeSidebarOnMobile();
     } catch (requestError) {
       console.error(requestError);
       setError(requestError.message || CONVERSATION_CREATE_NEW_FAILURE_MESSAGE);
+    } finally {
+      conversationActionRef.current = false;
     }
   };
 
@@ -124,40 +140,68 @@ function App() {
   };
 
   const confirmDeleteConversation = async () => {
-    if (!conversationToDelete || isRunning || uploadBusyRef.current) return;
+    if (!conversationToDelete || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
 
+    conversationActionRef.current = true;
     setIsDeletingConversation(true);
     setError("");
 
     try {
       const wasActive = activeConversationId === conversationToDelete.id;
       const remaining = await session.removeConversation(conversationToDelete.id);
-      if (wasActive && remaining.length > 0) await session.loadConversation(remaining[0]);
       setConversationToDelete(null);
+      setActiveSourceIndex(null);
+      if (wasActive && remaining.length > 0) {
+        try {
+          await session.loadConversation(remaining[0]);
+          followLatest();
+        } catch (requestError) {
+          // The session owns errors from loading the replacement conversation.
+          console.error(requestError);
+        }
+      }
     } catch (requestError) {
       console.error(requestError);
       setError(requestError.message || CONVERSATION_DELETE_FAILURE_MESSAGE);
     } finally {
       setIsDeletingConversation(false);
+      conversationActionRef.current = false;
     }
   };
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
-    // Chặn TRƯỚC khi xoá ô nhập. Xoá trước rồi mới để hook từ chối sẽ làm mất
-    // câu người dùng vừa gõ khi họ bấm gửi lúc đang stream.
-    if (!question.trim() || isRunning) return;
+    if ((!question.trim() && !readyAttachments.length) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
 
     const pending = question;
     setQuestion("");
+    setActiveSourceIndex(null);
+    followLatest();
     await stream.submit(pending);
   };
 
   const showMessageSources = (message, index = null) => {
     if (!message.sources?.length) return;
     dispatch({ type: "SOURCES_SHOWN", sources: message.sources });
+    setActiveSourceIndex(index);
     setSourcesOpen(true);
   };
+
+  // Keep the empty composer mounted during lazy creation so native mixed paste completes.
+  const isEmpty = !isLoadingConversation && messages.length === 0;
+  const composer = (
+    <div className="composer-content">
+      <AttachmentTray attachments={attachments} pendingUploads={pendingUploads} onDelete={uploads.remove}
+        disabled={isRunning || isLoading || isDeletingConversation} />
+      <ChatInput question={question} onQuestionChange={setQuestion} onSubmit={handleSubmit}
+        onStop={stream.stop} onFilesSelected={(files, options) => {
+          if (!isLoading && !isDeletingConversation && !conversationActionRef.current && !stream.isBusy()) uploads.upload(files, options);
+        }}
+        mode={inferenceMode} onModeChange={setInferenceMode} isRunning={isRunning} isUploading={isUploading}
+        disabled={isLoading || isDeletingConversation} hasAttachments={readyAttachments.length > 0} />
+      <p className="composer-disclaimer">Lịch sử cần được nhìn từ nhiều nguồn. Hãy đối chiếu tư liệu khi cần.</p>
+    </div>
+  );
   return (
     <div className="app-shell">
       <ChatSidebar
@@ -165,7 +209,7 @@ function App() {
         activeConversationId={activeConversationId}
         isOpen={sidebarOpen}
         isLoading={isLoadingConversations}
-        isRunning={isRunning || isUploading}
+        isRunning={isRunning || isUploading || isLoadingConversations || isCreatingConversation || isDeletingConversation}
         theme={theme}
         onClose={() => setSidebarOpen(false)}
         onNewConversation={handleNewConversation}
@@ -240,28 +284,7 @@ function App() {
           </div>
         )}
 
-        <footer className="composer-shell">
-          <div className="composer-content">
-            <AttachmentTray
-              attachments={attachments}
-              pendingUploads={pendingUploads}
-              onDelete={uploads.remove}
-              disabled={isRunning}
-            />
-            <ChatInput
-              question={question}
-              onQuestionChange={setQuestion}
-              onSubmit={handleSubmit}
-              onStop={stream.stop}
-              onFilesSelected={uploads.upload}
-              mode={inferenceMode}
-              onModeChange={setInferenceMode}
-              isRunning={isRunning}
-              isUploading={isUploading}
-            />
-            <p className="composer-disclaimer">Sử Việt AI có thể mắc lỗi. Hãy đối chiếu phần nguồn khi cần độ chính xác cao.</p>
-          </div>
-        </footer>
+        {!isEmpty && <footer className="composer-shell">{composer}</footer>}
       </section>
 
       <SourcesDrawer isOpen={sourcesOpen} sources={sources} activeIndex={activeSourceIndex} onClose={() => setSourcesOpen(false)} />
@@ -274,7 +297,7 @@ function App() {
             <p>“{conversationToDelete.title || "Cuộc trò chuyện mới"}” cùng tài liệu tạm thời sẽ bị xóa.</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setConversationToDelete(null)} disabled={isDeletingConversation}>Hủy</button>
-              <button type="button" className="danger-button" onClick={confirmDeleteConversation} disabled={isDeletingConversation}>
+              <button type="button" className="danger-button" onClick={confirmDeleteConversation} disabled={isBusy}>
                 {isDeletingConversation ? "Đang xóa..." : "Xóa"}
               </button>
             </div>

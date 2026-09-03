@@ -118,3 +118,29 @@ test("removeConversation trả về danh sách id còn lại", async () => {
   expect(remaining).toEqual(["c2"]);
   expect(api.deleteConversation).toHaveBeenCalledWith("c1");
 });
+
+test("bootstrap detail failure retains the list so another conversation can be selected", async () => {
+  api.listConversations.mockResolvedValue([{ id: "c1" }, { id: "c2" }]);
+  api.getConversation.mockRejectedValueOnce(new Error("Detail unavailable"));
+  const { result } = renderHook(() => useChatSession());
+  await waitFor(() => expect(result.current.state.isLoadingConversations).toBe(false));
+  expect(result.current.state.conversations).toEqual([{ id: "c1" }, { id: "c2" }]);
+  expect(result.current.state.error).toBe("Detail unavailable");
+  await act(async () => { await result.current.loadConversation("c2"); });
+  expect(result.current.state.activeConversationId).toBe("c2");
+});
+
+test("rename during a conversation load preserves both operations without re-bootstrap", async () => {
+  api.listConversations.mockResolvedValue([{ id: "c1", title: "Old" }, { id: "c2" }]);
+  const { result } = renderHook(() => useChatSession());
+  await waitFor(() => expect(result.current.state.activeConversationId).toBe("c1"));
+  let finishLoad, loading;
+  api.getConversation.mockImplementationOnce(() => new Promise((resolve) => { finishLoad = resolve; }));
+  act(() => { loading = result.current.loadConversation("c2"); });
+  await act(async () => { await result.current.renameConversation({ id: "c1" }, "Tên mới"); });
+  expect(result.current.state.isLoadingConversation).toBe(true);
+  await act(async () => { finishLoad({ messages: [], attachments: [] }); await loading; });
+  expect(result.current.state.activeConversationId).toBe("c2");
+  expect(result.current.state.conversations[0].title).toBe("Tên mới");
+  expect(api.listConversations).toHaveBeenCalledTimes(1);
+});

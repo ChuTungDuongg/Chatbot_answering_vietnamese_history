@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,9 +16,21 @@ def test_frontend_stream_error_stops_reader_and_exports_evidence_message():
     assert "await reader.cancel()" in api_source
 
 
-def test_app_uses_specific_placeholder_for_evidence_contract_error():
-    app_source = (ROOT / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-
-    assert "data?.type === \"evidence_contract_error\"" in app_source
-    assert "EVIDENCE_CONTRACT_FAILURE_MESSAGE" in app_source
-    assert "setStatus(\"error\")" in app_source
+def test_session_uses_specific_placeholder_for_evidence_contract_error():
+    subprocess.run([
+        "node", "--input-type=module", "-e", """
+        import assert from 'node:assert/strict';
+        import { chatSessionReducer as reduce, initialChatSessionState } from './frontend/src/state/chatSessionReducer.js';
+        import { EVIDENCE_CONTRACT_FAILURE_MESSAGE } from './frontend/src/config/messages.js';
+        let state = reduce(initialChatSessionState, {
+          type: 'MESSAGES_APPENDED', messages: [{ id: 'assistant', role: 'assistant', content: '' }],
+        });
+        state = reduce(state, { type: 'STREAM_ERROR', messageId: 'assistant',
+          kind: 'evidence_contract_error', message: 'Evidence rejected' });
+        state = reduce(state, { type: 'STREAM_DONE', messageId: 'assistant' });
+        assert.equal(state.messages[0].content, EVIDENCE_CONTRACT_FAILURE_MESSAGE);
+        assert.equal(state.messages[0].status, 'error');
+        assert.equal(state.status, 'error');
+        assert.equal(state.error, 'Evidence rejected');
+        """,
+    ], cwd=ROOT, check=True)

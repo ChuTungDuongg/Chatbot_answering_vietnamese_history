@@ -9,7 +9,7 @@ export const ACTIVE_STATUSES = new Set([
   "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
   "hybrid_retrieval", "hybrid_answering",
   "three_llm_research", "three_llm_evidence", "three_llm_answering",
-  "central_analyzing", "central_tools", "central_answering",
+  "central_loading", "central_analyzing", "central_tools", "central_answering",
 ]);
 
 export function isRunningStatus(status) {
@@ -26,11 +26,24 @@ export const initialChatSessionState = {
   status: "idle",
   error: "",
   streamFailed: false,
+  streamRunning: false,
+  isUploading: false,
   isLoadingConversations: true,
   isLoadingConversation: false,
+  isCreatingConversation: false,
 };
 
-const CLEARED_THREAD = { messages: [], attachments: [], sources: [] };
+const CLEARED_THREAD = {
+  messages: [], attachments: [], pendingUploads: [], sources: [],
+  status: "idle", streamFailed: false, streamRunning: false, isUploading: false,
+};
+
+function preservePreviews(current, incoming) {
+  return incoming.map((item) => {
+    const preview_url = current.find((old) => old.id === item.id)?.preview_url;
+    return preview_url ? { ...item, preview_url } : item;
+  });
+}
 
 function patchMessage(state, messageId, patch) {
   return state.messages.map((message) => {
@@ -40,6 +53,8 @@ function patchMessage(state, messageId, patch) {
 }
 
 export function chatSessionReducer(state, action) {
+  // Async work is allowed to update only the conversation it started in.
+  if (action.scopeId !== undefined && action.scopeId !== state.activeConversationId) return state;
   switch (action.type) {
     case "BOOTSTRAPPED": {
       const base = { ...state, conversations: action.conversations, isLoadingConversations: false };
@@ -57,11 +72,18 @@ export function chatSessionReducer(state, action) {
       return { ...state, isLoadingConversations: false, error: action.message };
 
     case "CONVERSATION_LOADING":
-      return { ...state, isLoadingConversation: true, error: "" };
+      return { ...state, isLoadingConversation: true, sources: [], error: "" };
+
+    case "CONVERSATION_CREATING":
+      return { ...state, isCreatingConversation: true, isLoadingConversation: false };
+
+    case "CONVERSATION_CREATE_FINISHED":
+      return { ...state, isCreatingConversation: false, isLoadingConversations: false };
 
     case "CONVERSATION_LOADED":
       return {
         ...state,
+        ...CLEARED_THREAD,
         activeConversationId: action.conversationId,
         messages: action.detail.messages,
         attachments: action.detail.attachments,
@@ -72,7 +94,7 @@ export function chatSessionReducer(state, action) {
       };
 
     case "CONVERSATION_LOAD_FAILED":
-      return { ...state, isLoadingConversation: false, error: action.message };
+      return { ...state, isLoadingConversation: false, sources: getLatestSources(state.messages), error: action.message };
 
     case "CONVERSATION_CREATED":
       return {
@@ -83,6 +105,12 @@ export function chatSessionReducer(state, action) {
           ...state.conversations.filter((item) => item.id !== action.conversation.id),
         ],
         activeConversationId: action.conversation.id,
+        isLoadingConversation: false,
+        isLoadingConversations: false,
+        // First-conversation creation can be part of an already reserved send/upload.
+        streamRunning: !state.activeConversationId && state.streamRunning,
+        isUploading: !state.activeConversationId && state.isUploading,
+        pendingUploads: !state.activeConversationId ? state.pendingUploads : [],
         status: "idle",
         streamFailed: false,
       };
@@ -104,10 +132,17 @@ export function chatSessionReducer(state, action) {
       return {
         ...state,
         messages: [...state.messages, ...action.messages],
+        sources: [],
         status: "processing",
         error: "",
         streamFailed: false,
       };
+
+    case "STREAM_STARTED":
+      return { ...state, streamRunning: true, status: "processing", error: "", sources: [], streamFailed: false };
+
+    case "STREAM_FINISHED":
+      return { ...state, streamRunning: false, status: action.status ?? state.status };
 
     case "STREAM_STATUS":
       return {
@@ -180,7 +215,7 @@ export function chatSessionReducer(state, action) {
         ...state,
         conversations: action.conversations,
         messages: action.detail.messages,
-        attachments: action.detail.attachments,
+        attachments: preservePreviews(state.attachments, action.detail.attachments),
         sources: getLatestSources(action.detail.messages),
       };
 
@@ -191,7 +226,10 @@ export function chatSessionReducer(state, action) {
       return { ...state, sources: action.sources };
 
     case "UPLOAD_QUEUED":
-      return { ...state, pendingUploads: [...state.pendingUploads, ...action.items], error: "" };
+      return { ...state, isUploading: true, pendingUploads: [...state.pendingUploads, ...action.items], error: "" };
+
+    case "UPLOAD_FINISHED":
+      return { ...state, isUploading: false, pendingUploads: [] };
 
     case "UPLOAD_PROGRESS":
       return {
@@ -222,7 +260,7 @@ export function chatSessionReducer(state, action) {
       };
 
     case "ATTACHMENTS_SYNCED":
-      return { ...state, conversations: action.conversations, attachments: action.attachments };
+      return { ...state, conversations: action.conversations, attachments: preservePreviews(state.attachments, action.attachments) };
 
     case "ERROR_SET":
       return { ...state, error: action.message };

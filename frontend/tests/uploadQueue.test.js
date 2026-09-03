@@ -27,7 +27,7 @@ test("giữ nguyên file khi MIME đã hợp lệ", () => {
 test("từ chối khi chọn quá 5 file, và báo lỗi số lượng trước mọi lỗi khác", () => {
   const files = Array.from({ length: 6 }, (_, index) => makeFile(`f${index}.exe`, "application/x-msdownload"));
   const result = validateUploadSelection(files);
-  assert.equal(result.error, "Mỗi lần chỉ có thể tải tối đa 5 file.");
+  assert.equal(result.error, "Mỗi cuộc trò chuyện chỉ nhận tối đa 5 tài liệu.");
   assert.deepEqual(result.files, []);
 });
 

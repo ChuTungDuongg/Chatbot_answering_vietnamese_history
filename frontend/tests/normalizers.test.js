@@ -53,13 +53,21 @@ test("getSources đọc được các khoá mà backend dùng", () => {
   assert.deepEqual(getSources(undefined), []);
 });
 
-test("getLatestSources lấy nguồn của câu trả lời gần nhất có nguồn", () => {
+test("getLatestSources lấy nguồn của câu trả lời gần nhất", () => {
   const messages = [
     { role: "assistant", sources: [{ id: "cũ" }] },
     { role: "user", sources: [] },
     { role: "assistant", sources: [{ id: "mới" }] },
     { role: "assistant", sources: [] },
   ];
-  assert.deepEqual(getLatestSources(messages), [{ id: "mới" }]);
+  assert.deepEqual(getLatestSources(messages.slice(0, 3)), [{ id: "mới" }]);
+  assert.deepEqual(getLatestSources(messages), []);
   assert.deepEqual(getLatestSources([]), []);
+});
+
+test("a latest assistant without citations does not inherit an older answer's sources", () => {
+  assert.deepEqual(getLatestSources([
+    { role: "assistant", sources: [{ id: "old" }] },
+    { role: "assistant", sources: [] },
+  ]), []);
 });
