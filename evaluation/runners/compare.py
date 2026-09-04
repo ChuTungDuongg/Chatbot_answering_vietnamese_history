@@ -8,7 +8,8 @@ from evaluation.metrics import calculate_metrics
 
 FAIR_FIELDS = ("git_commit", "model_id", "model_revision", "dataset_version", "dataset_sha256",
                "retrieval_index_sha256", "prompt_sha256", "generation_settings", "retrieval_settings",
-               "tools", "context_budgets", "host_config", "seed", "environment")
+               "tools", "context_budgets", "host_config", "graph_name", "graph_version",
+               "graph_topology_fingerprint", "seed", "environment")
 
 
 def compare_runs(base_meta, base, adapted_meta, adapted, *, compare_latency=True):

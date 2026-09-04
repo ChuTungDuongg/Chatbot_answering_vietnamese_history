@@ -1,7 +1,7 @@
 """Public API; importing helpers does not initialize agent/model dependencies."""
 from importlib import import_module
 
-_EXPORTS = {'AgentOrchestrator': 'orchestrator'}
+_EXPORTS = {'AgentOrchestrator': 'orchestrator', 'ThreeLLMGraphDependencies': 'graph', 'ThreeLLMState': 'graph', 'build_three_llm_graph': 'graph'}
 __all__ = list(_EXPORTS)
 
 def __getattr__(name):

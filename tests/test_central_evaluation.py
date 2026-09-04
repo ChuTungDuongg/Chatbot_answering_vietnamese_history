@@ -107,7 +107,8 @@ def test_pairing_deltas_use_common_eligible_questions_and_zero_base_is_not_infin
 
 @pytest.mark.parametrize("field,changed", [("git_commit", "other"), ("seed", 43), ("retrieval_index_sha256", "other"),
     ("tools", ["other"]), ("prompt_sha256", "other"), ("host_config", {"mode": "different"}),
-    ("dataset_sha256", "other"), ("generation_settings", {"max_new_tokens": 999})])
+    ("dataset_sha256", "other"), ("generation_settings", {"max_new_tokens": 999}),
+    ("graph_topology_fingerprint", "other")])
 def test_fairness_rejects_mismatched_host_inputs(field, changed):
     with pytest.raises(ValueError, match="unfair"):
         compare_runs(metadata(), [record()], metadata("adapted", **{field: changed}), [record("adapted")])

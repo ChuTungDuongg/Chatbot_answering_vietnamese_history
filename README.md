@@ -48,25 +48,29 @@ Ba adapter `research`, `evidence`, `history` dùng chung đúng một frozen Qwe
 flowchart LR
     U[User] --> M{Mode router}
 
-    M -->|hybrid| HR[Hybrid retrieval]
+    M -->|hybrid| HG[HybridGraph / LangGraph]
+    HG --> HR[Hybrid retrieval]
     HR --> HA[History Answerer]
     HA --> G[Source/year/format guards]
 
-    M -->|three_llm| R[Research Agent]
+    M -->|three_llm| TG[ThreeLLMGraph / LangGraph]
+    TG --> R[Research Agent]
     R --> TR[Tool Registry]
     TR --> E[Evidence Critic]
     E -->|one bounded retry| R
     E --> H[History Answerer]
     H --> G
 
-    M -->|central| P[Central V2 PREPARE]
+    M -->|central| CG[CentralGraph / LangGraph]
+    CG --> P[Central V2 PREPARE]
     P --> LG[INITIAL_GROUNDING: search_history]
     LG --> S{Evidence sufficient?}
     S -->|no| AC[ACTION: structured tool calls]
     AC --> TE[TOOL_EXECUTION]
     TE --> S
     S -->|yes| SY[SYNTHESIS]
-    SY --> QR[Optional one QUALITY_REPAIR]
+    SY --> V[VALIDATION]
+    V --> QR[Optional citation / quality repair]
     QR --> F[FINAL]
 
     G --> A[Grounded answer + citations]
@@ -76,6 +80,8 @@ flowchart LR
 `three_llm` giữ giới hạn mặc định 6 agent steps, 3 web searches, 5 page fetches và tối đa một research retry sau critic. Evidence web chỉ nằm trong session, không tự ghi vào corpus lịch sử lâu dài.
 
 Central V2 luôn gọi `search_history` ở host trước khi chấp nhận factual answer. Nếu local evidence thiếu, model có tối đa hai ACTION rounds dùng Qwen/Hermes structured function calls; tool errors trở thành bounded observations, các call độc lập có thể chạy song song, synthesis không còn expose tools và repair tối đa một lần. Central không gọi hoặc load Research, Evidence hay History adapter; các telemetry counter của ba role này luôn bằng 0 trong Central request. Runtime 4B và 8B được lazy-load độc lập theo mode và không có fallback `central → three_llm`.
+
+LangGraph 1.2.11 chỉ điều phối ba workflow request-scoped bằng `StateGraph`, node và edge tường minh. Nó không thay SQLite conversation persistence, retrieval, model runtime, prompt, training hay evaluation logs; production không dùng graph checkpointer. Xem [mô tả kiến trúc LangGraph](docs/langgraph_workflows.md).
 
 ## 🗂️ Cấu trúc repository
 

@@ -71,6 +71,9 @@ class RunMetadata(Contract):
     hardware: dict[str, JsonValue] | None = None
     hardware_class: str | None = None
     environment: dict[str, JsonValue]
+    graph_name: str | None = None
+    graph_version: str | None = None
+    graph_topology_fingerprint: str | None = None
 
     @model_validator(mode="after")
     def adapter_contract(self):
@@ -101,6 +104,15 @@ class EvaluationRecord(Contract):
     final_failure_reason: str | None = None
     adapter_configured: bool | None = None
     adapter_loaded: bool | None = None
+    graph_name: str | None = None
+    graph_version: str | None = None
+    graph_topology_fingerprint: str | None = None
+    graph_nodes_executed: list[str] | None = None
+    graph_route: list[str] | None = None
+    node_timings: dict[str, float] | None = None
+    node_model_calls: dict[str, int] | None = None
+    node_tool_calls: dict[str, int] | None = None
+    graph_trace: list[dict[str, JsonValue]] | None = None
     # Derived trace signals have documented units/denominators in metrics/specs.py.
     signals: dict[str, bool | float | None] = Field(default_factory=dict)
     annotation: Annotation | None = None

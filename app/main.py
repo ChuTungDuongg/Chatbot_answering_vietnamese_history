@@ -205,6 +205,7 @@ async def lifespan(app: FastAPI):
                 central_runtime = CentralAgent(
                     model_runtime=central_model_runtime,
                     tool_registry=tool_registry,
+                    model_variant="adapted" if settings.central_adapter_path is not None else "base",
                     config=CentralAgentConfig(
                         max_action_rounds=settings.central_agent_max_action_rounds,
                         repair_max_generations=settings.central_agent_repair_max_generations,

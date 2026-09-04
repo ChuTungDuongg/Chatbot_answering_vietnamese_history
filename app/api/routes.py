@@ -423,6 +423,14 @@ def _build_debug(result: dict[str, Any]) -> dict[str, Any]:
         "errors": [],
         "analysis": analysis,
         "tool_trace": result.get("tool_trace", []),
+        "graph": {
+            "name": result.get("graph_name"),
+            "version": result.get("graph_version"),
+            "topology_fingerprint": result.get("graph_topology_fingerprint"),
+            "nodes_executed": result.get("graph_nodes_executed") or [],
+            "route": result.get("graph_route") or [],
+            "trace": result.get("graph_trace") or [],
+        },
         "answer_provenance": provenance,
     }
     return _safe_trace_value(trace)

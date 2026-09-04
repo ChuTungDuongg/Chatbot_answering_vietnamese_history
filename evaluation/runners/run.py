@@ -95,7 +95,7 @@ async def execute(config, questions, dataset, variant, run_id):
                 or key.endswith("tokens") or "token_margin" in key}
     snapshot.pop("central_agent_adapter_path", None)
     environment = {"python": platform.python_version(), "platform": platform.system(),
-        **{name: importlib.metadata.version(name) for name in ("torch", "transformers", "peft", "numpy")}}
+        **{name: importlib.metadata.version(name) for name in ("torch", "transformers", "peft", "numpy", "langgraph")}}
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
     from app.main import app, lifespan
     async with lifespan(app):
@@ -113,7 +113,10 @@ async def execute(config, questions, dataset, variant, run_id):
             retrieval_settings={key: value for key, value in snapshot.items() if any(word in key for word in ("retrieval", "rerank", "top_k", "embedding"))},
             tools=sorted(agent._allowed_tools(None, None)),
             context_budgets={key: value for key, value in snapshot.items() if "budget" in key or "excerpt" in key},
-            host_config=snapshot, seed=config.seed, hardware=hardware, hardware_class=json.dumps(hardware, sort_keys=True), environment=environment)
+            host_config=snapshot, seed=config.seed, hardware=hardware,
+            hardware_class=json.dumps(hardware, sort_keys=True), environment=environment,
+            graph_name=agent.graph.topology.name, graph_version=agent.graph.topology.version,
+            graph_topology_fingerprint=agent.graph.topology_fingerprint)
         return await run_questions(agent, questions, metadata, ROOT / "logs" / run_id, seed_question=set_seed)
 
 

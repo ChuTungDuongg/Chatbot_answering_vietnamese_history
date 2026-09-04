@@ -31,6 +31,8 @@ from app.agents.central.facets import (multi_facet, facet_contract, facet_answer
 from app.agents.central.state import CentralAgentState, CentralPhase
 from app.agents.central.tools import EXTERNAL_TOOLS, bounded_tool_arguments, normalize_tool_result, qwen_tool_schemas
 from app.agents.central.config import CentralAgentConfig
+from app.agents.central.graph import CentralGraphDependencies, build_central_graph
+from app.agents.common.graph import extend_route
 from app.telemetry import current_request_telemetry
 from app.tools.registry import ToolExecutionContext, ToolRegistry
 
@@ -65,6 +67,8 @@ class CentralAgent:
         config: CentralAgentConfig | None = None,
         has_uploaded_documents: Callable[[str, str], bool] | None = None,
         request_policy: CentralRequestPolicy | None = None,
+        model_variant: str = "base",
+        checkpointer: Any | None = None,
     ):
         self.model_runtime = model_runtime
         self.tool_registry = tool_registry
@@ -73,6 +77,12 @@ class CentralAgent:
         self.request_policy = request_policy or HistoryGroundingPolicy()
         self.max_history_messages = self.config.history_max_messages
         self._schema_cache: dict[frozenset[str], list[dict[str, Any]]] = {}
+        self.graph = build_central_graph(CentralGraphDependencies(
+            controller=self,
+            model_provider=model_runtime,
+            model_variant=model_variant,
+            checkpointer=checkpointer,
+        ))
 
     def _allowed_tools(self, owner_id: str | None, conversation_id: str | None) -> set[str]:
         names = set(self.tool_registry.names())
@@ -744,31 +754,30 @@ class CentralAgent:
             self.config.repair_min_new_tokens, estimated_tokens + self.config.repair_token_margin,
         ))
 
-    async def _run(
-        self,
-        *,
-        question: str,
-        history: list[dict[str, str]] | None,
-        owner_id: str | None,
-        conversation_id: str | None,
-        request_id: str | None,
-        started: float,
-        progress: dict[str, Any] | None,
-        model_ready_task: asyncio.Task | None = None,
-        question_analysis=None,
-        attachment_ids: tuple[str, ...] | None = None,
-    ) -> dict[str, Any]:
+    async def _graph_prepare(self, graph: dict[str, Any]) -> dict[str, Any]:
+        question = graph["question"]
+        owner_id = graph.get("owner_id")
+        conversation_id = graph.get("conversation_id")
+        request_id = graph.get("request_id")
+        progress = graph["progress"]
         allowed_tools = self._allowed_tools(owner_id, conversation_id)
         schema_key = frozenset(allowed_tools)
         if schema_key not in self._schema_cache:
             self._schema_cache[schema_key] = qwen_tool_schemas(self.tool_registry, allowed_tools)
         schemas = self._schema_cache[schema_key]
-        analysis = question_analysis or analyze_central_question(question)
+        analysis = graph.get("question_analysis") or analyze_central_question(question)
         if analysis.comparison_targets:
             resolver = getattr(self.tool_registry.get("search_history"), "resolve_entity_title", None) if "search_history" in allowed_tools else None
             analysis = await asyncio.to_thread(resolve_comparison_targets, analysis, resolver)
-        history_debug = {}
-        history = compact_history(question, history, max_messages=self.config.history_max_messages, char_budget=self.config.history_char_budget, debug=history_debug, analysis=analysis)
+        history_debug: dict[str, Any] = {}
+        history = compact_history(
+            question,
+            graph.get("history"),
+            max_messages=self.config.history_max_messages,
+            char_budget=self.config.history_char_budget,
+            debug=history_debug,
+            analysis=analysis,
+        )
         decision = self.request_policy.grounding_for(question)
         state = CentralAgentState(
             question=question,
@@ -781,29 +790,46 @@ class CentralAgent:
             grounding_reason=decision.reason,
             deadline_monotonic=time.monotonic() + self.config.timeout_seconds,
         )
-        if progress is not None:
-            progress["state"] = state
-            state.reliability.update(progress.get("readiness", {}))
-        state.reliability.update(repair_reasons=[], repair_viewpoint_action=None, repair_viewpoint_plan=[],
-                                 repair_progress=None, repair_issue_count_before=0, repair_issue_count_after=0,
-                                 citation_repair_progress=None,
-                                 deterministic_claim_removal_used=False,
-                                 filter_collapse_recovery_used=False,
-                                 current_source_fallback_used=False, current_source_fallback_reason=None)
-        state.evidence_debug.update(history_input_chars=sum(len(item["content"]) for item in history), history_input_turns=len(history))
-        state.evidence_debug.update(history_debug)
+        progress["state"] = state
+        state.reliability.update(progress.get("readiness", {}))
+        state.reliability.update(
+            repair_reasons=[], repair_viewpoint_action=None, repair_viewpoint_plan=[],
+            repair_progress=None, repair_issue_count_before=0, repair_issue_count_after=0,
+            citation_repair_progress=None, deterministic_claim_removal_used=False,
+            filter_collapse_recovery_used=False, current_source_fallback_used=False,
+            current_source_fallback_reason=None,
+        )
+        state.evidence_debug.update(
+            history_input_chars=sum(len(item["content"]) for item in history),
+            history_input_turns=len(history),
+            **history_debug,
+        )
         context = ToolExecutionContext(
             owner_id=owner_id,
             conversation_id=conversation_id,
             request_id=request_id,
             session_id=request_id or conversation_id or "central",
-            attachment_ids=attachment_ids,
+            attachment_ids=graph.get("attachment_ids"),
         )
+        return {
+            "history": list(history or []),
+            "question_analysis": analysis,
+            "central_state": state,
+            "tool_context": context,
+            "schemas": schemas,
+            "action_round": 0,
+        }
 
+    async def _graph_initial_grounding(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        context: ToolExecutionContext = graph["tool_context"]
+        progress = graph["progress"]
+        analysis = state.question_analysis
         state.transition(CentralPhase.INITIAL_GROUNDING)
         retrieval_started = time.perf_counter()
         await self._initial_grounding(state, context, progress)
         state.reliability["retrieval_wall_ms"] = (time.perf_counter() - retrieval_started) * 1000
+        model_ready_task = graph.get("model_ready_task")
         if model_ready_task is not None:
             wait_started = time.perf_counter()
             progress["timeout_stage"] = "model_initialization"
@@ -815,7 +841,9 @@ class CentralAgent:
                 state.reliability.update(progress["readiness"])
                 state.reliability["model_load_wait_ms"] = wait_ms
             state.reliability["model_load_overlap_ms_saved_estimate"] = min(
-                state.reliability["retrieval_wall_ms"], progress["readiness"].get("model_initialization_wall_ms", 0.0))
+                state.reliability["retrieval_wall_ms"],
+                progress["readiness"].get("model_initialization_wall_ms", 0.0),
+            )
             progress["stage"] = "central_tools"
 
         sufficient = self._evidence_sufficient(state)
@@ -834,215 +862,325 @@ class CentralAgent:
         if not sufficient and analysis.administrative_level:
             await self._current_source_fallback(state, context, progress)
             sufficient = self._evidence_sufficient(state)
-        # Comparison retrieval is fully deterministic and bounded. Exhausting its
-        # search/fetch plan returns insufficient evidence, not a speculative answer.
-        if not sufficient and not multi_facet(analysis) and not analysis.comparison_targets and not analysis.relation_requested and not analysis.administrative_level and schemas and self.config.max_action_rounds > 0:
+        can_act = bool(
+            not sufficient
+            and not multi_facet(analysis)
+            and not analysis.comparison_targets
+            and not analysis.relation_requested
+            and not analysis.administrative_level
+            and graph["schemas"]
+            and self.config.max_action_rounds > 0
+        )
+        route = "synthesis" if sufficient else "action" if can_act else "insufficient"
+        return {"central_state": state, "next_route": route,
+                "graph_route": extend_route(graph, route)}
+
+    async def _graph_action(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        context: ToolExecutionContext = graph["tool_context"]
+        progress = graph["progress"]
+        round_index = int(graph.get("action_round") or 0)
+        if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.TOOL_EXECUTION}:
             state.transition(CentralPhase.ACTION)
-            for round_index in range(self.config.max_action_rounds):
-                state.messages.append({"role": "user", "content": (
-                    "Các lệnh sau đã được thực hiện, không lặp lại. Dùng kết quả, fetch trang, đổi truy vấn hoặc kết thúc:\n"
-                    + "\n".join(sorted(state.executed_tool_signatures))
-                )})
-                generation = await self._generate(
-                    state,
-                    stage="action",
-                    tools=schemas,
-                    max_new_tokens=self.config.action_max_new_tokens,
-                    progress=progress,
-                )
-                if generation.generation_hit_time_limit:
-                    break
-                if not generation.tool_calls:
-                    break
-                state.transition(CentralPhase.TOOL_EXECUTION)
-                await self._execute_tool_calls(
-                    state,
-                    generation.tool_calls,
-                    context=context,
-                    trace_phase=f"action_round_{round_index + 1}",
-                    progress=progress,
-                )
-                await self._fetch_wikipedia_results(state, context, progress)
-                sufficient = self._evidence_sufficient(state)
-                # A completed Wikipedia search already received its deterministic
-                # fetch. Do not spend another generation repeating that search.
-                completed_search = any(call.name == "search_wikipedia" for call in generation.tool_calls) and any(
-                    row.get("name") == "search_wikipedia" and not row.get("error")
-                    for row in state.tool_trace if row["phase"] == f"action_round_{round_index + 1}"
-                )
-                duplicate_only = all(row.get("error") == "duplicate_tool_call_prevented" for row in state.tool_trace if row["phase"] == f"action_round_{round_index + 1}")
-                if sufficient or completed_search or duplicate_only or round_index + 1 >= self.config.max_action_rounds:
-                    break
-                state.transition(CentralPhase.ACTION)
-
-        packet = self._prepare_synthesis(state)
-        source_ids: list[str] = []
-        if packet and state.evidence_debug["evidence_sufficient"]:
-            if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
-                state.transition(CentralPhase.SYNTHESIS)
-            generation = await self._generate(
-                state,
-                stage="synthesis",
-                tools=[],
-                max_new_tokens=self.config.final_max_new_tokens,
-                progress=progress,
+        state.messages.append({"role": "user", "content": (
+            "Các lệnh sau đã được thực hiện, không lặp lại. Dùng kết quả, fetch trang, đổi truy vấn hoặc kết thúc:\n"
+            + "\n".join(sorted(state.executed_tool_signatures))
+        )})
+        generation = await self._generate(
+            state, stage="action", tools=graph["schemas"],
+            max_new_tokens=self.config.action_max_new_tokens, progress=progress,
+        )
+        sufficient = self._evidence_sufficient(state)
+        completed_search = False
+        duplicate_only = False
+        if not generation.generation_hit_time_limit and generation.tool_calls:
+            state.transition(CentralPhase.TOOL_EXECUTION)
+            trace_phase = f"action_round_{round_index + 1}"
+            await self._execute_tool_calls(
+                state, generation.tool_calls, context=context, trace_phase=trace_phase, progress=progress,
             )
-            if not generation.tool_calls:
-                state.final_answer = generation.content.strip()
+            await self._fetch_wikipedia_results(state, context, progress)
+            sufficient = self._evidence_sufficient(state)
+            rows = [row for row in state.tool_trace if row["phase"] == trace_phase]
+            completed_search = any(call.name == "search_wikipedia" for call in generation.tool_calls) and any(
+                row.get("name") == "search_wikipedia" and not row.get("error") for row in rows
+            )
+            duplicate_only = bool(rows) and all(row.get("error") == "duplicate_tool_call_prevented" for row in rows)
+        should_continue = bool(
+            generation.tool_calls
+            and not generation.generation_hit_time_limit
+            and not sufficient
+            and not completed_search
+            and not duplicate_only
+            and round_index + 1 < self.config.max_action_rounds
+        )
+        route = "action" if should_continue else "synthesis"
+        return {"central_state": state, "action_round": round_index + 1,
+                "next_route": route, "graph_route": extend_route(graph, route)}
 
-            quality_issues, citations = self._check_answer(state, packet, stage="synthesis")
-            candidate = remove_optional_viewpoint(state.final_answer, quality_issues, citations,
-                                                  analysis, state.evidence_debug, self.config)
-            if candidate is not None and not generation.generation_hit_time_limit:
-                original = state.final_answer
-                before_count = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
-                original_plan = viewpoint_repair_plan(citations.viewpoint_issues)
-                state.final_answer = candidate
-                quality_issues, citations = self._check_answer(state, packet, stage="optional_claim_removal")
-                if not quality_issues:
-                    state.reliability.update(deterministic_claim_removal_used=True, repair_viewpoint_action="neutralize",
-                        repair_viewpoint_plan=original_plan, repair_progress=True,
-                        repair_issue_count_before=before_count, repair_issue_count_after=0)
-                    state.repair_avoided_reason = "optional_viewpoint_claim_removed"
-                else:
-                    state.final_answer = original
-                    quality_issues, citations = self._check_answer(state, packet, stage="claim_removal_reverted")
-            if quality_issues and set(quality_issues) <= PURE_CITATION_ISSUES and not generation.generation_hit_time_limit:
-                alignment_started = time.perf_counter()
-                citation_issues_before = citations.uncited_paragraphs
-                state.reliability["citation_alignment_used"] = True
-                state.final_answer, confidence = align_citations(state.final_answer, packet, self.config, analysis)
-                state.reliability["citation_alignment_confidence_by_paragraph"] = confidence
-                state.reliability["citation_alignment_ms"] = (time.perf_counter() - alignment_started) * 1000
-                quality_issues, citations = self._check_answer(state, packet, stage="citation_alignment")
-                state.reliability["citation_repair_progress"] = citations.uncited_paragraphs < citation_issues_before
-                state.reliability["citation_alignment_success"] = not quality_issues
-                if not quality_issues:
-                    state.repair_avoided_reason = "host_citation_alignment"
-                elif set(quality_issues) <= PURE_CITATION_ISSUES and self.config.repair_max_generations:
-                    state.transition(CentralPhase.CITATION_REPAIR)
-                    state.reliability["citation_repair_used"] = True
-                    original_messages = state.messages
-                    citation_issues_before = citations.uncited_paragraphs
-                    state.messages = citation_repair_messages(state.final_answer, packet, analysis)
-                    mapping = await self._generate(state, stage="citation_repair", tools=[],
-                        max_new_tokens=self.config.citation_repair_max_new_tokens, progress=progress)
-                    state.messages = original_messages
-                    state.reliability.update(citation_repair_used=True, citation_repair_tokens=mapping.output_tokens,
-                                             citation_repair_ms=mapping.generation_ms)
-                    if not mapping.tool_calls and not mapping.generation_hit_time_limit:
-                        state.final_answer = apply_citation_mapping(state.final_answer, mapping.content, packet, self.config, analysis)
-                    quality_issues, citations = self._check_answer(state, packet, stage="citation_repair")
-                    state.reliability["citation_repair_progress"] = citations.uncited_paragraphs < citation_issues_before
-                    if not quality_issues:
-                        state.repair_avoided_reason = "citation_mapping"
-            generation_timed_out = any(metric["generation_hit_time_limit"] for metric in state.generation_metrics)
-            pure_citation_failure = bool(quality_issues) and set(quality_issues) <= PURE_CITATION_ISSUES
-            if quality_issues and self.config.repair_max_generations and not generation_timed_out and (
-                not pure_citation_failure or self.config.citation_full_rewrite_fallback
-                or citations.source_ids and citations.uncited_paragraphs == 1
-            ):
-                state.repair_attempted = True
-                state.repair_reason = quality_issues[0]
-                state.reliability["repair_reasons"] = list(quality_issues)
-                state.repair_budget = self._repair_budget(generation, state.final_answer)
-                if "analytical_coverage_too_shallow" in quality_issues:
-                    state.repair_budget = self.config.repair_max_new_tokens
-                before_fingerprint = issue_fingerprint(quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug)
-                state.reliability["repair_issue_count_before"] = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
-                repair_plan = viewpoint_repair_plan(citations.viewpoint_issues)
-                state.reliability["repair_viewpoint_plan"] = repair_plan
-                if repair_plan:
-                    state.reliability["repair_viewpoint_action"] = "neutralize" if any(not item["attribution_hint"] for item in repair_plan) else "attribute_or_remove"
-                state.reliability["full_quality_repair_used"] = True
-                state.transition(CentralPhase.QUALITY_REPAIR)
-                state.messages.extend([
-                    {"role": "assistant", "content": state.final_answer},
-                    {
-                        "role": "user",
-                        "content": (
-                            REPAIR_CONTRACT + "\nLỗi cần sửa (tất cả): " + json.dumps(state.reliability["repair_reasons"], ensure_ascii=False) + "."
-                            "\nRủi ro: " + json.dumps(state.grounding_risk_checks[-1], ensure_ascii=False)
-                            + "\nTên không được hỗ trợ: " + json.dumps(state.grounding_risk_checks[-1].get("unsupported_named_claims", []), ensure_ascii=False)
-                            + ". Xóa hoàn toàn các tên này và khẳng định tùy chọn liên quan nếu gói bằng chứng không hỗ trợ. Không thay bằng một dữ kiện thiếu căn cứ khác."
-                            + "\nCác khẳng định cần bỏ, trung lập hóa hoặc quy thuộc: "
-                            + json.dumps(repair_plan, ensure_ascii=False)
-                            + "\nremove_or_neutralize: xóa nhận định hoặc thay bằng sự kiện được nguồn trung lập hỗ trợ; không đoán người nói khi attribution_hint là null."
-                            + depth_contract(analysis, state.evidence_debug)
-                            + "\nCác phương diện đã thể hiện: " + json.dumps(state.evidence_debug.get("answer_dimensions_expressed", []), ensure_ascii=False)
-                        ),
-                    },
-                ])
-                repaired = await self._generate(
-                    state,
-                    stage="quality_repair",
-                    tools=[],
-                    max_new_tokens=state.repair_budget,
-                    progress=progress,
+    async def _graph_synthesis(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        packet = self._prepare_synthesis(state)
+        if not packet or not state.evidence_debug["evidence_sufficient"]:
+            route = "insufficient"
+            return {"central_state": state, "packet": packet, "quality_issues": [],
+                    "next_route": route, "graph_route": extend_route(graph, route)}
+        if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
+            state.transition(CentralPhase.SYNTHESIS)
+        generation = await self._generate(
+            state, stage="synthesis", tools=[], max_new_tokens=self.config.final_max_new_tokens,
+            progress=graph["progress"],
+        )
+        if not generation.tool_calls:
+            state.final_answer = generation.content.strip()
+        route = "validation"
+        return {"central_state": state, "packet": packet, "synthesis_generation": generation,
+                "next_route": route, "graph_route": extend_route(graph, route)}
+
+    def _quality_repair_route(self, state: CentralAgentState, quality_issues: list[str], citations: Any) -> str:
+        generation_timed_out = any(metric["generation_hit_time_limit"] for metric in state.generation_metrics)
+        pure_citation_failure = bool(quality_issues) and set(quality_issues) <= PURE_CITATION_ISSUES
+        if quality_issues and self.config.repair_max_generations and not generation_timed_out and (
+            not pure_citation_failure
+            or self.config.citation_full_rewrite_fallback
+            or (citations.source_ids and citations.uncited_paragraphs == 1)
+        ):
+            return "quality_repair"
+        if not quality_issues:
+            state.repair_avoided_reason = state.repair_avoided_reason or (
+                "citation_normalized" if state.reliability["citation_normalization_used"] else "valid_first_synthesis"
+            )
+        else:
+            state.repair_avoided_reason = (
+                "generation_deadline" if generation_timed_out
+                else "citation_recovery_exhausted" if pure_citation_failure and self.config.repair_max_generations
+                else "repair_disabled"
+            )
+        return "final"
+
+    async def _graph_validation(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        packet = graph["packet"]
+        generation: CentralGeneration = graph["synthesis_generation"]
+        analysis = state.question_analysis
+        quality_issues, citations = self._check_answer(state, packet, stage="synthesis")
+        candidate = remove_optional_viewpoint(
+            state.final_answer, quality_issues, citations, analysis, state.evidence_debug, self.config,
+        )
+        if candidate is not None and not generation.generation_hit_time_limit:
+            original = state.final_answer
+            before_count = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
+            original_plan = viewpoint_repair_plan(citations.viewpoint_issues)
+            state.final_answer = candidate
+            quality_issues, citations = self._check_answer(state, packet, stage="optional_claim_removal")
+            if not quality_issues:
+                state.reliability.update(
+                    deterministic_claim_removal_used=True,
+                    repair_viewpoint_action="neutralize",
+                    repair_viewpoint_plan=original_plan,
+                    repair_progress=True,
+                    repair_issue_count_before=before_count,
+                    repair_issue_count_after=0,
                 )
-                state.repair_used = True
-                state.reliability["full_quality_repair_used"] = True
-                if repaired.content.strip() and not repaired.tool_calls:
-                    state.final_answer = repaired.content.strip()
-                quality_issues, citations = self._check_answer(state, packet, stage="quality_repair")
-                after_fingerprint = issue_fingerprint(quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug)
-                state.reliability["repair_issue_count_after"] = issue_count(quality_issues, citations, state.grounding_risk_checks[-1])
-                state.reliability["repair_progress"] = after_fingerprint != before_fingerprint and (
-                    not quality_issues or state.reliability["repair_issue_count_after"] < state.reliability["repair_issue_count_before"])
-                if "unattributed_viewpoint" in state.reliability["repair_reasons"] and not citations.viewpoint_issues:
-                    state.reliability["repair_viewpoint_action"] = "attribute" if all(item["attribution_hint"] and item["attribution_hint"] in state.final_answer for item in repair_plan) else "neutralize"
-            elif not quality_issues:
-                state.repair_avoided_reason = state.repair_avoided_reason or ("citation_normalized" if state.reliability["citation_normalization_used"] else "valid_first_synthesis")
+                state.repair_avoided_reason = "optional_viewpoint_claim_removed"
             else:
-                state.repair_avoided_reason = "generation_deadline" if generation_timed_out else "citation_recovery_exhausted" if pure_citation_failure and self.config.repair_max_generations else "repair_disabled"
-            if any(metric["generation_hit_time_limit"] for metric in state.generation_metrics) or any(issue.endswith("_section_missing") or (issue.startswith("unsupported_") and issue.endswith("_section")) for issue in quality_issues) or any(issue in quality_issues for issue in (
-                "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases", "uncited_factual_paragraphs",
-                "comparison_citation_target_mismatch", "relational_citation_target_mismatch", "comparison_target_missing", "unattributed_viewpoint",
-                "comparison_similarity_missing", "comparison_difference_missing",
-                "historical_significance_missing", "explanatory_content_missing",
-                "unsupported_administrative_premise",
-                "empty_answer",
-                "analytical_coverage_too_shallow",
-                "unsupported_relationship_claim", "relationship_primary_identity_missing",
-            )):
-                # Recovery is bounded; persistent failures never pass as grounded answers.
+                state.final_answer = original
+                quality_issues, citations = self._check_answer(state, packet, stage="claim_removal_reverted")
+        if quality_issues and set(quality_issues) <= PURE_CITATION_ISSUES and not generation.generation_hit_time_limit:
+            alignment_started = time.perf_counter()
+            citation_issues_before = citations.uncited_paragraphs
+            state.reliability["citation_alignment_used"] = True
+            state.final_answer, confidence = align_citations(state.final_answer, packet, self.config, analysis)
+            state.reliability["citation_alignment_confidence_by_paragraph"] = confidence
+            state.reliability["citation_alignment_ms"] = (time.perf_counter() - alignment_started) * 1000
+            quality_issues, citations = self._check_answer(state, packet, stage="citation_alignment")
+            state.reliability["citation_repair_progress"] = citations.uncited_paragraphs < citation_issues_before
+            state.reliability["citation_alignment_success"] = not quality_issues
+            if not quality_issues:
+                state.repair_avoided_reason = "host_citation_alignment"
+            elif set(quality_issues) <= PURE_CITATION_ISSUES and self.config.repair_max_generations:
+                route = "citation_repair"
+                return {
+                    "central_state": state, "quality_issues": quality_issues, "citations": citations,
+                    "citation_issues_before": citations.uncited_paragraphs,
+                    "next_route": route, "graph_route": extend_route(graph, route),
+                }
+        route = self._quality_repair_route(state, quality_issues, citations)
+        return {"central_state": state, "quality_issues": quality_issues, "citations": citations,
+                "next_route": route, "graph_route": extend_route(graph, route)}
+
+    async def _graph_citation_repair(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        packet = graph["packet"]
+        analysis = state.question_analysis
+        state.transition(CentralPhase.CITATION_REPAIR)
+        state.reliability["citation_repair_used"] = True
+        original_messages = state.messages
+        state.messages = citation_repair_messages(state.final_answer, packet, analysis)
+        mapping = await self._generate(
+            state, stage="citation_repair", tools=[], max_new_tokens=self.config.citation_repair_max_new_tokens,
+            progress=graph["progress"],
+        )
+        state.messages = original_messages
+        state.reliability.update(
+            citation_repair_used=True,
+            citation_repair_tokens=mapping.output_tokens,
+            citation_repair_ms=mapping.generation_ms,
+        )
+        if not mapping.tool_calls and not mapping.generation_hit_time_limit:
+            state.final_answer = apply_citation_mapping(state.final_answer, mapping.content, packet, self.config, analysis)
+        quality_issues, citations = self._check_answer(state, packet, stage="citation_repair")
+        state.reliability["citation_repair_progress"] = (
+            citations.uncited_paragraphs < int(graph.get("citation_issues_before") or 0)
+        )
+        if not quality_issues:
+            state.repair_avoided_reason = "citation_mapping"
+        return {"central_state": state, "quality_issues": quality_issues, "citations": citations}
+
+    def _graph_revalidate(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        route = self._quality_repair_route(state, graph["quality_issues"], graph["citations"])
+        return {"central_state": state, "next_route": route, "graph_route": extend_route(graph, route)}
+
+    async def _graph_quality_repair(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        quality_issues = list(graph["quality_issues"])
+        citations = graph["citations"]
+        generation: CentralGeneration = graph["synthesis_generation"]
+        analysis = state.question_analysis
+        state.repair_attempted = True
+        state.repair_reason = quality_issues[0]
+        state.reliability["repair_reasons"] = list(quality_issues)
+        state.repair_budget = self._repair_budget(generation, state.final_answer)
+        if "analytical_coverage_too_shallow" in quality_issues:
+            state.repair_budget = self.config.repair_max_new_tokens
+        before_fingerprint = issue_fingerprint(
+            quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug,
+        )
+        state.reliability["repair_issue_count_before"] = issue_count(
+            quality_issues, citations, state.grounding_risk_checks[-1],
+        )
+        repair_plan = viewpoint_repair_plan(citations.viewpoint_issues)
+        state.reliability["repair_viewpoint_plan"] = repair_plan
+        if repair_plan:
+            state.reliability["repair_viewpoint_action"] = (
+                "neutralize" if any(not item["attribution_hint"] for item in repair_plan) else "attribute_or_remove"
+            )
+        state.reliability["full_quality_repair_used"] = True
+        state.transition(CentralPhase.QUALITY_REPAIR)
+        state.messages.extend([
+            {"role": "assistant", "content": state.final_answer},
+            {"role": "user", "content": (
+                REPAIR_CONTRACT + "\nLỗi cần sửa (tất cả): "
+                + json.dumps(state.reliability["repair_reasons"], ensure_ascii=False) + "."
+                "\nRủi ro: " + json.dumps(state.grounding_risk_checks[-1], ensure_ascii=False)
+                + "\nTên không được hỗ trợ: "
+                + json.dumps(state.grounding_risk_checks[-1].get("unsupported_named_claims", []), ensure_ascii=False)
+                + ". Xóa hoàn toàn các tên này và khẳng định tùy chọn liên quan nếu gói bằng chứng không hỗ trợ. Không thay bằng một dữ kiện thiếu căn cứ khác."
+                + "\nCác khẳng định cần bỏ, trung lập hóa hoặc quy thuộc: " + json.dumps(repair_plan, ensure_ascii=False)
+                + "\nremove_or_neutralize: xóa nhận định hoặc thay bằng sự kiện được nguồn trung lập hỗ trợ; không đoán người nói khi attribution_hint là null."
+                + depth_contract(analysis, state.evidence_debug)
+                + "\nCác phương diện đã thể hiện: "
+                + json.dumps(state.evidence_debug.get("answer_dimensions_expressed", []), ensure_ascii=False)
+            )},
+        ])
+        repaired = await self._generate(
+            state, stage="quality_repair", tools=[], max_new_tokens=state.repair_budget, progress=graph["progress"],
+        )
+        state.repair_used = True
+        state.reliability["full_quality_repair_used"] = True
+        if repaired.content.strip() and not repaired.tool_calls:
+            state.final_answer = repaired.content.strip()
+        quality_issues, citations = self._check_answer(state, graph["packet"], stage="quality_repair")
+        after_fingerprint = issue_fingerprint(
+            quality_issues, citations, state.grounding_risk_checks[-1], state.evidence_debug,
+        )
+        state.reliability["repair_issue_count_after"] = issue_count(
+            quality_issues, citations, state.grounding_risk_checks[-1],
+        )
+        state.reliability["repair_progress"] = after_fingerprint != before_fingerprint and (
+            not quality_issues
+            or state.reliability["repair_issue_count_after"] < state.reliability["repair_issue_count_before"]
+        )
+        if "unattributed_viewpoint" in state.reliability["repair_reasons"] and not citations.viewpoint_issues:
+            state.reliability["repair_viewpoint_action"] = (
+                "attribute" if all(item["attribution_hint"] and item["attribution_hint"] in state.final_answer
+                                   for item in repair_plan) else "neutralize"
+            )
+        return {"central_state": state, "quality_issues": quality_issues, "citations": citations}
+
+    def _graph_revalidate_after_repair(self, graph: dict[str, Any]) -> dict[str, Any]:
+        return {"central_state": graph["central_state"], "quality_issues": graph["quality_issues"],
+                "citations": graph["citations"]}
+
+    def _graph_insufficient(self, graph: dict[str, Any]) -> dict[str, Any]:
+        return {"central_state": graph["central_state"], "quality_issues": list(graph.get("quality_issues") or [])}
+
+    def _graph_final(self, graph: dict[str, Any]) -> dict[str, Any]:
+        state: CentralAgentState = graph["central_state"]
+        analysis = state.question_analysis
+        quality_issues = list(graph.get("quality_issues") or [])
+        citations = graph.get("citations")
+        packet = graph.get("packet") or []
+        source_ids: list[str] = []
+        if packet and state.evidence_debug.get("evidence_sufficient") and citations is not None:
+            hard_failure = (
+                any(metric["generation_hit_time_limit"] for metric in state.generation_metrics)
+                or any(issue.endswith("_section_missing") or (issue.startswith("unsupported_") and issue.endswith("_section"))
+                       for issue in quality_issues)
+                or any(issue in quality_issues for issue in (
+                    "unsupported_evidence_claim", "missing_valid_citations", "invalid_citation_aliases",
+                    "uncited_factual_paragraphs", "comparison_citation_target_mismatch",
+                    "relational_citation_target_mismatch", "comparison_target_missing", "unattributed_viewpoint",
+                    "comparison_similarity_missing", "comparison_difference_missing", "historical_significance_missing",
+                    "explanatory_content_missing", "unsupported_administrative_premise", "empty_answer",
+                    "analytical_coverage_too_shallow", "unsupported_relationship_claim",
+                    "relationship_primary_identity_missing",
+                ))
+            )
+            if hard_failure:
                 state.final_answer = ""
             else:
                 state.final_answer = expand_citations(state.final_answer, packet)
                 source_ids = citations.source_ids
+        if state.phase != CentralPhase.FINAL:
             state.transition(CentralPhase.FINAL)
-        else:
-            quality_issues = []
-            if state.phase in {CentralPhase.INITIAL_GROUNDING, CentralPhase.ACTION, CentralPhase.TOOL_EXECUTION}:
-                state.transition(CentralPhase.FINAL)
 
         failure_reason = None
         if not state.final_answer:
             if any(metric["generation_hit_time_limit"] for metric in state.generation_metrics):
                 failure_reason = "generation_timeout"
-            elif state.evidence_debug["evidence_sufficient"]:
+            elif state.evidence_debug.get("evidence_sufficient"):
                 failure_reason = "answer_validation_failed"
-            elif state.tool_trace and any(row.get("error") and row["error"] != "duplicate_tool_call_prevented" for row in state.tool_trace):
+            elif state.tool_trace and any(row.get("error") and row["error"] != "duplicate_tool_call_prevented"
+                                          for row in state.tool_trace):
                 failure_reason = "tool_failed"
             else:
                 failure_reason = "evidence_insufficient"
             state.final_answer = FAILURE_ANSWERS[failure_reason]
             if failure_reason == "evidence_insufficient" and analysis.administrative_level:
-                state.final_answer = ("Kho tư liệu hiện tại chưa đủ nguồn cập nhật, đúng "
+                state.final_answer = (
+                    "Kho tư liệu hiện tại chưa đủ nguồn cập nhật, đúng "
                     + LEVEL_NAMES[analysis.administrative_level] + " để xác nhận "
                     + ("nguyên nhân " if analysis.question_type == "cause" else "nội dung ")
-                    + "của đợt sắp xếp được hỏi" + (" năm " + ", ".join(map(str, analysis.time_scope)) if analysis.time_scope else "") + ".")
+                    + "của đợt sắp xếp được hỏi"
+                    + (" năm " + ", ".join(map(str, analysis.time_scope)) if analysis.time_scope else "") + "."
+                )
             elif failure_reason == "evidence_insufficient" and analysis.comparison_targets:
                 balance = state.evidence_debug.get("comparison_balance", {})
                 found = [target for target, item in balance.items() if item["adequate"]]
                 missing = [target for target, item in balance.items() if not item["adequate"]]
-                state.final_answer = (("Đã tìm thấy nguồn về " + ", ".join(found) + " nhưng " if found else "")
-                    + "chưa đủ nguồn đáng tin cậy về " + ", ".join(missing) + " để thực hiện so sánh đầy đủ.")
+                state.final_answer = (
+                    (("Đã tìm thấy nguồn về " + ", ".join(found) + " nhưng ") if found else "")
+                    + "chưa đủ nguồn đáng tin cậy về " + ", ".join(missing) + " để thực hiện so sánh đầy đủ."
+                )
         state.reliability["final_failure_reason"] = failure_reason
         status = "insufficient_evidence" if failure_reason == "evidence_insufficient" else failure_reason or "ok"
         final_risks = state.grounding_risk_checks[-1] if state.grounding_risk_checks else {}
-        attachment_rows = {row.get("attachment_id"): row for row in state.retrieval_candidates
-                           if row.get("source_kind") == "attachment" and row.get("attachment_id")}
+        attachment_rows = {
+            row.get("attachment_id"): row for row in state.retrieval_candidates
+            if row.get("source_kind") == "attachment" and row.get("attachment_id")
+        }
         state.reliability.update(
             attachment_count=len(attachment_rows),
             attachment_types=sorted({row.get("mime_type", "unknown") for row in attachment_rows.values()}),
@@ -1051,9 +1189,12 @@ class CentralAgent:
             ocr_latency_ms=sum(row.get("ocr_latency_ms", 0) for row in attachment_rows.values()),
             ocr_text_char_count=sum(row.get("ocr_char_count", 0) for row in attachment_rows.values()),
             attachment_tool_calls=state.tool_calls_by_name.get("search_uploaded_documents", 0),
-            attachment_ocr=[{key: row.get(key) for key in ("attachment_id", "filename", "mime_type", "upload_origin",
-                "ocr_attempted", "ocr_success", "ocr_error", "ocr_provider", "ocr_confidence", "ocr_char_count", "ocr_latency_ms")}
-                for row in attachment_rows.values()],
+            attachment_ocr=[{
+                key: row.get(key) for key in (
+                    "attachment_id", "filename", "mime_type", "upload_origin", "ocr_attempted", "ocr_success",
+                    "ocr_error", "ocr_provider", "ocr_confidence", "ocr_char_count", "ocr_latency_ms",
+                )
+            } for row in attachment_rows.values()],
         )
         quality_debug = {
             **state.reliability,
@@ -1067,7 +1208,7 @@ class CentralAgent:
             "unsupported_years": final_risks.get("unsupported_years", []),
             "answer_quality_issues": quality_issues,
         }
-        elapsed_ms = (time.perf_counter() - started) * 1000
+        elapsed_ms = (time.perf_counter() - graph["started"]) * 1000
         runtime = self._runtime_snapshot()
         telemetry = current_request_telemetry()
         if telemetry is not None:
@@ -1082,109 +1223,104 @@ class CentralAgent:
             )
             telemetry.central_tool_ms += state.tool_ms
             telemetry.central_external_results_count += state.external_evidence_count
-            telemetry.central_tool_schema_count = len(schemas)
-            telemetry.central_tools_exposed_to_model = [item["function"]["name"] for item in schemas]
+            telemetry.central_tool_schema_count = len(graph["schemas"])
+            telemetry.central_tools_exposed_to_model = [item["function"]["name"] for item in graph["schemas"]]
             telemetry.central_tool_parse_failures += state.tool_parse_failures
             telemetry.central_malformed_tool_calls += len(state.malformed_tool_calls)
 
         provenance = {
-            "mode": "central",
-            "source": "central_qwen3_8b_v2",
-            **runtime,
-            "central_model_calls": state.model_calls,
-            "central_tool_calls": state.tool_calls,
+            "mode": "central", "source": "central_qwen3_8b_v2", **runtime,
+            "central_model_calls": state.model_calls, "central_tool_calls": state.tool_calls,
             "central_tool_calls_by_type": dict(state.tool_calls_by_name),
             "central_external_results_count": state.external_evidence_count,
-            "research_generation_calls": 0,
-            "evidence_generation_calls": 0,
-            "history_generation_calls": 0,
-            "total_llm_calls": state.model_calls,
-            "repair_generation_used": state.repair_used,
-            "repair_generation_attempted": state.repair_attempted,
-            "repair_reason": state.repair_reason,
-            "generation_metrics": state.generation_metrics,
-            "state_phase_trace": state.phase_trace,
-            "grounding_required": state.grounding_required,
-            "grounding_reason": state.grounding_reason,
-            "local_evidence_count": state.local_evidence_count,
-            **quality_debug,
-            "question_type": analysis.question_type,
-            "comparison_targets": list(analysis.comparison_targets),
+            "research_generation_calls": 0, "evidence_generation_calls": 0, "history_generation_calls": 0,
+            "total_llm_calls": state.model_calls, "repair_generation_used": state.repair_used,
+            "repair_generation_attempted": state.repair_attempted, "repair_reason": state.repair_reason,
+            "generation_metrics": state.generation_metrics, "state_phase_trace": state.phase_trace,
+            "grounding_required": state.grounding_required, "grounding_reason": state.grounding_reason,
+            "local_evidence_count": state.local_evidence_count, **quality_debug,
+            "question_type": analysis.question_type, "comparison_targets": list(analysis.comparison_targets),
         }
         performance = {
             **quality_debug,
-            "central_model_calls": state.model_calls,
-            "central_tool_calls": state.tool_calls,
-            "central_tool_calls_by_type": dict(state.tool_calls_by_name),
-            "central_generation_ms": state.generation_ms,
-            "central_tool_ms": state.tool_ms,
-            "central_total_latency_ms": elapsed_ms,
-            "central_input_tokens": state.input_tokens,
-            "central_output_tokens": state.output_tokens,
+            "central_model_calls": state.model_calls, "central_tool_calls": state.tool_calls,
+            "central_tool_calls_by_type": dict(state.tool_calls_by_name), "central_generation_ms": state.generation_ms,
+            "central_tool_ms": state.tool_ms, "central_total_latency_ms": elapsed_ms,
+            "central_input_tokens": state.input_tokens, "central_output_tokens": state.output_tokens,
             "central_external_results_count": state.external_evidence_count,
-            "central_tool_schema_count": len(schemas),
-            "central_tool_parse_failures": state.tool_parse_failures,
+            "central_tool_schema_count": len(graph["schemas"]), "central_tool_parse_failures": state.tool_parse_failures,
             "generation_metrics": state.generation_metrics,
-            "research_generation_calls": 0,
-            "evidence_generation_calls": 0,
-            "history_generation_calls": 0,
+            "research_generation_calls": 0, "evidence_generation_calls": 0, "history_generation_calls": 0,
         }
-        return {
-            "question": question,
-            "answer": state.final_answer,
-            "status": status,
-            "final_failure_reason": failure_reason,
-            "source_ids": source_ids,
-            "source_chunks": state.selected_sources,
-            "model_source_ids": source_ids,
+        result = {
+            "question": state.question, "answer": state.final_answer, "status": status,
+            "final_failure_reason": failure_reason, "source_ids": source_ids,
+            "source_chunks": state.selected_sources, "model_source_ids": source_ids,
             "invalid_source_ids": state.invalid_source_ids,
             "unsupported_years": quality_debug["unsupported_years"],
             "unsupported_named_claims": quality_debug["unsupported_named_claims"],
             "retrieval": {
-                "question": question,
-                "final_context": state.selected_sources,
-                "candidates20": state.retrieval_candidates,
-                "target_specific_queries": state.target_specific_queries,
-                "target_rankings": state.target_rankings,
-                "target_retrieval_results": state.target_rankings,
+                "question": state.question, "final_context": state.selected_sources,
+                "candidates20": state.retrieval_candidates, "target_specific_queries": state.target_specific_queries,
+                "target_rankings": state.target_rankings, "target_retrieval_results": state.target_rankings,
                 "comparison_balance": state.evidence_debug.get("comparison_balance", {}),
                 "query_variants": state.retrieval_query_variants,
                 "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
             },
             "analysis": {
-                "question": question,
-                "analytical": analysis.analytical,
-                **analysis.telemetry(),
+                "question": state.question, "analytical": analysis.analytical, **analysis.telemetry(),
                 "answer_quality_issues": quality_issues,
             },
             "tool_trace": [f"central:{item['name']}" for item in state.tool_trace],
             "central_debug": {
-                **quality_debug,
-                "retrieval_filter_events": state.retrieval_filter_events,
-                "grounding_risk_checks": state.grounding_risk_checks,
-                "tools": state.tool_trace,
-                "allowed_tools": sorted(allowed_tools),
-                "tool_schema_count": len(schemas),
-                "tools_exposed_to_model": [item["function"]["name"] for item in schemas],
+                **quality_debug, "retrieval_filter_events": state.retrieval_filter_events,
+                "grounding_risk_checks": state.grounding_risk_checks, "tools": state.tool_trace,
+                "allowed_tools": sorted(state.allowed_tools), "tool_schema_count": len(graph["schemas"]),
+                "tools_exposed_to_model": [item["function"]["name"] for item in graph["schemas"]],
                 "tool_parse_failures": state.tool_parse_failures,
-                "malformed_tool_calls": state.malformed_tool_calls[:5],
-                "question_type": analysis.question_type,
-                "subject": analysis.subject,
-                "comparison_targets": list(analysis.comparison_targets),
-                "phase": state.phase.value,
-                "phase_trace": state.phase_trace,
-                "grounding_required": state.grounding_required,
-                "grounding_reason": state.grounding_reason,
-                "initial_grounding_coverage": state.initial_grounding_coverage,
-                **runtime,
+                "malformed_tool_calls": state.malformed_tool_calls[:5], "question_type": analysis.question_type,
+                "subject": analysis.subject, "comparison_targets": list(analysis.comparison_targets),
+                "phase": state.phase.value, "phase_trace": state.phase_trace,
+                "grounding_required": state.grounding_required, "grounding_reason": state.grounding_reason,
+                "initial_grounding_coverage": state.initial_grounding_coverage, **runtime,
             },
-            "agentic": True,
-            "inference_mode": "central",
-            "answer_provenance": provenance,
-            "performance_debug": performance,
-            "latency_sec": elapsed_ms / 1000,
+            "agentic": True, "inference_mode": "central", "answer_provenance": provenance,
+            "performance_debug": performance, "latency_sec": elapsed_ms / 1000,
             "total_latency_sec": elapsed_ms / 1000,
         }
+        return {"central_state": state, "result": result, "status": status,
+                "final_answer": state.final_answer, "sources": state.selected_sources}
+
+    async def _run(
+        self,
+        *,
+        question: str,
+        history: list[dict[str, str]] | None,
+        owner_id: str | None,
+        conversation_id: str | None,
+        request_id: str | None,
+        started: float,
+        progress: dict[str, Any] | None,
+        model_ready_task: asyncio.Task | None = None,
+        question_analysis=None,
+        attachment_ids: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        output = await self.graph.ainvoke({
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "mode": "central",
+            "question": question,
+            "attachment_ids": tuple(attachment_ids or ()),
+            "history": list(history or []),
+            "owner_id": owner_id,
+            "started": started,
+            "progress": progress if progress is not None else {},
+            "model_ready_task": model_ready_task,
+            "question_analysis": question_analysis,
+            "graph_trace": [],
+            "graph_route": [],
+        })
+        return output["result"]
 
     def _timeout_result(
         self,

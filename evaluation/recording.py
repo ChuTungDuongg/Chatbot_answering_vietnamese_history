@@ -104,5 +104,11 @@ def from_result(question, metadata, result, *, latency_ms=None):
         citations={key: value for key, value in debug.items() if "citation" in key or key == "uncited_factual_paragraphs"},
         repairs={key: value for key, value in {**provenance, **debug}.items() if "repair" in key},
         usage=performance, adapter_configured=debug.get("central_adapter_configured"),
-        adapter_loaded=debug.get("central_adapter_loaded"), signals=signals, raw_result=result,
+        adapter_loaded=debug.get("central_adapter_loaded"),
+        graph_name=result.get("graph_name"), graph_version=result.get("graph_version"),
+        graph_topology_fingerprint=result.get("graph_topology_fingerprint"),
+        graph_nodes_executed=result.get("graph_nodes_executed"), graph_route=result.get("graph_route"),
+        node_timings=result.get("node_timings"), node_model_calls=result.get("node_model_calls"),
+        node_tool_calls=result.get("node_tool_calls"), graph_trace=result.get("graph_trace"),
+        signals=signals, raw_result=result,
     )

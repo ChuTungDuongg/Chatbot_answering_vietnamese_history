@@ -6,15 +6,17 @@
 
 ```text
 app/agents/
-  common/            shared runtime/lazy loading, registry, cache, tool codec,
-                     EvidenceChunk, comparison helpers and domain gate
+  common/            shared runtime/lazy loading, typed request graph state,
+                     normalized graph trace, comparison helpers and domain gate
   research/          ResearchAgent, research config/policy/result
   evidence/          EvidenceCriticAgent, evidence schemas/prompts/validation
   history_answerer/  HistoryAnswererAgent and answer contract
-  central/           independent CentralAgent/model/config, semantic parsing,
+  central/           independent CentralGraph/Agent/model/config, semantic parsing,
                      evidence selection, synthesis, citations and repairs
-  three_llm/         AgentOrchestrator for the three legacy roles
-  hybrid.py          existing HybridRAGOrchestrator
+  three_llm/         ThreeLLMGraph and compatibility AgentOrchestrator facade
+  hybrid_graph.py    lightweight HybridGraph
+  hybrid.py          compatibility HybridRAGOrchestrator facade
+  graphs.py          canonical mode-to-graph factory
   config.py, schemas.py, prompts.py, orchestrator.py  compatibility re-exports
 ```
 
@@ -49,12 +51,12 @@ implementation gates live in `tests/test_agent_package_architecture.py`.
 
 `SharedAgentModelRuntime` nạp Qwen3 base một lần ở NF4 4-bit, load ba adapter tên `research`, `evidence`, `history`, rồi chuyển đúng adapter dưới lock trước generation. Metadata base mismatch hoặc role chưa load bị từ chối. `VLLMOpenAIBackend` giữ cùng interface và ba model name nhưng không tự quản lý server.
 
-`CentralModelRuntime` là runtime riêng cho `Qwen/Qwen3-8B`. Mặc định Central V2 dùng base model, không gắn PEFT; chỉ `CENTRAL_AGENT_ADAPTER_PATH` khác rỗng mới validate và gắn adapter tương lai. `CentralAgent` dùng state machine `PREPARE → INITIAL_GROUNDING → ACTION/TOOL_EXECUTION → SYNTHESIS → QUALITY_REPAIR → FINAL`. Mọi câu hỏi lịch sử được host gọi `search_history` trước khi có thể tổng hợp câu trả lời. Tools được truyền bằng Qwen chat template và lời gọi Hermes/Qwen có cấu trúc, không dùng ReAct `Action:` hoặc parser rải rác. Nó không import/delegate sang `AgentOrchestrator`, `ResearchAgent`, `EvidenceCriticAgent` hoặc `HistoryAnswererAgent`. Hai runtime dùng `LazyRuntime` để không cùng khởi tạo khi chưa cần.
+`CentralModelRuntime` là runtime riêng cho `Qwen/Qwen3-8B`. Mặc định Central V2 dùng base model, không gắn PEFT; chỉ `CENTRAL_AGENT_ADAPTER_PATH` khác rỗng mới validate và gắn adapter tương lai. `CentralGraph` dùng `StateGraph` cho `PREPARE → INITIAL_GROUNDING → ACTION/TOOL_EXECUTION → SYNTHESIS → VALIDATION → REPAIR → FINAL`. Mọi câu hỏi lịch sử được host gọi `search_history` trước khi có thể tổng hợp câu trả lời. Tools được truyền bằng Qwen chat template và lời gọi Hermes/Qwen có cấu trúc, không dùng ReAct `Action:` hoặc parser rải rác. Nó không import/delegate sang `AgentOrchestrator`, `ResearchAgent`, `EvidenceCriticAgent` hoặc `HistoryAnswererAgent`. Hai runtime dùng `LazyRuntime` để không cùng khởi tạo khi chưa cần.
 
 Central base model dùng Hugging Face cache riêng ở `/hf-cache/hub` trên Modal. Runtime log `central_cache_hit`, resolved snapshot và thời gian resolve/load/adapter-load; `CENTRAL_AGENT_LOCAL_FILES_ONLY=true` chỉ nên bật sau khi `scripts/modal_seed_hf_cache.py --validate-only` đã pass.
 Lazy model initialization có timeout riêng (`CENTRAL_MODEL_LOAD_TIMEOUT_SECONDS`) và không ăn vào agent reasoning budget (`CENTRAL_AGENT_TIMEOUT_SECONDS`). Quality repair cũng có quota riêng một generation, nên normal budget ba generation không còn làm mất lượt sửa khi final phân tích vẫn quá nông.
 
-## 🔁 Orchestration
+## 🔁 LangGraph orchestration
 
 ```text
 Research run (max 6 steps)
@@ -65,6 +67,14 @@ Research run (max 6 steps)
   → History answer + guards
   → cleanup SessionEvidenceStore
 ```
+
+Ba mode có ba graph độc lập; không có mega-graph. Graph state chỉ sống trong
+một request và production không cấu hình checkpointer. SQLite trong `app/chat/`
+vẫn là nguồn bền vững duy nhất cho conversation, messages và attachments.
+LangGraph không thêm model planner/router, không thêm LLM call, không dùng
+`create_react_agent`, `ToolNode`, LangSmith tracing hay memory store.
+
+Xem [kiến trúc graph](../../docs/langgraph_workflows.md).
 
 Research policy chỉ trả JSON action hoặc finish. Evidence policy chỉ trả structured JSON. Parser có tối đa một repair cho JSON không hợp lệ; Pydantic và candidate-ID validation chạy trước khi evidence tới History model. Attachment được prefetch bằng request scope nội bộ và cũng xuất hiện dưới dạng tool `search_uploaded_documents`; model không được nhìn thấy hoặc tự chọn owner/conversation ID.
 
