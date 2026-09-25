@@ -1,38 +1,14 @@
-# 🧰 Agent Tools
+# Central tools
 
-[⬅️ Backend](../README.md) · [🧠 Agents](../agents/README.md)
+The Central Agent uses `ToolRegistry` to validate model-supplied arguments with Pydantic, run tools, and record bounded results or errors. `ToolExecutionContext` carries request, owner, and conversation IDs separately from the tool schema shown to the model. Tool implementations do not load Qwen or create retrieval indexes.
 
-`ToolRegistry` validate arguments bằng Pydantic trước khi gọi tool, hỗ trợ sync/async implementation và trả `ToolCallRecord` không chứa raw secret. Tool cần scope riêng có thể nhận `ToolExecutionContext`; context này không xuất hiện trong JSON schema gửi cho model.
-
-| Tool name | Input chính | Output |
+| Tool | Availability | Purpose |
 |---|---|---|
-| `search_history` | query, top_k | Chunks từ HybridRetriever hiện có. |
-| `search_uploaded_documents` | query, top_k | Chunks OCR/PDF thuộc đúng owner và conversation hiện tại. |
-| `search_web` | query, top_k | Search results; rỗng trong local-only mode. |
-| `fetch_web_page` | URL, max_chars | Clean text, title, final URL, content type. |
-| `retrieve_evidence` | query, top_k, session_id | Evidence đã thu thập trong session. |
-| `inspect_evidence` | IDs, session_id | Full evidence rows theo ID. |
+| `search_history` | Always in full Central mode | Query the same historical retriever used by Hybrid RAG. |
+| `search_uploaded_documents` | When `CENTRAL_ENABLE_DOCUMENTS=true` | Search documents attached to the current owner and conversation. |
+| `search_wikipedia`, `fetch_wikipedia_page` | When `CENTRAL_ENABLE_WIKIPEDIA=true` | Find and read public encyclopedia pages. |
+| `search_web`, `fetch_web_page` | When `CENTRAL_ENABLE_WEB=true` | Optional web search and bounded page extraction. |
 
-## 🌐 Web provider
+The Central runtime guarantees a local `search_history` call if its tool rounds did not already make one. Web search is disabled by default. Uploaded-document search uses host-supplied conversation scope; model text cannot select another user's attachment store.
 
-```dotenv
-WEB_SEARCH_PROVIDER=local-only
-WEB_SEARCH_API_KEY=
-```
-
-Hoặc `WEB_SEARCH_PROVIDER=tavily` và cung cấp key qua environment/Modal Secret. Fetcher timeout 10 giây, đọc tối đa 1 MB, chỉ nhận HTML/plain text/XHTML, extract title, clean whitespace và không crawl recursive.
-
-## 🧺 Session evidence
-
-`SessionEvidenceStore` hỗ trợ `add_documents`, `search`, `deduplicate`, `get/all` và `remove_session`. Dữ liệu phân vùng bằng session ID; orchestrator cleanup khi request kết thúc. Web chunks dùng ID hash ổn định trong session và không được đưa vào corpus/index vĩnh viễn.
-
-`search_uploaded_documents` nhận owner/conversation từ execution context do orchestrator tạo, không nhận ID từ output của Research LLM. Tool gọi `TemporaryCorpusRetriever`, giữ `attachment_id`, filename/title, page và `chunk_id`, rồi gắn `source_kind=attachment` trước khi evidence đi qua critic.
-
-## ➕ Thêm tool
-
-1. Tạo Pydantic input schema.
-2. Khai báo `name`, `description`, `input_schema` và `run`.
-3. Register một lần trong lifespan ở `app/main.py`.
-4. Thêm unit test registry/schema/error path.
-
-Tool không được log API key, response page đầy đủ hoặc hidden model reasoning.
+To add a tool, define a Pydantic input model and a class with `name`, `description`, `input_schema`, and `run` or `run_with_context`. Register it in `app/main.py` and test argument validation, expected output, and error handling. Never log secrets, full private page content, or hidden model reasoning.

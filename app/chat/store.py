@@ -425,7 +425,9 @@ class ConversationStore:
                 "Message role must be 'user' or 'assistant'."
             )
 
-        content = content.strip()
+        # Preserve the exact assistant stream; stripping it would make the
+        # stored answer differ from the concatenated SSE deltas.
+        content = content if role == "assistant" else content.strip()
 
         if not content and not (role == "user" and sources and all(source.get("source_kind") == "attachment" for source in sources)):
             raise ValueError(

@@ -44,7 +44,7 @@ async function setup(page, { empty = false, insufficient = false, holdStream = f
       state.requests.push(payload);
       if (holdStream) await new Promise((resolve) => { state.release = resolve; });
       state.messages = [{ id: "u2", role: "user", content: payload.question }, assistant];
-      const events = [["status", { status: "central_answering" }], ["token", { text: content }], ["sources", sources], ["debug_trace", assistant.debug_trace], ["done", {}]];
+      const events = [["status", { stage: "central_answering" }], ["answer_delta", { delta: content }], ["sources", { items: sources }], ["debug_trace", assistant.debug_trace], ["done", {}]];
       return route.fulfill({ contentType: "text/event-stream", body: events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("") });
     }
     return route.fulfill({ status: 404, json: { detail: "Unmocked test endpoint" } });
@@ -128,11 +128,11 @@ test("editorial answer, citations, source drawer focus, copy and debug disclosur
   await page.getByRole("button", { name: "Sao chép câu trả lời" }).click();
   await expect(page.getByText("Đã sao chép", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.__copiedText)).toBe(answer);
-  await page.getByText("Agent trace", { exact: true }).click();
+  await page.getByText("Request trace", { exact: true }).click();
   await expect(page.locator(".trace-panel-body")).toBeVisible();
   expect(await page.locator("body").innerText()).toContain(rawId);
   await noOverflow(page);
-  await page.getByText("Agent trace", { exact: true }).click();
+  await page.getByText("Request trace", { exact: true }).click();
   await page.getByRole("button", { name: /Chuyển sang giao diện sáng/ }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.locator(".thread-scroll").evaluate((node) => { node.scrollTop = 0; });

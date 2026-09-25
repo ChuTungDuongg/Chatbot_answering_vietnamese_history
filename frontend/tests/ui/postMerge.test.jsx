@@ -132,6 +132,29 @@ test("central_loading and post-done synchronization keep the request busy", asyn
   expect(result.current.session.isRunning).toBe(false);
 });
 
+test("answer deltas render before completion and match the stored answer", async () => {
+  const { result } = await setup();
+  const stream = deferred();
+  let onEvent;
+  api.streamChat.mockImplementation((options) => { onEvent = options.onEvent; return stream.promise; });
+  api.getConversation.mockResolvedValue({
+    messages: [{ id: "saved-answer", role: "assistant", content: "Chiến thắng Bạch Đằng năm 938.", sources: [] }],
+    attachments: [],
+  });
+
+  let sending;
+  await act(async () => { sending = result.current.stream.submit("Bạch Đằng?"); });
+  act(() => onEvent({ event: "answer_delta", data: { delta: "Chiến thắng " } }));
+  expect(result.current.session.state.messages.at(-1).content).toBe("Chiến thắng ");
+  expect(result.current.session.isRunning).toBe(true);
+  act(() => onEvent({ event: "answer_delta", data: { delta: "Bạch Đằng năm 938." } }));
+  expect(result.current.session.state.messages.at(-1).content).toBe("Chiến thắng Bạch Đằng năm 938.");
+
+  await act(async () => { onEvent({ event: "done", data: {} }); stream.resolve(); await sending; });
+  expect(result.current.session.state.messages.at(-1).content).toBe("Chiến thắng Bạch Đằng năm 938.");
+  expect(result.current.session.isRunning).toBe(false);
+});
+
 test("switching conversations aborts the stream and ignores late answer, sources and debug", async () => {
   const { result } = await setup();
   const held = deferred();

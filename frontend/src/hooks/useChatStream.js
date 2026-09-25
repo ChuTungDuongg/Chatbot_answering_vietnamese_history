@@ -142,7 +142,6 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
               type: "STREAM_ERROR",
               messageId: assistantMessageId,
               message: typeof data === "string" ? data : data?.message ?? STREAM_FAILURE_MESSAGE,
-              kind: data?.type,
               trace: data?.debug_trace,
             });
             return;

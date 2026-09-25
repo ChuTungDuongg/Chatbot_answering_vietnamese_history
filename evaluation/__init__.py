@@ -1,1 +1,1 @@
-"""Offline Central evaluation tooling. Never imported by the application."""
+"""Offline deterministic baseline evaluation. Never imported by the application."""

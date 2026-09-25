@@ -71,11 +71,11 @@ checkpoints/
 outputs/
 output/
 
-models/
-model/
-adapters/
-adapter/
-merged_model/
+/models/
+/model/
+/adapters/
+/adapter/
+/merged_model/
 
 *.safetensors
 *.bin
@@ -92,27 +92,12 @@ artifacts/vn_history_deployment/
 artifacts/vn_history_modal/
 
 # =========================
-# Generated training artifacts
+# Preserved historical generated artifacts
 # =========================
 # Large/generated training JSONL files under artifacts should not be tracked.
 artifacts/training/**/*.jsonl
 
-# Future central-agent trajectory outputs/caches.
-# Keep source code, adapters, configs, README, and tiny test fixtures trackable.
-training/trajectory_dataset/outputs/
-training/trajectory_dataset/cache/
-training/trajectory_dataset/generated/
-trajectory_dataset_output/
-
-# The trajectory adapter package is source code, not trained adapter weights.
-!training/trajectory_dataset/adapters/
-!training/trajectory_dataset/adapters/*.py
-
-# Keep lightweight reports / manifests / validation JSON files trackable.
-# Examples:
-# artifacts/reports/*.json
-# artifacts/training/**/split_manifest.json
-# artifacts/training/**/validation.json
+# Historical data under training/Dataset is preserved separately from removed training code.
 
 # Model weights/checkpoints anywhere under artifacts.
 artifacts/**/*.safetensors
@@ -151,7 +136,6 @@ qdrant_storage/
 
 # Canonical datasets that SHOULD stay in Git.
 !Dataset/merged_jsonl/all_messages.jsonl
-!datasets/research_agent/history_trajectories.jsonl
 
 # =========================
 # Chunk export outputs
@@ -211,10 +195,8 @@ node_modules/
 !examples/*.jsonl
 !examples/*.md
 
-# Central V2 offline tooling: generated data/logs/reports never enter Git.
-/training/central/data/generated/
-/training/central/cache/
-/training/central/outputs/
+# Generated benchmark and evaluation reports never enter Git.
+/reports/
 !/evaluation/logs/
 /evaluation/logs/*
 !/evaluation/logs/.gitkeep

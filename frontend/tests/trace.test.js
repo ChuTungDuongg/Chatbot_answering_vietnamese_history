@@ -6,7 +6,7 @@ import { sanitizeTraceForCopy } from "../src/services/trace.js";
 
 test("trace sanitizer removes secrets, prompts, and hidden reasoning", () => {
   const sanitized = sanitizeTraceForCopy({
-    mode: "agentic_rag",
+    mode: "central",
     prompt: "private prompt",
     chain_of_thought: "private reasoning",
     nested: {
@@ -17,7 +17,7 @@ test("trace sanitizer removes secrets, prompts, and hidden reasoning", () => {
   });
 
   assert.deepEqual(sanitized, {
-    mode: "agentic_rag",
+    mode: "central",
     nested: { generation_calls: 2 },
   });
 });

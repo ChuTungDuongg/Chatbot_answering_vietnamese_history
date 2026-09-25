@@ -1,14 +1,12 @@
 import {
   ANSWER_FAILURE_MESSAGE,
   ANSWER_STOPPED_MESSAGE,
-  EVIDENCE_CONTRACT_FAILURE_MESSAGE,
 } from "../config/messages.js";
 import { getLatestSources } from "./normalizers.js";
 
 export const ACTIVE_STATUSES = new Set([
   "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
   "hybrid_retrieval", "hybrid_answering",
-  "three_llm_research", "three_llm_evidence", "three_llm_answering",
   "central_loading", "central_analyzing", "central_tools", "central_answering",
 ]);
 
@@ -176,15 +174,11 @@ export function chatSessionReducer(state, action) {
       };
 
     case "STREAM_ERROR": {
-      const fallback = action.kind === "evidence_contract_error"
-        ? EVIDENCE_CONTRACT_FAILURE_MESSAGE
-        : ANSWER_FAILURE_MESSAGE;
-
       return {
         ...state,
         messages: patchMessage(state, action.messageId, (message) => ({
           ...message,
-          content: message.content || fallback,
+          content: message.content || ANSWER_FAILURE_MESSAGE,
           status: "error",
           debug_trace: action.trace ?? message.debug_trace,
         })),

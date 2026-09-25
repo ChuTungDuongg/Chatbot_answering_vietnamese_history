@@ -1,0 +1,2535 @@
+{
+  "schema_version": 1,
+  "snapshot_utc": "2026-09-25T16:56:07.557790+00:00",
+  "purpose": "Read-only baseline inventory before architecture refactor; no corpus or index was rebuilt.",
+  "hash_algorithm": "sha256",
+  "line_count_note": "physical_lines counts newline-delimited lines; JSONL record count is an estimate when blank lines exist.",
+  "roots": [
+    "Dataset",
+    "training/Dataset",
+    "artifacts",
+    "data",
+    "datasets",
+    "evaluation/datasets",
+    "outputs"
+  ],
+  "extra_files": [
+    "tests/trajectory_dataset/fixtures/fake_corpus.jsonl",
+    "training/InvestigatingDataset.zip"
+  ],
+  "summary": [
+    {
+      "root": "Dataset",
+      "file_count": 122,
+      "size_bytes": 48161144
+    },
+    {
+      "root": "training/Dataset",
+      "file_count": 32,
+      "size_bytes": 4201322
+    },
+    {
+      "root": "artifacts",
+      "file_count": 95,
+      "size_bytes": 3053802199
+    },
+    {
+      "root": "data",
+      "file_count": 1,
+      "size_bytes": 57344
+    },
+    {
+      "root": "datasets",
+      "file_count": 4,
+      "size_bytes": 104260122
+    },
+    {
+      "root": "evaluation/datasets",
+      "file_count": 3,
+      "size_bytes": 3846
+    },
+    {
+      "root": "outputs",
+      "file_count": 5,
+      "size_bytes": 55649
+    },
+    {
+      "root": "protected total",
+      "file_count": 184,
+      "size_bytes": 1491752505
+    }
+  ],
+  "files": [
+    {
+      "path": "artifacts/agentic_smoke_result.json",
+      "size_bytes": 36337,
+      "sha256": "a174d689180845b3c46f95d21a1a4ba4db234b9f2163ae87fe6227848346baac",
+      "git_status": "tracked",
+      "physical_lines": 794,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/bounded_acceptance_smoke_result.json",
+      "size_bytes": 24327,
+      "sha256": "22b471609844b162c6a0fcfb4442d43f5f86d6029bf3f7cea822f7f89d572517",
+      "git_status": "tracked",
+      "physical_lines": 524,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/README.md",
+      "size_bytes": 4429,
+      "sha256": "0459cfc2d5b77925697b5ab50e4aebcc59756af0d80a387afc32da2c1e44eea8",
+      "git_status": "tracked",
+      "physical_lines": 94,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/README_MODAL_VOLUME.md",
+      "size_bytes": 18863,
+      "sha256": "2d23249801a2e93970271edf42a1d333c57367b983cfe5224e0a0b143a710504",
+      "git_status": "tracked",
+      "physical_lines": 285,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/reports/evidence_v23_validation.json",
+      "size_bytes": 4390,
+      "sha256": "e691ce9f2fa09aebe33b362d709ad608ac802bd167ed883ab0806483ca8fe3cb",
+      "git_status": "tracked",
+      "physical_lines": 158,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/reports/history_qwen3_preflight.json",
+      "size_bytes": 3509,
+      "sha256": "7ee7b4c0c58b6d040a0f397668bcf8765b03142bd1a809650408fa1002574fa0",
+      "git_status": "tracked",
+      "physical_lines": 158,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/reports/research_v23_validation.json",
+      "size_bytes": 1761,
+      "sha256": "c2baf8af1b376e0282f0c6568bde590ee4b5434be211622aeea4bde98724b35c",
+      "git_status": "tracked",
+      "physical_lines": 81,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/baseline_validation.json",
+      "size_bytes": 4895,
+      "sha256": "4a711b8afc20308ecebf5a9a47b60b27f7b0d742c980050d7303914e016c9205",
+      "git_status": "tracked",
+      "physical_lines": 156,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/critic_rows.jsonl",
+      "size_bytes": 9819566,
+      "sha256": "45c3222281fc83a8ff91aa00e30b5e31714c91666361befafe7886e7764df73d",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/critic_rows_final.jsonl",
+      "size_bytes": 12995389,
+      "sha256": "72231668f8be1bd66889dc60cabf1536f3d3ce6949aee47f33aa4c9f615bee83",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/critic_rows_v2.jsonl",
+      "size_bytes": 12995389,
+      "sha256": "72231668f8be1bd66889dc60cabf1536f3d3ce6949aee47f33aa4c9f615bee83",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/qwen3_critic_v2/split_manifest.json",
+      "size_bytes": 5664,
+      "sha256": "b575f4d8e8dc2587c28a053c029b47fada426412d3676c489d0131f6152e32e7",
+      "git_status": "tracked",
+      "physical_lines": 218,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/v23_dry_run/split_manifest.json",
+      "size_bytes": 5664,
+      "sha256": "b575f4d8e8dc2587c28a053c029b47fada426412d3676c489d0131f6152e32e7",
+      "git_status": "tracked",
+      "physical_lines": 218,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/evidence_agent/v23_validation.json",
+      "size_bytes": 4390,
+      "sha256": "e691ce9f2fa09aebe33b362d709ad608ac802bd167ed883ab0806483ca8fe3cb",
+      "git_status": "tracked",
+      "physical_lines": 158,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/history_answerer/messages_normalized.jsonl",
+      "size_bytes": 9694496,
+      "sha256": "dd9b75b785bbda5884924aa23bba04dbcf21199040f1187e441508d384231d99",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/history_answerer/qwen3_dry_run/preflight_manifest.json",
+      "size_bytes": 2100,
+      "sha256": "ed96358354f6f41524d5d18108e035a0467dd9f89fb61c39e1ca9046a3044d05",
+      "git_status": "tracked",
+      "physical_lines": 96,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/history_answerer/qwen3_validation.json",
+      "size_bytes": 390,
+      "sha256": "06930e52aa71e63f6345cb0f34e0e519184bf72b925c44f47b559b21392ac985",
+      "git_status": "tracked",
+      "physical_lines": 18,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/research_agent/history_trajectories.jsonl",
+      "size_bytes": 28388296,
+      "sha256": "b267bd5ed85fd55d0712c8e74f87d30ed86e7c54017367ad8f7e0d8886f2a805",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/research_agent/history_trajectories_final.jsonl",
+      "size_bytes": 57969060,
+      "sha256": "c92a50226a0768bdd4d8a9761d32ad77512f47e41827aff43b411187b62e3d01",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/research_agent/history_trajectories_v2.jsonl",
+      "size_bytes": 32127634,
+      "sha256": "feceb77502098b0e2005959c886181d406a83c6270e6334acb2c04a3ef875913",
+      "git_status": "ignored",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "derived_training_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/training/research_agent/qwen3_tool_agent/split_manifest.json",
+      "size_bytes": 766,
+      "sha256": "5e153ee35ba148d8faee29c8a73a519f903d96ee6e6a1365135410e3463d7822",
+      "git_status": "tracked",
+      "physical_lines": 45,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/research_agent/v23_dry_run/split_manifest.json",
+      "size_bytes": 2547,
+      "sha256": "df94cec1e6dd67f113b9975e7fcd80de3eeaa56e96ad31b30d94d360fa873c37",
+      "git_status": "tracked",
+      "physical_lines": 104,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/training/research_agent/v23_validation.json",
+      "size_bytes": 1274,
+      "sha256": "4465ae3766f09a313d62d7c5a45fe748e8e50077db6c2f789ab1df3d8aef40ba",
+      "git_status": "tracked",
+      "physical_lines": 54,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/central/adapter_config.json",
+      "size_bytes": 1146,
+      "sha256": "ca41b7b44bbd0b1803bd8a8419198a2ae46e2105f61b5516d079fcdb39ebb55b",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/central/adapter_model.safetensors",
+      "size_bytes": 349243752,
+      "sha256": "7cff41d573bbc846736ceaf83f76cfd7a01c968391903dbcf6339fc28b69e13c",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/evidence/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "4b78c5dac2af7888aa7dd442df332744adc04e6ead424b67f6d53b187788fead",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/evidence/adapter_model.safetensors",
+      "size_bytes": 132187888,
+      "sha256": "39385ca7c82b57b5ff8c9a531b5359509ea185b15e5a0adb0724626c58ed7ff6",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/history/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "b5e7ebb2b06c68e6301d6ad50ff6b3eba29f7c1f53e85ac3d3c9adeeaa01fed6",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/history/adapter_model.safetensors",
+      "size_bytes": 264308896,
+      "sha256": "70d873e15c48f5802e26d0c32eab7c63ea7b83f713be3192092476a0dac746a3",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/research/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "4285e9d50d49cf787a1de06e89c486c8814eaa6f90017381ed9a8e58fc44bc25",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/adapters/research/adapter_model.safetensors",
+      "size_bytes": 264308896,
+      "sha256": "0d36e09fb947a6b077ee493f3589a36bf68dba0403f7eac91f684d070d399086",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/artifact_lock.json",
+      "size_bytes": 2259,
+      "sha256": "e404508a8570af525c49170e31a863d4639241ac05f24d60691ed1dcdf77279a",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/config/inference_config.json",
+      "size_bytes": 1140,
+      "sha256": "c5df126d54c050b16298a66629f1930496a402c6abd01fc4f6526beb692a1fa0",
+      "git_status": "ignored",
+      "physical_lines": 46,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/config/model_registry.json",
+      "size_bytes": 1451,
+      "sha256": "86520ae5fb3da577f204aa52bc7cfad22a1eeebbf762e278f0fb27624541ab76",
+      "git_status": "ignored",
+      "physical_lines": 53,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/corpus/vn_history_rag_chunks_enriched.jsonl",
+      "size_bytes": 299990935,
+      "sha256": "7192e64be17fdaab2ce91c04a60c00367e3ceb2475a936e69f11fe5c0df098cb",
+      "git_status": "ignored",
+      "physical_lines": 58603,
+      "jsonl_record_count_estimate": 58603,
+      "artifact_kind": "deployed_corpus",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/EXPORT_SUCCESS.txt",
+      "size_bytes": 4,
+      "sha256": "9f2a59a60e65fbcd5a3e1b7248adf92890ce3a32b19e43fb4751c2657196de13",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/manifest.json",
+      "size_bytes": 1760,
+      "sha256": "8d5cdba26768cc1477983b60fb51b6b29cff7705bdcb22905a71280c2fee72d0",
+      "git_status": "ignored",
+      "physical_lines": 64,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/data.csc.index.npy",
+      "size_bytes": 51276512,
+      "sha256": "e6d0e74834025964c6e1ba9d694e925c03cd33277b32ef12db358f5f5848128c",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/indices.csc.index.npy",
+      "size_bytes": 51276512,
+      "sha256": "de9582bc5e43064b14db26b71deedce2de4ca653fe23ef5ef8ec90beb6bb45d3",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/indptr.csc.index.npy",
+      "size_bytes": 999248,
+      "sha256": "dc696970327bb8a41ecbf548fc5ff5a2520c6f593f25e2ca032f1676db4508a3",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/params.index.json",
+      "size_bytes": 224,
+      "sha256": "cbe9d243a88548e0b0b65c93fe9172d0ebeb6ebb5eb43604b5fc96897a93e642",
+      "git_status": "ignored",
+      "physical_lines": 12,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/phase9_manifest.json",
+      "size_bytes": 156,
+      "sha256": "c83001bf20177e7f5e42685480caf9cf38a94360218cf2ce1d2cc01a3e784b3e",
+      "git_status": "ignored",
+      "physical_lines": 5,
+      "declared_index_count": 58603,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/bm25s_index/vocab.index.json",
+      "size_bytes": 1971725,
+      "sha256": "2ced6154bfc7eab4e079dce5c7c8c59330efe5bd29bbfd76e8ec3abc15e000d9",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/faiss/chunks.index",
+      "size_bytes": 180028461,
+      "sha256": "7fb50c73bf3a8f34cdf705933409254f0bbf68fcaccb3f560892e43049407f54",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_deployment/retrieval/faiss/manifest.json",
+      "size_bytes": 134,
+      "sha256": "192f1668bc68f55ba0740d6a6668da69e293a2137286a1548be07071e314fb20",
+      "git_status": "ignored",
+      "physical_lines": 6,
+      "declared_index_count": 58603,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "4b78c5dac2af7888aa7dd442df332744adc04e6ead424b67f6d53b187788fead",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/adapter_model.safetensors",
+      "size_bytes": 132187888,
+      "sha256": "39385ca7c82b57b5ff8c9a531b5359509ea185b15e5a0adb0724626c58ed7ff6",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/added_tokens.json",
+      "size_bytes": 707,
+      "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680",
+      "git_status": "ignored",
+      "physical_lines": 28,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/chat_template.jinja",
+      "size_bytes": 2630,
+      "sha256": "64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326",
+      "git_status": "ignored",
+      "physical_lines": 61,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/merges.txt",
+      "size_bytes": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "git_status": "ignored",
+      "physical_lines": 151388,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/README.md",
+      "size_bytes": 5208,
+      "sha256": "833350230a1599060ba1d87743ea747d06f1db5f36ee7827c6bd26182e65672a",
+      "git_status": "ignored",
+      "physical_lines": 207,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/special_tokens_map.json",
+      "size_bytes": 613,
+      "sha256": "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd",
+      "git_status": "ignored",
+      "physical_lines": 31,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/split_manifest.json",
+      "size_bytes": 5447,
+      "sha256": "d9cb5309bbd6ed71581685e8ff2898ed2c9c85ce6f76165b640870af40a3f8fc",
+      "git_status": "ignored",
+      "physical_lines": 218,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/tokenizer.json",
+      "size_bytes": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+      "git_status": "ignored",
+      "physical_lines": 757480,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/tokenizer_config.json",
+      "size_bytes": 5405,
+      "sha256": "4b5f2f80f84faefe8420e1616671adb1dd3d7e632038d34b1f0e3a1363a51059",
+      "git_status": "ignored",
+      "physical_lines": 239,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/training_args.bin",
+      "size_bytes": 5905,
+      "sha256": "e4d64116752386eec15a4260f0cb39382be20d80e702b428b81e2da18b00fa4f",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/training_log.jsonl",
+      "size_bytes": 8685,
+      "sha256": "9728e8e46aa9708e751be08dabc8e9fb4ebaac1320bd83a412b82eec3578a2b1",
+      "git_status": "ignored",
+      "physical_lines": 37,
+      "jsonl_record_count_estimate": 37,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/evidence/vocab.json",
+      "size_bytes": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "b5e7ebb2b06c68e6301d6ad50ff6b3eba29f7c1f53e85ac3d3c9adeeaa01fed6",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/adapter_model.safetensors",
+      "size_bytes": 264308896,
+      "sha256": "70d873e15c48f5802e26d0c32eab7c63ea7b83f713be3192092476a0dac746a3",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/added_tokens.json",
+      "size_bytes": 707,
+      "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680",
+      "git_status": "ignored",
+      "physical_lines": 28,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/chat_template.jinja",
+      "size_bytes": 2630,
+      "sha256": "64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326",
+      "git_status": "ignored",
+      "physical_lines": 61,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/merges.txt",
+      "size_bytes": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "git_status": "ignored",
+      "physical_lines": 151388,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/README.md",
+      "size_bytes": 5208,
+      "sha256": "833350230a1599060ba1d87743ea747d06f1db5f36ee7827c6bd26182e65672a",
+      "git_status": "ignored",
+      "physical_lines": 207,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/special_tokens_map.json",
+      "size_bytes": 613,
+      "sha256": "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd",
+      "git_status": "ignored",
+      "physical_lines": 31,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/tokenizer.json",
+      "size_bytes": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+      "git_status": "ignored",
+      "physical_lines": 757480,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/tokenizer_config.json",
+      "size_bytes": 5405,
+      "sha256": "4b5f2f80f84faefe8420e1616671adb1dd3d7e632038d34b1f0e3a1363a51059",
+      "git_status": "ignored",
+      "physical_lines": 239,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/training_args.bin",
+      "size_bytes": 5905,
+      "sha256": "fa3eb52543b33915893fa008c5262eb7bba4b2647dc107571f836e16e5857a8a",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/history/vocab.json",
+      "size_bytes": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/adapter_config.json",
+      "size_bytes": 1160,
+      "sha256": "4285e9d50d49cf787a1de06e89c486c8814eaa6f90017381ed9a8e58fc44bc25",
+      "git_status": "ignored",
+      "physical_lines": 50,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/adapter_model.safetensors",
+      "size_bytes": 264308896,
+      "sha256": "0d36e09fb947a6b077ee493f3589a36bf68dba0403f7eac91f684d070d399086",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/added_tokens.json",
+      "size_bytes": 707,
+      "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680",
+      "git_status": "ignored",
+      "physical_lines": 28,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/chat_template.jinja",
+      "size_bytes": 2630,
+      "sha256": "64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326",
+      "git_status": "ignored",
+      "physical_lines": 61,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/merges.txt",
+      "size_bytes": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "git_status": "ignored",
+      "physical_lines": 151388,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/README.md",
+      "size_bytes": 5208,
+      "sha256": "833350230a1599060ba1d87743ea747d06f1db5f36ee7827c6bd26182e65672a",
+      "git_status": "ignored",
+      "physical_lines": 207,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/special_tokens_map.json",
+      "size_bytes": 613,
+      "sha256": "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd",
+      "git_status": "ignored",
+      "physical_lines": 31,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/split_manifest.json",
+      "size_bytes": 2472,
+      "sha256": "310e7ecd7664142f04dade3e7bf04cf533384f99d318b39fdb9313ef4734f87a",
+      "git_status": "ignored",
+      "physical_lines": 105,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/tokenizer.json",
+      "size_bytes": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+      "git_status": "ignored",
+      "physical_lines": 757480,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/tokenizer_config.json",
+      "size_bytes": 5405,
+      "sha256": "4b5f2f80f84faefe8420e1616671adb1dd3d7e632038d34b1f0e3a1363a51059",
+      "git_status": "ignored",
+      "physical_lines": 239,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/training_args.bin",
+      "size_bytes": 5905,
+      "sha256": "a269f925eed9cf1607709d5db3ca73f5702e160d7cd53d703c80aeb02a273044",
+      "git_status": "ignored",
+      "artifact_kind": "model_artifact",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/training_log.jsonl",
+      "size_bytes": 37889,
+      "sha256": "0f71bfba758146cb9441ee1c0fbb404523aee36b7d16a11392153950eed6549b",
+      "git_status": "ignored",
+      "physical_lines": 153,
+      "jsonl_record_count_estimate": 153,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/adapters/research/vocab.json",
+      "size_bytes": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/config/inference_config.json",
+      "size_bytes": 811,
+      "sha256": "adba0c1d75b0f9f36f890fe29d1ed8c6d58800ad3479eb976dacd711393808de",
+      "git_status": "ignored",
+      "physical_lines": 34,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/config/model_registry.json",
+      "size_bytes": 1241,
+      "sha256": "cf5b5d5077952444e73593a9f644572240b737c1bb694cd664fc19ee9fb90631",
+      "git_status": "ignored",
+      "physical_lines": 46,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/corpus/vn_history_rag_chunks_enriched.jsonl",
+      "size_bytes": 299990935,
+      "sha256": "7192e64be17fdaab2ce91c04a60c00367e3ceb2475a936e69f11fe5c0df098cb",
+      "git_status": "ignored",
+      "physical_lines": 58603,
+      "jsonl_record_count_estimate": 58603,
+      "artifact_kind": "deployed_corpus",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/EXPORT_SUCCESS.txt",
+      "size_bytes": 4,
+      "sha256": "9f2a59a60e65fbcd5a3e1b7248adf92890ce3a32b19e43fb4751c2657196de13",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/manifest.json",
+      "size_bytes": 1444,
+      "sha256": "00e42faf724fc3ccbadb2bb76bc036f33ac64b4fb4514572965a526ebd14358d",
+      "git_status": "ignored",
+      "physical_lines": 55,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/data.csc.index.npy",
+      "size_bytes": 51276512,
+      "sha256": "e6d0e74834025964c6e1ba9d694e925c03cd33277b32ef12db358f5f5848128c",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/indices.csc.index.npy",
+      "size_bytes": 51276512,
+      "sha256": "de9582bc5e43064b14db26b71deedce2de4ca653fe23ef5ef8ec90beb6bb45d3",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/indptr.csc.index.npy",
+      "size_bytes": 999248,
+      "sha256": "dc696970327bb8a41ecbf548fc5ff5a2520c6f593f25e2ca032f1676db4508a3",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/params.index.json",
+      "size_bytes": 224,
+      "sha256": "cbe9d243a88548e0b0b65c93fe9172d0ebeb6ebb5eb43604b5fc96897a93e642",
+      "git_status": "ignored",
+      "physical_lines": 12,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/phase9_manifest.json",
+      "size_bytes": 156,
+      "sha256": "c83001bf20177e7f5e42685480caf9cf38a94360218cf2ce1d2cc01a3e784b3e",
+      "git_status": "ignored",
+      "physical_lines": 5,
+      "declared_index_count": 58603,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/bm25s_index/vocab.index.json",
+      "size_bytes": 1971725,
+      "sha256": "2ced6154bfc7eab4e079dce5c7c8c59330efe5bd29bbfd76e8ec3abc15e000d9",
+      "git_status": "ignored",
+      "physical_lines": 1,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/faiss/chunks.index",
+      "size_bytes": 180028461,
+      "sha256": "7fb50c73bf3a8f34cdf705933409254f0bbf68fcaccb3f560892e43049407f54",
+      "git_status": "ignored",
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "artifacts/vn_history_modal/retrieval/faiss/manifest.json",
+      "size_bytes": 134,
+      "sha256": "192f1668bc68f55ba0740d6a6668da69e293a2137286a1548be07071e314fb20",
+      "git_status": "ignored",
+      "physical_lines": 6,
+      "declared_index_count": 58603,
+      "artifact_kind": "retrieval_index",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "data/chat.sqlite3",
+      "size_bytes": 57344,
+      "sha256": "727c3678c8afc623f118e34c89ca4afc90c8b1cc1aa7fdf24854bd2f989ee910",
+      "git_status": "ignored",
+      "artifact_kind": "mutable_runtime_data",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "Dataset/merged_jsonl/all_messages.jsonl",
+      "size_bytes": 9749496,
+      "sha256": "849843ab696a407b1b806a9d74bae9c7bb9d1ee8ba189ffe4bc91c62e10d7778",
+      "git_status": "tracked",
+      "physical_lines": 1000,
+      "jsonl_record_count_estimate": 1000,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/README.md",
+      "size_bytes": 4597,
+      "sha256": "4e2bf3963492828405c394fe3351aaa914894c69a155f4483cbaf6ce9a6054a9",
+      "git_status": "tracked",
+      "physical_lines": 125,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack1/bach_dang_ngo_quyen_rag_sft_messages_20.jsonl",
+      "size_bytes": 160605,
+      "sha256": "b2e824fb8c86ddb5c5c8ba61fbad87ab8cb929e5bec353e3c02a2f6cfb5c68f9",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack1/bach_dang_ngo_quyen_rag_sft_preview_20.csv",
+      "size_bytes": 9392,
+      "sha256": "f2b688ae423eb5b3c74d04b593194b647537d4abc499c422d93edca05dc53ee8",
+      "git_status": "ignored",
+      "physical_lines": 81,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack1/bach_dang_ngo_quyen_rag_sft_stats.json",
+      "size_bytes": 627,
+      "sha256": "e76d7a885e54d777b79aa75f60654252cb829c65b48e21e3052fb123f21e5b79",
+      "git_status": "ignored",
+      "physical_lines": 22,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack1/bach_dang_ngo_quyen_rag_sft_structured_20.jsonl",
+      "size_bytes": 162353,
+      "sha256": "a275848bb8392957972277eae14169f1885d70871901c6d65881505829d1920d",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack10/tay_son_quang_trung_rag_sft_20_full_with_context.csv",
+      "size_bytes": 307414,
+      "sha256": "5b8d4b02108ba23349a64e088d288cff154d84b53bad1dd0c83d23652c9c8e38",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack10/tay_son_quang_trung_rag_sft_20_messages.jsonl",
+      "size_bytes": 158129,
+      "sha256": "293e1d97c73c499100930aefa9a30868e9665cbcfb91b6e9606cd0d21b39cd14",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack10/tay_son_quang_trung_rag_sft_20_stats.json",
+      "size_bytes": 1223,
+      "sha256": "54f5d64324bba01a9e4aa13aa224673ce5ffa7011e6181b7216b3a623e638157",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack10/tay_son_quang_trung_rag_sft_20_structured.jsonl",
+      "size_bytes": 159624,
+      "sha256": "fd02d271874cfd73b61aa2a8f6cc273a2b239728d0a3d056582f1962d115da18",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack11/chien_dich_viet_bac_bien_gioi_1950_rag_sft_40_full_with_context.csv",
+      "size_bytes": 801461,
+      "sha256": "0f4352760856a5b3c31a82188438b26c80881d9157568ab66fa1ab39cce47f49",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack11/chien_dich_viet_bac_bien_gioi_1950_rag_sft_40_messages.jsonl",
+      "size_bytes": 409144,
+      "sha256": "b8e0895bbafc68fee3631889c91587021f50f611e7b2c786e5c18847c65d447c",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack11/chien_dich_viet_bac_bien_gioi_1950_rag_sft_40_stats.json",
+      "size_bytes": 1098,
+      "sha256": "dfb1bba342876c2385aff40aa0426557ee664791f3c8227c48cb69433e377527",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack11/chien_dich_viet_bac_bien_gioi_1950_rag_sft_40_structured.jsonl",
+      "size_bytes": 413236,
+      "sha256": "55e7c4419bdb4abbe0556fa3bf41cc3ca17bf57c4831b5863f708e37e8e30aab",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack12/dong_du_duy_tan_phan_boi_chau_rag_sft_40_full_with_context.csv",
+      "size_bytes": 797319,
+      "sha256": "9fe0a1e9f3bb72966c632f86dc3a1110599a8385617a155699731630826400a0",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack12/dong_du_duy_tan_phan_boi_chau_rag_sft_40_messages.jsonl",
+      "size_bytes": 406967,
+      "sha256": "5a3165f72d1d477e1b7bce29b8367887e24b17abf9b78dc37b61f0716fea4248",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack12/dong_du_duy_tan_phan_boi_chau_rag_sft_40_stats.json",
+      "size_bytes": 1091,
+      "sha256": "7984040516f259f3b0116a3f5d6a73e600805bf0d1e10cf95b8681572cfd31e5",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack12/dong_du_duy_tan_phan_boi_chau_rag_sft_40_structured.jsonl",
+      "size_bytes": 410441,
+      "sha256": "b5c06f924dcbdd5c2338e5b1737ca5813686782e4b63174ad49a4ad91e0fb7a5",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack13/duong_truong_son_mau_than_1968_rag_sft_40_full_with_context.csv",
+      "size_bytes": 841427,
+      "sha256": "233b4270cf08bd69074c33b918eb11c53f148569399b7fa741b5f9da78263c66",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack13/duong_truong_son_mau_than_1968_rag_sft_40_messages.jsonl",
+      "size_bytes": 429218,
+      "sha256": "59f2584bc69f5ad21317abd37ff23526c9e35275ac5c1a74d98005b4d0756050",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack13/duong_truong_son_mau_than_1968_rag_sft_40_stats.json",
+      "size_bytes": 1176,
+      "sha256": "230e6b2917141097c80187324f0fceb6c43303f80759dd9ab863a68527520b38",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack13/duong_truong_son_mau_than_1968_rag_sft_40_structured.jsonl",
+      "size_bytes": 433060,
+      "sha256": "601f095d13f887049e93eb827e7b8811b1a3ba3477f5d8d272b88661b59e76c4",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack14/hai_ba_trung_ba_trieu_rag_sft_40_full_with_context.csv",
+      "size_bytes": 778801,
+      "sha256": "d6cd835859b5a7b87cc474d75ff2756da215a2bc7d3cdbb9a48151ae184573fd",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack14/hai_ba_trung_ba_trieu_rag_sft_40_messages.jsonl",
+      "size_bytes": 397389,
+      "sha256": "3da05c5e17828f437a28a2f79c7f0aee59840848d0ae0a9446ffdacc0700fce7",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack14/hai_ba_trung_ba_trieu_rag_sft_40_stats.json",
+      "size_bytes": 1095,
+      "sha256": "cc8ac52f274a03c5164c2729ab074e4018764ba719e2b77141ba6e50fc0abaab",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack14/hai_ba_trung_ba_trieu_rag_sft_40_structured.jsonl",
+      "size_bytes": 401377,
+      "sha256": "54c12218436622b478eedd40ebaee01b9c7eec6a276fd9515bbe17c88e18634b",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack15/hiep_dinh_geneve_1954_rag_sft_40_full_with_context.csv",
+      "size_bytes": 842377,
+      "sha256": "fc2164f04ac9c90d7aa4ec3f41db2f675d8760f1dfad1ae5e15c2ea06dd321ab",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack15/hiep_dinh_geneve_1954_rag_sft_40_messages.jsonl",
+      "size_bytes": 429805,
+      "sha256": "6d2ff6aca5bdab3c5d5493a2272281f385e7f754af1ac02f4ad91794a6258b92",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack15/hiep_dinh_geneve_1954_rag_sft_40_stats.json",
+      "size_bytes": 1158,
+      "sha256": "07f8c920806e147581807854acfcb8f2f0d4b6badb1c4e98f666863a281310a8",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack15/hiep_dinh_geneve_1954_rag_sft_40_structured.jsonl",
+      "size_bytes": 434405,
+      "sha256": "ec01f4439f46e4187f69cf6d65a33302432c9840acd9b7a68bb2a8b296870556",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack16/khoi_nghia_yen_the_hoang_hoa_tham_rag_sft_40_full_with_context.csv",
+      "size_bytes": 737487,
+      "sha256": "cc790ae61c6645a80e7f2291e6921a4a7ade53cf93e026fdb5cd10606bc888d5",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack16/khoi_nghia_yen_the_hoang_hoa_tham_rag_sft_40_messages.jsonl",
+      "size_bytes": 377418,
+      "sha256": "c4e5a1168de5550e0a8d38b9209726db1cef71edec8249393cd3d7f7aaec7bf6",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack16/khoi_nghia_yen_the_hoang_hoa_tham_rag_sft_40_stats.json",
+      "size_bytes": 1270,
+      "sha256": "0b036f86fc4415edf53a3d878c03bcb210a1c29aace6523c2add2ceb9b3ed2c1",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack16/khoi_nghia_yen_the_hoang_hoa_tham_rag_sft_40_structured.jsonl",
+      "size_bytes": 381419,
+      "sha256": "4e003f7ad4b4b2d3aabc09af93d2e46c9ea0d1cffad157a7053ffa6c19518a44",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack17/khuc_duong_thoi_tu_chu_rag_sft_40_full_with_context.csv",
+      "size_bytes": 791755,
+      "sha256": "4038f2024203f7dfeeb9d3bb31138b2c3874b1ef70abdda59fd17a03ead4eb25",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack17/khuc_duong_thoi_tu_chu_rag_sft_40_messages.jsonl",
+      "size_bytes": 404437,
+      "sha256": "a0d81da14c7ea1d2a5bddb6d907587b12978334b840cc563aad0fdd3e675825f",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack17/khuc_duong_thoi_tu_chu_rag_sft_40_stats.json",
+      "size_bytes": 1127,
+      "sha256": "33ecf390ba756076d2495dfce064a5471e8c9eeb671a5c5a57fc0484e9fc2cce",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack17/khuc_duong_thoi_tu_chu_rag_sft_40_structured.jsonl",
+      "size_bytes": 408486,
+      "sha256": "9cbd0f999b643d0887309c5ef7e8a98ccee9adb16ee7ecbf795a1b3ea096b90a",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack18/le_so_hong_duc_le_thanh_tong_rag_sft_40_full_with_context.csv",
+      "size_bytes": 817371,
+      "sha256": "a412b23ee81d4e146ccc4bb9895aaae5fa4c5357f89c63b900534590a24af0ae",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack18/le_so_hong_duc_le_thanh_tong_rag_sft_40_messages.jsonl",
+      "size_bytes": 418296,
+      "sha256": "01ec1ea344dfeacc5818bdbffc28a8651db1da434233a80e720d555fdc1fd6ca",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack18/le_so_hong_duc_le_thanh_tong_rag_sft_40_stats.json",
+      "size_bytes": 1226,
+      "sha256": "44293c4889c02758062e976b209c292f7186b74fad1711bcef2b02390c4e0bcb",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack18/le_so_hong_duc_le_thanh_tong_rag_sft_40_structured.jsonl",
+      "size_bytes": 422103,
+      "sha256": "3a7b1b18da6817f2a7b38c5ba82cb831d05358a3a716fa1a0a3f823ac2af4c01",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack19/loan_12_su_quan_dinh_bo_linh_rag_sft_40_full_with_context.csv",
+      "size_bytes": 793620,
+      "sha256": "f926b6c2c4a4350a6bd31fa9ad8d08dbd537fd29a4f066bbc23462409846eb61",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack19/loan_12_su_quan_dinh_bo_linh_rag_sft_40_messages.jsonl",
+      "size_bytes": 403683,
+      "sha256": "9287bffe0370dbacbff827e17671ea81ae106afc50616aca90a05648787519b7",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack19/loan_12_su_quan_dinh_bo_linh_rag_sft_40_stats.json",
+      "size_bytes": 1206,
+      "sha256": "cea453c3caf4d6aeebe7173bb4c107252c6fb966aa0c00851a6e19f6f98ce00d",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack19/loan_12_su_quan_dinh_bo_linh_rag_sft_40_structured.jsonl",
+      "size_bytes": 408585,
+      "sha256": "2cf46f3faa89e8f1b807b2064d43ebe10d71fc7115ea56be36985d120467223e",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack2/cach_mang_thang_tam_rag_sft_20_full_with_context.csv",
+      "size_bytes": 314670,
+      "sha256": "18e5023ef95ca0b5ca3de8101c26be59d023f9d3fe6eb5be227bfb3dc1ae3f41",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack2/cach_mang_thang_tam_rag_sft_20_messages.jsonl",
+      "size_bytes": 161017,
+      "sha256": "efe59328cd55c7770cdc4475ea7e4e875ae67419b7e3ff6ddaef0ef797dd5d92",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack2/cach_mang_thang_tam_rag_sft_20_stats.json",
+      "size_bytes": 851,
+      "sha256": "f7794f2165d6068e3ed1a10c5fc7f93594d16eb6d08203e2bfc030e7c9d3e1a3",
+      "git_status": "ignored",
+      "physical_lines": 29,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack2/cach_mang_thang_tam_rag_sft_20_structured.jsonl",
+      "size_bytes": 162761,
+      "sha256": "761983b0d0bb3dfc90570eba424642079ed4b5030554d7e6658aac8d1dede0f2",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack20/mac_le_trung_hung_trinh_nguyen_rag_sft_40_full_with_context.csv",
+      "size_bytes": 824478,
+      "sha256": "8fbba8bdfc121e98e0d995b0ac6c77d0b840ac4fcde6efdb2cd8c70fad731095",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack20/mac_le_trung_hung_trinh_nguyen_rag_sft_40_messages.jsonl",
+      "size_bytes": 421740,
+      "sha256": "89783422b01409ebab997ddd655fc3594c41e04c6e0243557c1b2b6c616aad76",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack20/mac_le_trung_hung_trinh_nguyen_rag_sft_40_stats.json",
+      "size_bytes": 1278,
+      "sha256": "f07570db514ea37acc67a0285fa17710ce8d3d3e25d29019fda1f054b97aaa20",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack20/mac_le_trung_hung_trinh_nguyen_rag_sft_40_structured.jsonl",
+      "size_bytes": 425597,
+      "sha256": "6ac29482b0b4aee593cbd43fe93cc2fecfbaa07ae2bb8667438b577035266247",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack21/mai_hac_de_phung_hung_rag_sft_40_full_with_context.csv",
+      "size_bytes": 800793,
+      "sha256": "52a8e5c44d4cccc00b9978e3f51f063d4712a0463952cb2e8f1b1428c05f8da1",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack21/mai_hac_de_phung_hung_rag_sft_40_messages.jsonl",
+      "size_bytes": 409538,
+      "sha256": "cbf1f621ef30e1294ce3ffc0aba21368f45d178d8f90012e99339b709154d02d",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack21/mai_hac_de_phung_hung_rag_sft_40_stats.json",
+      "size_bytes": 1186,
+      "sha256": "68c51f454ffc966cf61b8cc919cf7e751c8eabbbe83cd20254e907c4db26b2c7",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack21/mai_hac_de_phung_hung_rag_sft_40_structured.jsonl",
+      "size_bytes": 413633,
+      "sha256": "296793b47891a27b201fadd1f5fdd91fddd86e6b2d8cd9bb6b35f5b3e2def2d0",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack22/minh_thuoc_khoi_nghia_hau_tran_rag_sft_40_full_with_context.csv",
+      "size_bytes": 814645,
+      "sha256": "eb33bd7b8c34c35d31155884555bfaf1d3a54a2491f3e10c9d4527ea92440c85",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack22/minh_thuoc_khoi_nghia_hau_tran_rag_sft_40_messages.jsonl",
+      "size_bytes": 415987,
+      "sha256": "2b2d01b98e2f982e1c82d1cd745b1fda832f952064b76a2983c4ec86348880f4",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack22/minh_thuoc_khoi_nghia_hau_tran_rag_sft_40_stats.json",
+      "size_bytes": 1298,
+      "sha256": "6d795ddc2d130e5dda5cc1077edccd130a8b9e79dc505ef5bbf6c93dcb97d4aa",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack22/minh_thuoc_khoi_nghia_hau_tran_rag_sft_40_structured.jsonl",
+      "size_bytes": 419461,
+      "sha256": "c181a9280ecad56633854d5eda741009ff757bfb62fa5ebd25a029b9d6a78432",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack23/nam_tien_chua_nguyen_dang_trong_rag_sft_40_full_with_context.csv",
+      "size_bytes": 823610,
+      "sha256": "560f1af5c708522aed3bd022e0f76e208de564f97892b630b2be9eb7f1fb557c",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack23/nam_tien_chua_nguyen_dang_trong_rag_sft_40_messages.jsonl",
+      "size_bytes": 421606,
+      "sha256": "b98dbd8b2bc9b134fa297fc674e6507e2973d400d2b2fdaee938d787aade7a17",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack23/nam_tien_chua_nguyen_dang_trong_rag_sft_40_stats.json",
+      "size_bytes": 1248,
+      "sha256": "04780811842709dc1010b13d89bea8459a816b2a22dec023a97d35a4a6bc5dae",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack23/nam_tien_chua_nguyen_dang_trong_rag_sft_40_structured.jsonl",
+      "size_bytes": 424906,
+      "sha256": "96a9ca05fdaf34418c7e24761e1a25f364ff7eab7da706c5a56014ed22ec5822",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack24/nha_ho_ho_quy_ly_rag_sft_40_full_with_context.csv",
+      "size_bytes": 826686,
+      "sha256": "a2d25b3e57ea5346f52ab41f998576666bfc0d812e3b6a36e1f11ecb809787d9",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack24/nha_ho_ho_quy_ly_rag_sft_40_messages.jsonl",
+      "size_bytes": 421203,
+      "sha256": "bd515af4f8f753f8c9353f7c4a521e5737b42644fda8420f4b565b68e29c4364",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack24/nha_ho_ho_quy_ly_rag_sft_40_stats.json",
+      "size_bytes": 1203,
+      "sha256": "67fd1f7c795ab16f97a1a95e296b63d914c6a7c1e410760487202a828e98edac",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack24/nha_ho_ho_quy_ly_rag_sft_40_structured.jsonl",
+      "size_bytes": 425812,
+      "sha256": "7f200f90a801ef71ffedf5e0204a5f7e8eda230f540c748a56a9ded39012e6ca",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack25/nha_nguyen_gia_long_minh_mang_rag_sft_40_full_with_context.csv",
+      "size_bytes": 816768,
+      "sha256": "917beb5f2b4478094b2f9c914be37810dbde0df105740a5245a24015fd2c7bff",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack25/nha_nguyen_gia_long_minh_mang_rag_sft_40_messages.jsonl",
+      "size_bytes": 418610,
+      "sha256": "65ca6c432ad620b4a785d28b11b581e0ec39f2a68e2f11c8ec6b0c747a21feb9",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack25/nha_nguyen_gia_long_minh_mang_rag_sft_40_stats.json",
+      "size_bytes": 1498,
+      "sha256": "1c5dc6610b3ef7a84d232b4aa23a9450f2da2fcd576ba88190e834f33b9c450a",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack25/nha_nguyen_gia_long_minh_mang_rag_sft_40_structured.jsonl",
+      "size_bytes": 421845,
+      "sha256": "75656ff9875006e8c9cb2d7e1377ac78a8c48346822017ef5ee003390ffadafb",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack26/phap_xam_luoc_da_nang_gia_dinh_rag_sft_40_full_with_context.csv",
+      "size_bytes": 829186,
+      "sha256": "0717fdf8f84ddb4ad3209de96fbd8db016e1189ae9ca80144eb1e098f89f896e",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack26/phap_xam_luoc_da_nang_gia_dinh_rag_sft_40_messages.jsonl",
+      "size_bytes": 423524,
+      "sha256": "74ce1cf45a5c835c46e2636357d5fccef48092ad5a7d0c022f2c418b2bd7f686",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack26/phap_xam_luoc_da_nang_gia_dinh_rag_sft_40_stats.json",
+      "size_bytes": 1486,
+      "sha256": "afb09332aa383af949d5dd8cd73a17fd237200671b39dae5293cc18131be05fa",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack26/phap_xam_luoc_da_nang_gia_dinh_rag_sft_40_structured.jsonl",
+      "size_bytes": 427349,
+      "sha256": "3376262eb527284d634487e6c536b842db299eeeceeed03af1023269cdacbbf7",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack27/toan_quoc_khang_chien_1946_rag_sft_40_full_with_context.csv",
+      "size_bytes": 843663,
+      "sha256": "ac0ffb9c0da749ab5ff7bc910d9d2a2ab38454db6295dc8cb0eba5f715ea7792",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack27/toan_quoc_khang_chien_1946_rag_sft_40_messages.jsonl",
+      "size_bytes": 430763,
+      "sha256": "bcc4fbaf220c1dc102bba01e200fb752f526db9410d7d0bfb3d5785e36a4a8ac",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack27/toan_quoc_khang_chien_1946_rag_sft_40_stats.json",
+      "size_bytes": 1494,
+      "sha256": "a80aa69f6afe83bf4697b4ef57df57af85ec4af2c8983421e93aa5f697461182",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack27/toan_quoc_khang_chien_1946_rag_sft_40_structured.jsonl",
+      "size_bytes": 435104,
+      "sha256": "9e5df34a653c5a7ec383b13fabfdbbefa2558de948c2dd30aee2f430af854920",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack28/van_lang_au_lac_an_duong_vuong_rag_sft_40_full_with_context.csv",
+      "size_bytes": 754806,
+      "sha256": "b9705db59e3e3d194ef31c048ff94f5e4bc8cde122e31496df88caaad227dbc7",
+      "git_status": "ignored",
+      "physical_lines": 501,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack28/van_lang_au_lac_an_duong_vuong_rag_sft_40_messages.jsonl",
+      "size_bytes": 385644,
+      "sha256": "8abe0a04a023b00f33e6495ada73f3d7e3b5fd7d45c540d408aa5320965b08c0",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack28/van_lang_au_lac_an_duong_vuong_rag_sft_40_stats.json",
+      "size_bytes": 1385,
+      "sha256": "8785a5e9aa01f7225af07a3153183f97ba22f5f4bfb339b627c9d714aa92b40a",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack28/van_lang_au_lac_an_duong_vuong_rag_sft_40_structured.jsonl",
+      "size_bytes": 389162,
+      "sha256": "9d478a7dbee00ceba4197dce5e4b498f0a6d12baa5d8b2b5d1bcda52a7ce995d",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack29/xo_viet_nghe_tinh_1930_rag_sft_40_full_with_context.csv",
+      "size_bytes": 820597,
+      "sha256": "cf8f6ed2e51e7ce0b460a543201aacaf7238b48ce9d8e1ede44e67a9a31f5472",
+      "git_status": "ignored",
+      "physical_lines": 506,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack29/xo_viet_nghe_tinh_1930_rag_sft_40_messages.jsonl",
+      "size_bytes": 418501,
+      "sha256": "73c93e50a11f608fe27829b238d9c423e1fbefd31c1082ea88e67ece01b7f908",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack29/xo_viet_nghe_tinh_1930_rag_sft_40_stats.json",
+      "size_bytes": 1380,
+      "sha256": "16aa6cf5cacd4620bb14e387aa3f86855a618be0ee1d1914c3ca7b8b3081c345",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack29/xo_viet_nghe_tinh_1930_rag_sft_40_structured.jsonl",
+      "size_bytes": 422781,
+      "sha256": "d88f43ac22f45329208f074c30a543442b36bbddc77ba1119cf7c1d82658c5cf",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack3/can_vuong_phap_thuoc_rag_sft_20_full_with_context.csv",
+      "size_bytes": 313538,
+      "sha256": "b7f23880526dc07fdbca4f698e10f9fe68cd6b9a291a026d965a0b62697b9c22",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack3/can_vuong_phap_thuoc_rag_sft_20_messages.jsonl",
+      "size_bytes": 160730,
+      "sha256": "a732c02662b12865a9c7977ee15a553e3a7400ef4011f8e913093f102729e87d",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack3/can_vuong_phap_thuoc_rag_sft_20_stats.json",
+      "size_bytes": 857,
+      "sha256": "2bbb147c45a14a4c8779847900aa867275c1285aaebceb310e82d0e47139df60",
+      "git_status": "ignored",
+      "physical_lines": 29,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack3/can_vuong_phap_thuoc_rag_sft_20_structured.jsonl",
+      "size_bytes": 162460,
+      "sha256": "7a44525db41a47fae5e8d2630e7bc44b588deaea22da9af9c7e5967ff360f7ff",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack30/top_score_pack_001_002_rag_sft_40_full_with_context.csv",
+      "size_bytes": 590963,
+      "sha256": "d80a3530be31f6e9479c191fb298b9a356fceaf227b89bcda357dd7674e7b2e2",
+      "git_status": "ignored",
+      "physical_lines": 378,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack30/top_score_pack_001_002_rag_sft_40_messages.jsonl",
+      "size_bytes": 302132,
+      "sha256": "d2ac803c9b8ea7f937a2628a60d310807e303a0a3b4086165f9b18ecbbf7e0da",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack30/top_score_pack_001_002_rag_sft_40_stats.json",
+      "size_bytes": 5290,
+      "sha256": "aa69a717ef05e1bbdfae47709c23d68fd40f5d2bc4324a1c3161d77fd7550bde",
+      "git_status": "ignored",
+      "physical_lines": 88,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack30/top_score_pack_001_002_rag_sft_40_structured.jsonl",
+      "size_bytes": 306330,
+      "sha256": "5cad5e57f6daab2e2c2a5afa80c444c2431f41d68ba26e7aee074fa82be68efb",
+      "git_status": "ignored",
+      "physical_lines": 40,
+      "jsonl_record_count_estimate": 40,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack4/chong_my_1975_rag_sft_20_full_with_context.csv",
+      "size_bytes": 322378,
+      "sha256": "585047e6d97403de6ab8118fafa20835dd5b493f7190ab9bd8775304c8e0ef18",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack4/chong_my_1975_rag_sft_20_messages.jsonl",
+      "size_bytes": 164694,
+      "sha256": "85e6c5faedafa16bcff5733983a8d8228f99cba38174907bec22fcfde381c865",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack4/chong_my_1975_rag_sft_20_stats.json",
+      "size_bytes": 815,
+      "sha256": "cd4054e51b8d4aa0d39daad56ef89bd096cf9d67a69534417037a7741419cc86",
+      "git_status": "ignored",
+      "physical_lines": 29,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack4/chong_my_1975_rag_sft_20_structured.jsonl",
+      "size_bytes": 166754,
+      "sha256": "ec5c2475841d5ced93fa56fd37da947324a595b58cc61aec23161c96c4911cb6",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack5/dien_bien_phu_rag_sft_20_full_with_context.csv",
+      "size_bytes": 312942,
+      "sha256": "6e0de74a1b4f4b466b31881042796ad123883e902fadf6c455b6824e7d88c97b",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack5/dien_bien_phu_rag_sft_20_messages.jsonl",
+      "size_bytes": 160437,
+      "sha256": "727e0e783c56b19eee8a7be73d21358f577708bf79e740835c51bd888339cb14",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack5/dien_bien_phu_rag_sft_20_stats.json",
+      "size_bytes": 1059,
+      "sha256": "29c32198658d9f06259618850a15a78456680133a6a28ed569b623e388975120",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack5/dien_bien_phu_rag_sft_20_structured.jsonl",
+      "size_bytes": 162041,
+      "sha256": "12d4067158a355306cac2131b0501040f1c6f566df5bff6f83802cde83791027",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack6/lam_son_le_loi_rag_sft_20_full_with_context.csv",
+      "size_bytes": 310394,
+      "sha256": "70977565f8ee751c157627aae247fdc55b428ea92c705a5c1eae16154ae894c5",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack6/lam_son_le_loi_rag_sft_20_messages.jsonl",
+      "size_bytes": 159195,
+      "sha256": "35e841d4ad683f7a32ff390af321c770191eb86522abaf7372df2986ad7fb842",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack6/lam_son_le_loi_rag_sft_20_stats.json",
+      "size_bytes": 1028,
+      "sha256": "976efa741b082a2ab49ee7e2148eda8b692b14d9a3f1a5a0211d16d214df45d8",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack6/lam_son_le_loi_rag_sft_20_structured.jsonl",
+      "size_bytes": 160788,
+      "sha256": "62bbba233bd9839ecb6612d2b282119e824bdf561342386ee2839e89a804c0c1",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack7/nha_dinh_tien_le_rag_sft_20_full_with_context.csv",
+      "size_bytes": 307086,
+      "sha256": "b0cac13cd999487c7df092f6e47a81ce49a9db357a3ec527cbd9fdf4480a7ff5",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack7/nha_dinh_tien_le_rag_sft_20_messages.jsonl",
+      "size_bytes": 157386,
+      "sha256": "495a84623181a65af90c4e69ecd5d4c305b74e8183617896945fb2ee40f64d5d",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack7/nha_dinh_tien_le_rag_sft_20_stats.json",
+      "size_bytes": 1022,
+      "sha256": "8734aa550254c28dc1c684d0f97456f5b7573cce8764cccc40bbee67c2797921",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack7/nha_dinh_tien_le_rag_sft_20_structured.jsonl",
+      "size_bytes": 159151,
+      "sha256": "4fc0f19cddbb6ac776f60e42dd68212bcb5ce9f0a30af26e9c631bca879e7b2a",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack8/nha_ly_rag_sft_20_full_with_context.csv",
+      "size_bytes": 317469,
+      "sha256": "b21ce8c3814db3ab01327a6d19dd0969adf835f404632fad0b1df29b809f66d5",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack8/nha_ly_rag_sft_20_messages.jsonl",
+      "size_bytes": 162891,
+      "sha256": "0957320fa18092b96e0260f1a7c58d907ee6e11f18b67ad35a8491c89aad1dc9",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack8/nha_ly_rag_sft_20_stats.json",
+      "size_bytes": 944,
+      "sha256": "db1cb600befcf3c668a4b08f66611acaa5df559d2ab43ec0e6a16922626db124",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack8/nha_ly_rag_sft_20_structured.jsonl",
+      "size_bytes": 164401,
+      "sha256": "b371fb4d655cdf291f92618eca7e55cb268348b4436a621369fd2c2ae3afdab5",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack9/nha_tran_mong_nguyen_rag_sft_20_full_with_context.csv",
+      "size_bytes": 309929,
+      "sha256": "4b8240939a9107dd56cfade5138ce81ee7262f333b5f6b7788464384d067cfda",
+      "git_status": "ignored",
+      "physical_lines": 251,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack9/nha_tran_mong_nguyen_rag_sft_20_messages.jsonl",
+      "size_bytes": 158807,
+      "sha256": "31d2057bf58d35ccf70e9dddd9d3d2dee8e8b82b21f182ad86ae8d2ceb1da83c",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack9/nha_tran_mong_nguyen_rag_sft_20_stats.json",
+      "size_bytes": 1035,
+      "sha256": "081c8289090d0fd39837cc7fb22a17b5253afa747c10ff3a43cb774e52af5783",
+      "git_status": "ignored",
+      "physical_lines": 30,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "Dataset/Samples/Pack9/nha_tran_mong_nguyen_rag_sft_20_structured.jsonl",
+      "size_bytes": 160451,
+      "sha256": "672e5019de9f7aa1fa57c93a2648f1618feda4a21d2ec9b6f3c3b4623d1ebf80",
+      "git_status": "ignored",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "datasets/evidence_agent/train.jsonl",
+      "size_bytes": 38877079,
+      "sha256": "e9380af0f31f4cbd579f752842910b5eab593e8895bba8c914a695c07a8305d8",
+      "git_status": "tracked",
+      "physical_lines": 1013,
+      "jsonl_record_count_estimate": 1013,
+      "artifact_kind": "derived_dataset",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "datasets/evidence_agent/train_v2.jsonl",
+      "size_bytes": 35992762,
+      "sha256": "cb2a767bd16c236dae8954292c96420e718953844bb04ad10628374431960ace",
+      "git_status": "tracked",
+      "physical_lines": 994,
+      "jsonl_record_count_estimate": 994,
+      "artifact_kind": "derived_dataset",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "datasets/history_answerer/train.jsonl",
+      "size_bytes": 9797493,
+      "sha256": "d9423a5651d4946ce54423eff3e172008c01e747435a2955b3e2e9eb67bbf2b9",
+      "git_status": "tracked",
+      "physical_lines": 994,
+      "jsonl_record_count_estimate": 994,
+      "artifact_kind": "derived_dataset",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "datasets/research_agent/history_trajectories.jsonl",
+      "size_bytes": 19592788,
+      "sha256": "a1151edaa41b6783ac23ae6112e055461a23ee9dc277244bec96f87781082af5",
+      "git_status": "tracked",
+      "physical_lines": 2974,
+      "jsonl_record_count_estimate": 2974,
+      "artifact_kind": "derived_dataset",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "evaluation/datasets/fixtures/questions.jsonl",
+      "size_bytes": 517,
+      "sha256": "e98ef5962eebcbb5607eae6e75fea2ff787014c2392c7e99078473465a30dd45",
+      "git_status": "tracked",
+      "physical_lines": 2,
+      "jsonl_record_count_estimate": 2,
+      "artifact_kind": "evaluation_fixture",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "evaluation/datasets/question.schema.json",
+      "size_bytes": 2575,
+      "sha256": "a3b8badbd1a25b9082f3fcf3c81e6a2ef77ca03390aeb65d2ad91e27fcc9015f",
+      "git_status": "tracked",
+      "physical_lines": 138,
+      "artifact_kind": "evaluation_fixture",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "evaluation/datasets/README.md",
+      "size_bytes": 754,
+      "sha256": "ba961e68d6c91e22cae30f22cb6926f4d05fc4d63e660bc61cfedf01f1837c54",
+      "git_status": "tracked",
+      "physical_lines": 5,
+      "artifact_kind": "evaluation_fixture",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "outputs/history-answerer-full/preflight_manifest.json",
+      "size_bytes": 2639,
+      "sha256": "e729904c038834daf274a6749676840d6eb0a6c8d40b0e954e6f669bf8dce509",
+      "git_status": "ignored",
+      "physical_lines": 120,
+      "artifact_kind": "mutable_output",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "outputs/live_compare_smoke_diag.json",
+      "size_bytes": 48701,
+      "sha256": "832f8a0fb0f2f4ba3154bc7f8b80b8bcebfd66946e1aacd8a98b3dfec52d7319",
+      "git_status": "ignored",
+      "physical_lines": 768,
+      "artifact_kind": "mutable_output",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "outputs/live_compare_smoke_final.json",
+      "size_bytes": 414,
+      "sha256": "dd2c16f1630c614fff7b9dddd8904c7e9c137fa04bf8e4e3d5b415e347a6d923",
+      "git_status": "ignored",
+      "physical_lines": 15,
+      "artifact_kind": "mutable_output",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "outputs/live_ood_smoke.json",
+      "size_bytes": 1319,
+      "sha256": "ab13a3b9c93924d8cfb0fff44b19f3439cc9ab9f0cc9886f89e3e7879e8b17c4",
+      "git_status": "ignored",
+      "physical_lines": 33,
+      "artifact_kind": "mutable_output",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "outputs/research-agent-history-policy/split_manifest.json",
+      "size_bytes": 2576,
+      "sha256": "3c45b72ec1ade93c9039eca351273a4d9c375817db2159a1801b6fe0d9aff422",
+      "git_status": "ignored",
+      "physical_lines": 105,
+      "artifact_kind": "mutable_output",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "tests/trajectory_dataset/fixtures/fake_corpus.jsonl",
+      "size_bytes": 1378,
+      "sha256": "fcac0a55979d99fa88e9fdce31be14a6287c20af6d5f9b360c70567a63744fd0",
+      "git_status": "tracked",
+      "physical_lines": 3,
+      "jsonl_record_count_estimate": 3,
+      "artifact_kind": "other_inventory",
+      "preservation_tier": "inventory_only"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_bach_dang_ngo_quyen.jsonl",
+      "size_bytes": 48677,
+      "sha256": "e80d1f43155f3813cea9fd4cd8fc2bb743c77ccc6c55dbc18c5723e60e8a1b8f",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_cach_mang_thang_tam.jsonl",
+      "size_bytes": 50475,
+      "sha256": "a660fbe8a775b00bda6a240bd28bf536de32ca4e1565f03ea78cb1223e2e9acb",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_can_vuong_phap_thuoc.jsonl",
+      "size_bytes": 48156,
+      "sha256": "fb1f2b4c4ca962e558e66d0ce8376ef0504e1fc9e1e35bfc65b956a6590ed0a5",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_chien_dich_viet_bac_bien_gioi_1950.jsonl",
+      "size_bytes": 81668,
+      "sha256": "8600465e0e78b0620126e4004942d48c058c8a682ddad218dc23a1a491dbc2aa",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_chong_my_1975.jsonl",
+      "size_bytes": 50688,
+      "sha256": "3df91ef2c00189e7e370cdf7a15121555fcb592c0c7e065da164c34ef7cfd440",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_dien_bien_phu.jsonl",
+      "size_bytes": 49304,
+      "sha256": "82a848366c1e53bbae7552e44d6e70172a0267cb2bc1eb9b3604c4d803f123e8",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_dong_du_duy_tan_phan_boi_chau.jsonl",
+      "size_bytes": 81252,
+      "sha256": "184f1e89a5ccef71a0b0fa149003bb33e8209f549fcedabf2edeceb9a1511e37",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_duong_truong_son_mau_than_1968.jsonl",
+      "size_bytes": 85154,
+      "sha256": "c9601c32f18450f6e5aa6d2fe14d492a2124ddc5cc2735fb4633a744473c2005",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_hai_ba_trung_ba_trieu.jsonl",
+      "size_bytes": 73648,
+      "sha256": "3bc2908d0dd05585b6ec0c2f322acc28360cbcb170a474c5b76dfd9b074272b9",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_hiep_dinh_geneve_1954.jsonl",
+      "size_bytes": 85377,
+      "sha256": "394343fc0d969ad133b45400cf300876c468c553b2e519d58fc4dfa08456bed1",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_khoi_nghia_yen_the_hoang_hoa_tham.jsonl",
+      "size_bytes": 70297,
+      "sha256": "5b67dc4dd41e5a13bb9e0681b19c446fa43f83e21fd7465548a532b3164c369e",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_khuc_duong_thoi_tu_chu.jsonl",
+      "size_bytes": 74637,
+      "sha256": "5c3586fc5e48e4cf099e75fbe9e6a005494ab8a2d69abaccc26701b9e94bb875",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_lam_son_le_loi.jsonl",
+      "size_bytes": 48478,
+      "sha256": "2c22939776224d8a1f54df1de1c0fc82d967fe81590bd09982814923f8d3a733",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_le_so_hong_duc_le_thanh_tong.jsonl",
+      "size_bytes": 81119,
+      "sha256": "dcbac87695ad64a482fdef5a27163a927855d5ed5df4a20f8bba24f0fa665ce8",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_loan_12_su_quan_dinh_bo_linh.jsonl",
+      "size_bytes": 81563,
+      "sha256": "9ece0e81d5a7c62ab92816642c29e47cbfc3cb6307b32761cfca42fb7ef28497",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_mac_le_trung_hung_trinh_nguyen.jsonl",
+      "size_bytes": 83661,
+      "sha256": "1a63ce61fb7ece4f819ccfa16b718e93f2f388c11c2ae2aca13730944b2130ea",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_mai_hac_de_phung_hung.jsonl",
+      "size_bytes": 79900,
+      "sha256": "b6b816115dfccd2c1b517092018bee77fa8491af5ded46f80ad682ec0b3dedaf",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_minh_thuoc_khoi_nghia_hau_tran.jsonl",
+      "size_bytes": 80536,
+      "sha256": "a04864c78104a3f5ad1aaf4d330e5b20cc530026fc2a3dcd0e2125c42aeef972",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nam_tien_chua_nguyen_dang_trong.jsonl",
+      "size_bytes": 80846,
+      "sha256": "e0485448f7845663d4fd789c26bcd6f8157247e62a05be1245bd2c92abb9a5d0",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nha_dinh_tien_le.jsonl",
+      "size_bytes": 46303,
+      "sha256": "03e0a5370eebf4f11821b7957412265383271894ca0a88fe1e36ef76181dd02b",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nha_ho_ho_quy_ly.jsonl",
+      "size_bytes": 81361,
+      "sha256": "0b898dad70cec378806319af592a2f9f4b891cf35ddcc111ea3a6ff1afdae7d1",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nha_ly.jsonl",
+      "size_bytes": 50095,
+      "sha256": "863ace92102e8ced6c2ef30dcf2688bd101ff12005e6c544be38a13850cc25fc",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nha_nguyen_gia_long_minh_mang.jsonl",
+      "size_bytes": 82820,
+      "sha256": "b77007094d9be3fb10aa4330e62a47fb94af53a0e1cc00ec3cb6d6eeb467574a",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_nha_tran_mong_nguyen.jsonl",
+      "size_bytes": 48810,
+      "sha256": "6707f6318eea2cf1b564b48dc07fe44428203020b9fe90758f64b3ff592928ae",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_phap_xam_luoc_da_nang_gia_dinh.jsonl",
+      "size_bytes": 82141,
+      "sha256": "52b872e2f51397f01524ad2791bda043d3e4bf2fe71e593e28559b9b041c21ba",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_tay_son_quang_trung.jsonl",
+      "size_bytes": 49193,
+      "sha256": "357b2f346c784b078b58610e7c505aad9b2742407a78d6b1dfae9a8dfb8be6c5",
+      "git_status": "tracked",
+      "physical_lines": 12,
+      "jsonl_record_count_estimate": 12,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_toan_quoc_khang_chien_1946.jsonl",
+      "size_bytes": 85859,
+      "sha256": "32e2e83b9734f001800b4d4ffe8d6d9b2c2370960638a18d26412e09a0165d90",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_van_lang_au_lac_an_duong_vuong.jsonl",
+      "size_bytes": 75624,
+      "sha256": "060efe12d890147d3a31f7d8cf8279519432a9487702cb4f7a2a72b3b8ab1937",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/pack_xo_viet_nghe_tinh_1930.jsonl",
+      "size_bytes": 76969,
+      "sha256": "069737099d126da1674bbc5ef13b056410b97b554b12b60a96d8c4c9205dc497",
+      "git_status": "tracked",
+      "physical_lines": 20,
+      "jsonl_record_count_estimate": 20,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/top_score_pack_001.jsonl",
+      "size_bytes": 43447,
+      "sha256": "85ccba9779d1220797dff2591e46f27064580c70155077e8143948ed89bf382b",
+      "git_status": "tracked",
+      "physical_lines": 10,
+      "jsonl_record_count_estimate": 10,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/Chunk_id/top_score_pack_002.jsonl",
+      "size_bytes": 42603,
+      "sha256": "d6137f213cad91ef67bfda2b1d4f80f354e788daea734fdc940c1f97d199ea8b",
+      "git_status": "tracked",
+      "physical_lines": 10,
+      "jsonl_record_count_estimate": 10,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/Dataset/merged_jsonl/all_chunk_id.jsonl",
+      "size_bytes": 2100661,
+      "sha256": "8922301cfc07ef6d6dd00de883f770c68edf548b06a34789822c8eb4507c8339",
+      "git_status": "tracked",
+      "physical_lines": 520,
+      "jsonl_record_count_estimate": 520,
+      "artifact_kind": "historical_source_data",
+      "preservation_tier": "protected"
+    },
+    {
+      "path": "training/InvestigatingDataset.zip",
+      "size_bytes": 52273,
+      "sha256": "522699eb46066c36e0211d6c12ca5962cb1e61195d482b2be04a7a155709f1a9",
+      "git_status": "tracked",
+      "artifact_kind": "historical_data_archive",
+      "preservation_tier": "protected"
+    }
+  ],
+  "preservation_tier_note": "protected files are checked by the default audit; inventory_only files are recorded for migration review and can be checked with --all-files."
+}

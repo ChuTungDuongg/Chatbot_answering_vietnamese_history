@@ -95,6 +95,13 @@ class RetrievalContextItem(BaseModel):
     metadata_hits: list[str] = Field(
         default_factory=list,
     )
+    dense_rank: int | None = None
+    bm25_rank: int | None = None
+    rrf_rank: int | None = None
+    reranker_rank: int | None = None
+    final_rank: int | None = None
+    best_dense_score: float | None = None
+    best_bm25_score: float | None = None
 
 
 class RetrieveResponse(BaseModel):
@@ -127,12 +134,14 @@ class RetrieveResponse(BaseModel):
 
 class SourceItem(BaseModel):
     chunk_id: str
+    cited: bool = False
     source_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     display_index: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     comparison_target: str | None = Field(default=None, exclude_if=lambda value: value is None)
     comparison_targets: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
     viewpoint_sensitive: bool = Field(default=False, exclude_if=lambda value: not value)
     title: str | None = None
+    text: str | None = None
 
     source_kind: Literal[
         "history",

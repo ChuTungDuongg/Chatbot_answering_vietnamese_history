@@ -1,9 +1,12 @@
 {
-  "$defs": {
-    "JsonValue": {}
-  },
   "additionalProperties": false,
   "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
     "id": {
       "minLength": 1,
       "title": "Id",
@@ -19,7 +22,7 @@
       "title": "Category",
       "type": "string"
     },
-    "expected_question_type": {
+    "gold_answer": {
       "anyOf": [
         {
           "type": "string"
@@ -29,21 +32,9 @@
         }
       ],
       "default": null,
-      "title": "Expected Question Type"
+      "title": "Gold Answer"
     },
-    "expected_event": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Expected Event"
-    },
-    "expected_actors": {
+    "relevant_chunk_ids": {
       "anyOf": [
         {
           "items": {
@@ -56,9 +47,9 @@
         }
       ],
       "default": null,
-      "title": "Expected Actors"
+      "title": "Relevant Chunk Ids"
     },
-    "expected_facets": {
+    "relevant_source_ids": {
       "anyOf": [
         {
           "items": {
@@ -71,36 +62,9 @@
         }
       ],
       "default": null,
-      "title": "Expected Facets"
+      "title": "Relevant Source Ids"
     },
-    "expected_answer_depth": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Expected Answer Depth"
-    },
-    "expected_tool_behavior": {
-      "anyOf": [
-        {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Expected Tool Behavior"
-    },
-    "expected_source_ids": {
+    "gold_citation_source_ids": {
       "anyOf": [
         {
           "items": {
@@ -113,19 +77,66 @@
         }
       ],
       "default": null,
-      "title": "Expected Source Ids"
+      "title": "Gold Citation Source Ids"
+    },
+    "required_facts": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Required Facts"
+    },
+    "factual_paragraph_indices": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Factual Paragraph Indices"
+    },
+    "answerable": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Answerable"
+    },
+    "in_domain": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "In Domain"
     },
     "notes": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Notes"
+      "default": "",
+      "title": "Notes",
+      "type": "string"
     }
   },
   "required": [

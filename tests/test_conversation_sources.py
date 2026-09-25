@@ -202,3 +202,29 @@ def test_non_empty_sources_are_preserved_in_detail(tmp_path) -> None:
 
     assert status_code == 200
     assert body["messages"][0]["sources"] == [source]
+
+
+def test_retrieved_source_text_survives_conversation_refresh(tmp_path) -> None:
+    store = ConversationStore(tmp_path / "chat.db")
+    conversation = store.create_conversation(OWNER_ID)
+    source = {
+        "chunk_id": "history-43",
+        "source_id": "chronicle",
+        "display_index": 1,
+        "title": "Đại Việt sử ký toàn thư",
+        "text": "Trận Bạch Đằng diễn ra năm 938.",
+        "source_kind": "history",
+        "cited": True,
+    }
+    store.add_message(
+        owner_id=OWNER_ID,
+        conversation_id=conversation["id"],
+        role="assistant",
+        content="Trận Bạch Đằng [history-43].",
+        sources=[source],
+    )
+
+    status_code, body = _get_conversation(store, conversation["id"])
+
+    assert status_code == 200
+    assert body["messages"][0]["sources"] == [source]

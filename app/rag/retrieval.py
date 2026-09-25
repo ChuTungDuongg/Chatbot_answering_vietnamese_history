@@ -67,7 +67,6 @@ META_PATTERNS = [
     r"^(xin chao|chao|hello|hi)\b",
     r"ban co the lam gi|ban lam duoc gi|tro ly.*lam gi",
     r"ban dung nguon nao|nguon nao|lay nguon tu dau",
-    r"hybrid rag.*agentic rag|agentic rag.*hybrid rag|hybrid khac agentic",
 ]
 
 HISTORY_DOMAIN_PATTERNS = [
@@ -1311,6 +1310,11 @@ class HybridRetriever:
                         existing[score_key] = max(values) if values else None
         fusion_ms = (time.perf_counter() - fusion_started) * 1000
 
+        # Diagnostic ranks only. These annotations do not affect scoring,
+        # ordering, thresholds, or context selection.
+        for rank, candidate in enumerate(candidates, 1):
+            candidate["rrf_rank"] = rank
+
         if not candidates:
             result = {
                 "question": question,
@@ -1376,6 +1380,9 @@ class HybridRetriever:
         reranker_ms = (time.perf_counter() - reranker_started) * 1000
 
         reranker_norm = self.minmax(reranker_scores.tolist())
+
+        for rank, index in enumerate(np.argsort(-reranker_scores), 1):
+            candidates[int(index)]["reranker_rank"] = rank
 
         rrf_norm = self.minmax(
             [chunk["rrf_score"] for chunk in candidates]

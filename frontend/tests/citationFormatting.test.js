@@ -9,6 +9,11 @@ test("legacy source brackets are display-only and numeric years remain untouched
   assert.deepEqual(sources, original);
 });
 
+test("chunk citations resolve even when a source ID is also present", () => {
+  const sources = [{ chunk_id: "chunk-938", source_id: "document-bach-dang", display_index: 3 }];
+  assert.equal(displayAnswer("Chiến thắng [chunk-938].", sources), "Chiến thắng [3].");
+});
+
 test("only known display indices become citation links", () => {
   const tree = { type: "paragraph", children: [{ type: "text", value: "Năm [938], [1945], [1954]; nguồn [1], [2], [9]." }] };
   remarkSourceCitations({ sources: [{ display_index: 1 }, { display_index: 2 }] })(tree);

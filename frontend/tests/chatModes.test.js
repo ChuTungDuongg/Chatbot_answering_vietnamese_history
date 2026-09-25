@@ -5,7 +5,6 @@ import test from "node:test";
 import {
   CHAT_MODES,
   CHAT_MODE_STORAGE_KEY,
-  LEGACY_CHAT_MODE_STORAGE_KEY,
   ChatMode,
   persistChatMode,
   readStoredChatMode,
@@ -21,16 +20,14 @@ function memoryStorage(initial = {}) {
 }
 
 
-test("mode contract exposes exactly Hybrid, 3 LLM, Central Agent", () => {
+test("mode contract exposes exactly Hybrid RAG and Central Agent", () => {
   assert.deepEqual(CHAT_MODES.map(({ value, label }) => ({ value, label })), [
-    { value: "hybrid", label: "Hybrid" },
-    { value: "three_llm", label: "3 LLM" },
+    { value: "hybrid", label: "Hybrid RAG" },
     { value: "central", label: "Central Agent" },
   ]);
   assert.deepEqual(CHAT_MODES.map((item) => item.description), [
-    "Hybrid retrieval + một mô hình trả lời",
-    "Research + Evidence + History Answerer",
-    "Qwen3-8B tự nghiên cứu và gọi công cụ",
+    "Truy xuất tư liệu + Qwen3-4B",
+    "Qwen3-8B gọi công cụ để tìm tư liệu",
   ]);
 });
 
@@ -44,17 +41,15 @@ test("selected mode persists and invalid storage falls back to Hybrid", () => {
 
   const invalid = memoryStorage({ [CHAT_MODE_STORAGE_KEY]: "unknown" });
   assert.equal(readStoredChatMode(invalid), ChatMode.HYBRID);
+  assert.equal(invalid.getItem(CHAT_MODE_STORAGE_KEY), ChatMode.HYBRID);
 });
 
 
-test("legacy localStorage values migrate without changing old execution meaning", () => {
-  const oldHybrid = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "hybrid" });
-  const oldFast = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "fast" });
-  const oldAgent = memoryStorage({ [LEGACY_CHAT_MODE_STORAGE_KEY]: "agent" });
-
-  assert.equal(readStoredChatMode(oldHybrid), ChatMode.THREE_LLM);
-  assert.equal(readStoredChatMode(oldFast), ChatMode.HYBRID);
-  assert.equal(readStoredChatMode(oldAgent), ChatMode.CENTRAL);
+test("unsupported mode values fall back to Hybrid and cannot be saved", () => {
+  const storage = memoryStorage({ [CHAT_MODE_STORAGE_KEY]: "unsupported" });
+  assert.equal(readStoredChatMode(storage), ChatMode.HYBRID);
+  assert.equal(storage.getItem(CHAT_MODE_STORAGE_KEY), ChatMode.HYBRID);
+  assert.throws(() => persistChatMode("unsupported", storage), /Unsupported chat mode/);
 });
 
 

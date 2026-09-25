@@ -1,2 +1,1 @@
-"""Tool layer used by the agentic RAG orchestrator."""
-
+"""Tools available to the Central baseline."""

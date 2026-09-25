@@ -206,6 +206,7 @@ async def list_conversations(
 @router.get(
     "/{conversation_id}",
     response_model=ConversationDetailResponse,
+    response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
 )
 async def get_conversation(

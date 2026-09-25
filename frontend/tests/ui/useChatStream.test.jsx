@@ -5,7 +5,6 @@ vi.mock("../../src/services/api.js", () => ({
   streamChat: vi.fn(),
   listConversations: vi.fn(),
   getConversation: vi.fn(),
-  EVIDENCE_CONTRACT_FAILURE_MESSAGE: "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.",
 }));
 
 const api = await import("../../src/services/api.js");
@@ -33,7 +32,7 @@ beforeEach(() => {
 });
 
 test("gửi đúng chế độ đang chọn tới API streaming", async () => {
-  const { result } = setup({ mode: "three_llm" });
+  const { result } = setup({ mode: "central" });
 
   await act(async () => {
     await result.current.submit("Chiến thắng Bạch Đằng?");
@@ -43,7 +42,7 @@ test("gửi đúng chế độ đang chọn tới API streaming", async () => {
   expect(api.streamChat.mock.calls[0][0]).toMatchObject({
     conversationId: "c1",
     question: "Chiến thắng Bạch Đằng?",
-    mode: "three_llm",
+    mode: "central",
     finalK: 6,
   });
 });
@@ -90,11 +89,11 @@ test("chuyển các sự kiện SSE thành action tương ứng", async () => {
   expect(deltas).toEqual(["Xin ", "chào"]);
 });
 
-test("sự kiện error mang theo loại lỗi để reducer chọn đúng thông báo", async () => {
+test("sự kiện error chuyển thông báo tới reducer", async () => {
   api.streamChat.mockImplementation(async ({ onEvent }) => {
     onEvent({
       event: "error",
-      data: { message: "Evidence critic từ chối", type: "evidence_contract_error" },
+      data: { message: "Tạo câu trả lời thất bại", type: "generation_error" },
     });
   });
 
@@ -107,8 +106,7 @@ test("sự kiện error mang theo loại lỗi để reducer chọn đúng thôn
     .map(([action]) => action)
     .find((action) => action.type === "STREAM_ERROR");
 
-  expect(errorAction.kind).toBe("evidence_contract_error");
-  expect(errorAction.message).toBe("Evidence critic từ chối");
+  expect(errorAction.message).toBe("Tạo câu trả lời thất bại");
 });
 
 test("AbortError sinh ra STREAM_ABORTED chứ không phải STREAM_ERROR", async () => {

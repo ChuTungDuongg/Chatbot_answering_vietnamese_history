@@ -34,16 +34,7 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
     || /^Mình chưa tìm thấy đủ bằng chứng đáng tin cậy/.test(message.content ?? ""));
   const validationFailed = !isUser && (message.status === "answer_validation_failed"
     || /^Đã tìm thấy tư liệu phù hợp/.test(message.content ?? ""));
-  const canonicalMode = message.mode === "hybrid_rag"
-    ? "hybrid"
-    : message.mode === "agentic_rag"
-      ? "three_llm"
-      : message.mode === "fast"
-        ? "hybrid"
-        : message.mode === "agent"
-          ? "central"
-      : message.mode;
-  const modeLabel = CHAT_MODES.find((item) => item.value === canonicalMode)?.label ?? "";
+  const modeLabel = CHAT_MODES.find((item) => item.value === message.mode)?.label ?? "";
 
   const copyMessage = async () => {
     if (!message.content) return;

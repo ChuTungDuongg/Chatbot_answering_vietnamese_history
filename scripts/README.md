@@ -1,66 +1,29 @@
-# ☁️ Modal Upload Scripts
+# Corpus and retrieval utilities
 
-[🏠 Project README](../README.md) · [📦 Artifact contract](../artifacts/README.md)
+Application startup reads existing corpus and index artifacts. It does not rebuild, normalize, or delete historical data. The source snapshot is recorded in [`../docs/corpus_preservation_manifest.json`](../docs/corpus_preservation_manifest.json).
 
-## 🚚 Upload bundle đầy đủ
+## Read-only checks
 
-Trước tiên validate hoàn toàn cục bộ:
+Verify the recorded filenames, sizes, and SHA-256 hashes without writing to the data tree:
 
-```bash
-python scripts/validate_artifact_bundle.py artifacts/vn_history_deployment
+```powershell
+python -m scripts.corpus.audit_corpus
 ```
 
-```bash
-python scripts/upload_modal_volume.py \
-  --volume vn-history-artifacts \
-  --local-dir artifacts/vn_history_deployment \
-  --remote-dir / \
-  --dry-run
+Write a descriptive corpus quality report to a separate output path:
+
+```powershell
+python -m scripts.corpus.audit_corpus --corpus artifacts/vn_history_deployment/corpus/vn_history_rag_chunks_enriched.jsonl --output reports/corpus/audit.json
 ```
 
-`--dry-run` vẫn gọi `validate_artifact_lock()` trước khi chỉ in các lệnh `modal volume put --force`. Bỏ flag để chạy upload thật.
+The report summarizes chunk IDs, duplicate text, empty chunks, metadata coverage, and length distributions. It does not clean or rewrite the corpus. See [`../docs/CORPUS_PRESERVATION.md`](../docs/CORPUS_PRESERVATION.md).
 
-## 🔒 Exact sync production
+## Explicit data-producing commands
 
-```bash
-python scripts/upload_modal_volume.py \
-  --volume vn-history-artifacts \
-  --local-dir artifacts/vn_history_deployment \
-  --remote-dir / \
-  --exact-sync \
-  --allow-replace-adapter-weights \
-  --dry-run
+`scripts/corpus/build_corpus.py` and `scripts/corpus/enrich_corpus.py` create new corpus outputs. `scripts/retrieval/build_index.py` creates FAISS and BM25S indexes from a chosen corpus. Use separate output paths when investigating a future rebuild; these commands are not part of the baseline startup or audit.
+
+```powershell
+python -m scripts.retrieval.build_index --corpus path/to/curated_corpus.jsonl --output-dir path/to/new_index_directory
 ```
 
-Component mutation đã bị vô hiệu hóa. Hãy build một snapshot bằng `training.scripts.export_artifacts`; uploader quản lý cả `/manifest.json` và `/artifact_lock.json`, với lock luôn được ghi cuối cùng.
-`--exact-sync --dry-run` vẫn đọc inventory từ Modal để lập mutation plan, trừ khi truyền `--remote-inventory-json`; đây không phải kiểm tra hoàn toàn offline.
-
-## 🧊 Hugging Face cache
-
-Central Qwen3-8B không nằm trong artifact Volume; base weights/tokenizer phải có trong HF cache Volume `/hf-cache`. Seed CPU-only, không cần A100:
-
-```bash
-modal run scripts/modal_seed_hf_cache.py
-```
-
-Validate cache:
-
-```bash
-modal run scripts/modal_seed_hf_cache.py --validate-only
-```
-
-Local/offline check cho cache dir bất kỳ:
-
-```bash
-python scripts/hf_cache.py --validate-only --cache-dir /hf-cache/hub
-```
-
-## ✅ Sau upload
-
-```bash
-modal volume ls vn-history-artifacts
-modal run scripts/modal_artifact_sanity.py
-modal serve modal_app.py
-```
-
-Script không đọc hoặc hard-code Modal token. Authentication do `modal setup` hoặc Modal environment quản lý.
+The baseline uses the preserved files and retrieval behavior already recorded in the manifest. A proposed corpus or index change is a new experiment and must use its own artifact hash, dataset, and benchmark run.

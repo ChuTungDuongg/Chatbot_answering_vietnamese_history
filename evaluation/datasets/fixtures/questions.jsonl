@@ -1,2 +1,2 @@
-{"id":"schema-1","question":"Vì sao Quốc gia Alpha và Quốc gia Beta thiết lập quan hệ?","category":"relational_cause","expected_question_type":"cause","expected_actors":["Quốc gia Alpha","Quốc gia Beta"],"notes":"Synthetic schema fixture only; no historical answer or benchmark label."}
-{"id":"schema-2","question":"Nguồn hiện có nói gì về cải cách của Triều đại Gamma?","category":"evidence_limit","notes":"Synthetic schema fixture only; no historical answer or benchmark label."}
+{"schema_version":1,"id":"history-001","question":"Ý nghĩa của chiến thắng Bạch Đằng năm 938 là gì?","category":"historical_fact","notes":"Unlabeled demonstration question. No historical correctness claim."}
+{"schema_version":1,"id":"history-002","question":"Những nguyên nhân nào dẫn đến chiến thắng Điện Biên Phủ năm 1954?","category":"historical_cause","notes":"Unlabeled demonstration question. No historical correctness claim."}

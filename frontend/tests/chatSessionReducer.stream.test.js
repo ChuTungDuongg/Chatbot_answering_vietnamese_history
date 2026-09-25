@@ -55,20 +55,19 @@ test("STREAM_SOURCES ghi nguồn vào cả tin nhắn lẫn drawer", () => {
   assert.deepEqual(state.messages.find((message) => message.id === ASSISTANT_ID).sources, sources);
 });
 
-test("STREAM_ERROR loại evidence contract dùng đúng thông báo riêng", () => {
+test("STREAM_ERROR uses the general failure message", () => {
   const state = chatSessionReducer(startedStream(), {
     type: "STREAM_ERROR",
     messageId: ASSISTANT_ID,
-    message: "Evidence critic từ chối",
-    kind: "evidence_contract_error",
+    message: "Tạo câu trả lời thất bại",
   });
 
   const assistant = state.messages.find((message) => message.id === ASSISTANT_ID);
   assert.equal(
     assistant.content,
-    "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.",
+    "Không thể hoàn tất câu trả lời.",
   );
-  assert.equal(state.error, "Evidence critic từ chối");
+  assert.equal(state.error, "Tạo câu trả lời thất bại");
   assert.equal(state.streamFailed, true);
 });
 

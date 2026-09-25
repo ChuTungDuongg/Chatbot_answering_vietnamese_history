@@ -11,7 +11,6 @@ vi.mock("../../src/services/api.js", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
   streamChat: vi.fn(),
-  EVIDENCE_CONTRACT_FAILURE_MESSAGE: "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.",
 }));
 
 const api = await import("../../src/services/api.js");
@@ -40,7 +39,7 @@ test("hiển thị hội thoại đã có sau khi bootstrap", async () => {
   expect(await screen.findByRole("heading", { name: "Nhà Trần", level: 1 })).toBeInTheDocument();
 });
 
-test.each([["hybrid", "Hybrid"], ["three_llm", "3 LLM"], ["central", "Central Agent"]])("gửi câu hỏi ở mode %s thì câu trả lời hiện trên màn hình", async (mode, label) => {
+test.each([["hybrid", "Hybrid RAG"], ["central", "Central Agent"]])("gửi câu hỏi ở mode %s thì câu trả lời hiện trên màn hình", async (mode, label) => {
   const CAU_HOI = "Vì sao nhà Trần suy yếu?";
   const CAU_TRA_LOI = "Nhà Trần suy yếu vì nhiều nguyên nhân.";
 

@@ -2,7 +2,6 @@ import { ChatMode } from "../config/chatModes";
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const CLIENT_ID_STORAGE_KEY = "vn-history-client-id";
-export { EVIDENCE_CONTRACT_FAILURE_MESSAGE } from "../config/messages.js";
 
 function ensureApiConfigured() {
   if (!API_BASE_URL) {

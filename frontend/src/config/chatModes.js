@@ -1,37 +1,22 @@
 export const ChatMode = Object.freeze({
   HYBRID: "hybrid",
-  THREE_LLM: "three_llm",
   CENTRAL: "central",
 });
 
 export const CHAT_MODES = Object.freeze([
   Object.freeze({
     value: ChatMode.HYBRID,
-    label: "Hybrid",
-    description: "Hybrid retrieval + một mô hình trả lời",
-  }),
-  Object.freeze({
-    value: ChatMode.THREE_LLM,
-    label: "3 LLM",
-    description: "Research + Evidence + History Answerer",
+    label: "Hybrid RAG",
+    description: "Truy xuất tư liệu + Qwen3-4B",
   }),
   Object.freeze({
     value: ChatMode.CENTRAL,
     label: "Central Agent",
-    description: "Qwen3-8B tự nghiên cứu và gọi công cụ",
+    description: "Qwen3-8B gọi công cụ để tìm tư liệu",
   }),
 ]);
 
 export const CHAT_MODE_STORAGE_KEY = "vn-history-chat-mode-v2";
-export const LEGACY_CHAT_MODE_STORAGE_KEY = "vn-history-chat-mode";
-
-const LEGACY_MODE_MAP = Object.freeze({
-  fast: ChatMode.HYBRID,
-  hybrid_rag: ChatMode.HYBRID,
-  hybrid: ChatMode.THREE_LLM,
-  agentic_rag: ChatMode.THREE_LLM,
-  agent: ChatMode.CENTRAL,
-});
 
 export function isChatMode(value) {
   return CHAT_MODES.some((mode) => mode.value === value);
@@ -41,10 +26,8 @@ export function readStoredChatMode(storage = globalThis.localStorage) {
   try {
     const stored = storage?.getItem(CHAT_MODE_STORAGE_KEY);
     if (isChatMode(stored)) return stored;
-    const legacy = storage?.getItem(LEGACY_CHAT_MODE_STORAGE_KEY);
-    const migrated = LEGACY_MODE_MAP[legacy] ?? ChatMode.HYBRID;
-    storage?.setItem(CHAT_MODE_STORAGE_KEY, migrated);
-    return migrated;
+    storage?.setItem(CHAT_MODE_STORAGE_KEY, ChatMode.HYBRID);
+    return ChatMode.HYBRID;
   } catch {
     return ChatMode.HYBRID;
   }

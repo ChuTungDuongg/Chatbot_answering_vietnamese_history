@@ -4,7 +4,14 @@ export function indexedSources(sources = []) {
 }
 
 export function displayAnswer(content = "", sources = []) {
-  const ids = new Map(sources.map((source, index) => [String(source.source_id ?? source.chunk_id ?? source.id ?? ""), source.display_index ?? index + 1]));
+  const ids = new Map();
+  sources.forEach((source, index) => {
+    for (const id of [source.chunk_id, source.source_id, source.id]) {
+      if (id != null && String(id) && !ids.has(String(id))) {
+        ids.set(String(id), source.display_index ?? index + 1);
+      }
+    }
+  });
   return content.replace(/\[([^\]\n[]+)\]/g, (bracket, id) => {
     if (/^\d+$/.test(id) || !ids.has(id)) return bracket;
     return `[${ids.get(id)}]`;

@@ -1,5 +1,3 @@
-export const EVIDENCE_CONTRACT_FAILURE_MESSAGE =
-  "Không thể hoàn tất câu trả lời do bước đánh giá bằng chứng thất bại.";
 export const ANSWER_FAILURE_MESSAGE = "Không thể hoàn tất câu trả lời.";
 export const ANSWER_STOPPED_MESSAGE = "Đã dừng tạo câu trả lời.";
 export const STREAM_FAILURE_MESSAGE = "Backend không thể hoàn tất yêu cầu.";
