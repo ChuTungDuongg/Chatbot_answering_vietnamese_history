@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -228,6 +231,14 @@ def test_duplicates_report_backup_and_local_ui_mapping(tmp_path):
     exact, _ = duplicate_pairs(workspace.all_candidates())
     assert exact
     assert coverage(workspace.all_candidates())["review_status"]["pending"] == 2
+    report_path = tmp_path / "reports/annotation/coverage.json"
+    report_run = subprocess.run([sys.executable, "-m", "evaluation.annotation.report",
+        "--workspace", str(tmp_path / "workspace"), "--output", str(report_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"}, capture_output=True, text=True,
+        encoding="cp1252", check=False)
+    assert report_run.returncode == 0, report_run.stderr
+    assert "Trận Bạch Đằng" in report_path.read_text(encoding="utf-8")
     workspace.set_evidence("x1", [{"stage": "dense", "rank": 1, "chunk_id": "c1",
         "source_id": "s1", "document_id": "d1", "score": .9, "details": {"query": "Bạch Đằng"}}])
     backup = tmp_path / "reports/annotation/backup.jsonl"

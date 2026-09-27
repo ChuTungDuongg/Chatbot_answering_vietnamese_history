@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             input_errors = []
         result = validate_records(records, lookup, tier=args.tier)
         result["errors"] = input_errors + result["errors"]
-        print(json.dumps({"count": len(records), **result}, ensure_ascii=False, indent=2))
+        print(json.dumps({"count": len(records), **result}, ensure_ascii=True, indent=2))
         return 1 if result["errors"] else 0
     finally:
         if workspace:

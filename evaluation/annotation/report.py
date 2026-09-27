@@ -52,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text, encoding="utf-8")
-    print(text, end="")
+    # Escaped console JSON remains readable on Windows terminals using cp1252.
+    print(json.dumps(result, ensure_ascii=True, indent=2))
     return 0
 
 
