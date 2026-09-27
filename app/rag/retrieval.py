@@ -1097,6 +1097,8 @@ class HybridRetriever:
         self,
         question: str,
         final_k: int | None = None,
+        *,
+        include_stage_diagnostics: bool = False,
     ) -> dict[str, Any]:
         retrieve_started = time.perf_counter()
         telemetry = current_request_telemetry()
@@ -1218,6 +1220,16 @@ class HybridRetriever:
 
         global_run = next((run for run in runs if run.get("role") == "global"), runs[0] if runs else None)
         original_dense = global_run["dense"] if global_run else []
+        annotation_stages: dict[str, list[dict[str, Any]]] = {}
+        if include_stage_diagnostics:
+            for stage in ("dense", "bm25"):
+                entries = []
+                for query_index, run in enumerate(runs):
+                    for query_rank, (row_id, score) in enumerate(run[stage][:10], 1):
+                        entries.append({"row_id": int(row_id), "rank": len(entries) + 1,
+                                        "query_rank": query_rank, "query_index": query_index,
+                                        "query": run["query"], "score": float(score)})
+                annotation_stages[stage] = entries
 
         max_dense = (
             original_dense[0][1]
@@ -1256,6 +1268,8 @@ class HybridRetriever:
                     "ood_guard:block",
                 ],
             }
+            if include_stage_diagnostics:
+                result["annotation_stages"] = annotation_stages
             log_event(
                 "RETRIEVAL_COMPLETE",
                 request_id=request_id,
@@ -1309,6 +1323,11 @@ class HybridRetriever:
         # ordering, thresholds, or context selection.
         for rank, candidate in enumerate(candidates, 1):
             candidate["rrf_rank"] = rank
+        if include_stage_diagnostics:
+            annotation_stages["rrf"] = [
+                {"row_id": int(candidate["_corpus_idx"]), "rank": rank,
+                 "score": float(candidate["rrf_score"])}
+                for rank, candidate in enumerate(candidates[:20], 1)]
 
         if not candidates:
             result = {
@@ -1333,6 +1352,8 @@ class HybridRetriever:
                     "multi_query_retrieval:no_candidates",
                 ],
             }
+            if include_stage_diagnostics:
+                result["annotation_stages"] = annotation_stages
             log_event(
                 "RETRIEVAL_COMPLETE",
                 request_id=request_id,
@@ -1485,6 +1506,14 @@ class HybridRetriever:
                 "evidence_diversity",
             ],
         }
+        if include_stage_diagnostics:
+            annotation_stages["reranked"] = [
+                {"row_id": int(item["_corpus_idx"]), "rank": rank,
+                 "score": float(item["final_retrieval_score"]),
+                 "rrf_score": float(item["rrf_score"]),
+                 "reranker_score": float(item["reranker_score"])}
+                for rank, item in enumerate(final_context, 1)]
+            result["annotation_stages"] = annotation_stages
         log_event(
             "RETRIEVAL_COMPLETE",
             request_id=request_id,

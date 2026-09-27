@@ -201,6 +201,10 @@ node_modules/
 
 # Generated benchmark and evaluation reports never enter Git.
 /reports/
+/reports/annotation/
+/evaluation/annotation/workspace/
+/evaluation/annotation/**/candidates.jsonl
+/evaluation/annotation/**/deep_queue.jsonl
 !/evaluation/logs/
 /evaluation/logs/*
 !/evaluation/logs/.gitkeep

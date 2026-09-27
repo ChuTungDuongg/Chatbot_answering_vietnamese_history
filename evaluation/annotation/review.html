@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vietnamese History Gold Review</title>
+  <style>
+    :root { font: 15px/1.5 system-ui, sans-serif; color: #14213d; background: #f4f6fa; }
+    body { max-width: 1300px; margin: 0 auto; padding: 1.5rem; }
+    h1,h2,h3 { margin: .25rem 0 .75rem; }
+    .panel { background: white; border: 1px solid #d5dbe6; border-radius: 10px; padding: 1rem; margin: 1rem 0; }
+    .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .85rem; }
+    label { display: block; font-weight: 600; }
+    label small { display: block; font-weight: 400; color: #526078; }
+    input,select,textarea,button { font: inherit; }
+    input,select,textarea { box-sizing: border-box; width: 100%; padding: .45rem; border: 1px solid #a8b2c2; border-radius: 5px; }
+    textarea { min-height: 4rem; }
+    button { padding: .45rem .7rem; border-radius: 5px; border: 1px solid #637793; background: white; cursor: pointer; }
+    button.primary { background: #153d75; color: white; }
+    button.warn { border-color: #a44; color: #8b2020; }
+    .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .evidence { border-top: 1px solid #d5dbe6; padding: .8rem 0; }
+    .evidence p { white-space: pre-wrap; max-height: 16rem; overflow: auto; }
+    .meta { color: #526078; font-size: .9rem; word-break: break-all; }
+    .decisions { display: flex; flex-wrap: wrap; gap: .3rem .9rem; align-items: center; }
+    .decisions label { display: inline-flex; align-items: center; font-weight: 400; gap: .2rem; }
+    .decisions input { width: auto; }
+    #message { white-space: pre-wrap; min-height: 1.5rem; }
+    #message.error { color: #a01818; }
+    #message.success { color: #087241; }
+    @media(max-width:750px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Vietnamese History Gold Review</h1>
+  <p>Drafts and retrieved evidence are suggestions. Only your explicit <strong>Accept retrieval</strong> or <strong>Accept deep QA</strong> action creates approved labels.</p>
+  <div class="panel actions">
+    <label>Status filter <select id="filter"><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option><option value="">All</option></select></label>
+    <label>Candidate <select id="candidate"></select></label>
+    <button id="reload">Reload queue</button><button id="prev">Previous</button><button id="next">Next</button>
+    <span id="position" class="meta"></span>
+  </div>
+  <div id="message" role="status" aria-live="polite"></div>
+  <div class="panel">
+    <div class="meta" id="identity"></div>
+    <div class="grid">
+      <label>Question<textarea id="question"></textarea></label>
+      <label>Category<select id="category"></select></label>
+      <label>Difficulty<select id="difficulty"><option value="">Unset</option><option>easy</option><option>medium</option><option>hard</option></select></label>
+      <label>Question type<input id="question_type"></label>
+      <label>Answerable<select id="answerable"><option value="">Unset</option><option value="true">Yes</option><option value="false">No</option></select></label>
+      <label>In domain<select id="in_domain"><option value="">Unset</option><option value="true">Yes</option><option value="false">No</option></select></label>
+      <label>Benchmark split<select id="benchmark_split"><option value="">Unset</option><option>dev</option><option>test</option></select></label>
+      <label>Reviewer ID (optional)<input id="reviewer_id"></label>
+    </div>
+    <label>Notes<textarea id="notes"></textarea></label>
+    <details><summary>Original generation draft and provenance</summary><pre id="draft"></pre></details>
+  </div>
+  <div class="panel">
+    <h2>Reviewer answer labels</h2>
+    <p>Editing the draft answer does not set a gold answer. Enter deep labels here only after checking sources.</p>
+    <div class="grid">
+      <label>Draft answer<textarea id="draft_answer"></textarea></label>
+      <label>Gold answer<textarea id="gold_answer"></textarea></label>
+      <label>Required facts <small>One atomic fact per line</small><textarea id="required_facts"></textarea></label>
+      <label>Gold citation source IDs <small>One reviewed source ID per line</small><textarea id="gold_citation_source_ids"></textarea></label>
+      <label>Factual paragraph indices <small>Zero based, comma separated</small><input id="factual_paragraph_indices"></label>
+    </div>
+  </div>
+  <div class="panel"><h2>Candidate evidence</h2><p>Mark chunk and source relevance separately. Neighboring chunks are available for inspection and are never auto labeled.</p><div id="evidence"></div></div>
+  <div class="panel actions">
+    <button id="save">Save edits</button><button id="accept" class="primary">Accept retrieval</button>
+    <button id="reject" class="warn">Reject</button><button id="needs_review">Needs review</button>
+    <button id="skip">Skip</button><button id="accept_deep" class="primary">Accept deep QA</button>
+    <button id="mark_deep_needs_review">Reopen deep review</button>
+  </div>
+<script>
+const categories = ["dynasties","rulers","historical_figures","battles","wars","revolutions","treaties","colonial_period","independence","political_events","cultural_history","religious_history","economic_history","social_history","historical_geography","archaeology_heritage","chronology","cause_consequence","comparison","multi_hop","ambiguous","insufficient_evidence","out_of_domain","false_premise"];
+for (const category of categories) { const option = document.createElement('option'); option.value = category; option.textContent = category; document.querySelector('#category').append(option); }
+let queue = [], current = null, chunkDecisions = {}, sourceDecisions = {};
+const $ = id => document.getElementById(id);
+function message(text, error=false) { $('message').textContent = text; $('message').className = error ? 'error' : 'success'; }
+function lines(id) { const value = $(id).value.trim(); return value ? value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean) : null; }
+function boolValue(id) { return $(id).value === '' ? null : $(id).value === 'true'; }
+function setValue(id, value) { $(id).value = value == null ? '' : value; }
+function decisionControl(kind, id) {
+  const wrap = document.createElement('span'); wrap.className = 'decisions';
+  const target = kind === 'chunk' ? chunkDecisions : sourceDecisions;
+  const label = document.createElement('strong'); label.textContent = kind + ':'; wrap.append(label);
+  for (const value of ['relevant','not_relevant','uncertain']) {
+    const option = document.createElement('label'); const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = kind + ':' + id; radio.value = value; radio.checked = target[id] === value;
+    radio.addEventListener('change', () => { target[id] = value; document.querySelectorAll(`input[name="${CSS.escape(kind + ':' + id)}"]`).forEach(input => input.checked = input.value === value); });
+    option.append(radio, document.createTextNode(value.replace('_',' '))); wrap.append(option);
+  }
+  return wrap;
+}
+function evidenceCard(item, stage) {
+  const box = document.createElement('div'); box.className = 'evidence';
+  const title = document.createElement('h3'); title.textContent = `${stage} #${item.rank}: ${item.title || '(untitled)'}`; box.append(title);
+  const meta = document.createElement('div'); meta.className = 'meta';
+  meta.textContent = `chunk=${item.chunk_id} source=${item.source_id || ''} document=${item.document_id || ''} score=${item.score ?? ''} ${item.query_rank ? 'query_rank=' + item.query_rank : ''} ${item.query ? 'query=' + item.query : ''}`;
+  box.append(meta);
+  if (item.url && /^https?:\/\//i.test(item.url)) { const link = document.createElement('a'); link.href = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Source article'; box.append(link); }
+  const text = document.createElement('p'); text.textContent = item.text || ''; box.append(text);
+  box.append(decisionControl('chunk', item.chunk_id));
+  if (item.source_id) box.append(decisionControl('source', item.source_id));
+  const button = document.createElement('button'); button.textContent = 'Nearby chunks';
+  button.addEventListener('click', async () => {
+    const response = await fetch(`/api/chunks/${encodeURIComponent(item.chunk_id)}/nearby`);
+    const rows = await response.json(); const holder = document.createElement('div'); holder.className='panel';
+    for (const row of rows) holder.append(evidenceCard({...row,rank:row.chunk_index,score:null}, 'neighbor'));
+    box.append(holder); button.disabled = true;
+  }); box.append(button);
+  return box;
+}
+function renderEvidence(rows, origin) {
+  const holder = $('evidence'); holder.replaceChildren();
+  if (origin) { const section=document.createElement('section'); const heading=document.createElement('h3'); heading.textContent='Origin provenance (not gold)'; section.append(heading,evidenceCard({...origin,rank:0,score:null},'origin')); holder.append(section); }
+  for (const stage of ['dense','bm25','rrf','reranked']) {
+    const section = document.createElement('section'); const heading = document.createElement('h3');
+    heading.textContent = `${stage.toUpperCase()} (${rows.filter(row=>row.stage===stage).length})`; section.append(heading);
+    for (const row of rows.filter(row=>row.stage===stage)) section.append(evidenceCard(row, stage));
+    holder.append(section);
+  }
+  if (!rows.length) holder.append(document.createTextNode('No corpus evidence was returned. The reviewer must still decide the negative or edge-case labels.'));
+}
+async function loadQueue() {
+  const status = $('filter').value; const response = await fetch('/api/candidates?limit=1000' + (status ? '&status=' + encodeURIComponent(status) : ''));
+  queue = await response.json(); const select = $('candidate'); select.replaceChildren();
+  for (const row of queue) { const option=document.createElement('option'); option.value=row.candidate_id; option.textContent=`${row.candidate_id} · ${row.question}`; select.append(option); }
+  if (queue.length) await loadCandidate(queue[0].candidate_id); else { current=null; $('position').textContent='No candidates in this queue'; $('evidence').replaceChildren(); }
+}
+async function loadCandidate(id) {
+  const response = await fetch('/api/candidates/' + encodeURIComponent(id));
+  if (!response.ok) { message('Could not load candidate',true); return; }
+  current = await response.json(); $('candidate').value=id;
+  $('position').textContent = `${queue.findIndex(row=>row.candidate_id===id)+1}/${queue.length}`;
+  $('identity').textContent = `Status: ${current.review_status} · Deep: ${current.deep_status} · Evidence complete: ${current.evidence_complete} · Version: ${current.review_version} · Origin: ${current.origin_chunk_id || 'synthetic'}`;
+  for (const id of ['question','category','difficulty','question_type','notes','draft_answer','gold_answer','benchmark_split','reviewer_id']) setValue(id,current[id]);
+  setValue('answerable',current.answerable == null ? '' : String(current.answerable));
+  setValue('in_domain',current.in_domain == null ? '' : String(current.in_domain));
+  setValue('required_facts',(current.required_facts || []).join('\n'));
+  setValue('gold_citation_source_ids',(current.gold_citation_source_ids || []).join('\n'));
+  setValue('factual_paragraph_indices',(current.factual_paragraph_indices || []).join(','));
+  $('draft').textContent = JSON.stringify({draft_question:current.draft_question,draft_answer:current.original_draft_answer,candidate_required_facts:current.candidate_required_facts,origin_title:current.origin_title,generation_metadata:current.generation_metadata},null,2);
+  chunkDecisions = {...(current.chunk_decisions || {})}; sourceDecisions = {...(current.source_decisions || {})};
+  renderEvidence(current.evidence || [], current.origin_evidence); message('');
+}
+function patch(deepOnly=false) {
+  const deep = {gold_answer:$('gold_answer').value.trim() || null, required_facts:lines('required_facts'),
+    gold_citation_source_ids:lines('gold_citation_source_ids'),
+    factual_paragraph_indices:$('factual_paragraph_indices').value.trim() ? $('factual_paragraph_indices').value.split(',').map(x=>Number(x.trim())) : null};
+  if (deepOnly) { if (deep.required_facts===null) deep.required_facts=[]; if (deep.gold_citation_source_ids===null) deep.gold_citation_source_ids=[]; return deep; }
+  return {question:$('question').value.trim(),category:$('category').value,difficulty:$('difficulty').value || null,
+    question_type:$('question_type').value.trim() || null, answerable:boolValue('answerable'),in_domain:boolValue('in_domain'),
+    notes:$('notes').value,draft_answer:$('draft_answer').value.trim() || null,benchmark_split:$('benchmark_split').value || null,
+    reviewer_id:$('reviewer_id').value.trim() || null,chunk_decisions:chunkDecisions,source_decisions:sourceDecisions,...deep};
+}
+async function act(action) {
+  if (!current) return;
+  const response = await fetch(`/api/candidates/${encodeURIComponent(current.candidate_id)}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,patch:action==='accept_deep'?patch(true):patch(),expected_revision:current.revision})});
+  const result = await response.json();
+  if (!response.ok) { message(result.detail || 'Save failed',true); return; }
+  await loadCandidate(current.candidate_id); message(`Saved ${action}.`);
+}
+for (const action of ['save','accept','reject','needs_review','skip','accept_deep','mark_deep_needs_review']) $(action).addEventListener('click',()=>act(action));
+$('filter').addEventListener('change',loadQueue); $('reload').addEventListener('click',loadQueue);
+$('candidate').addEventListener('change',event=>loadCandidate(event.target.value));
+function move(delta) { const index=queue.findIndex(row=>row.candidate_id===current?.candidate_id); const next=queue[index+delta]; if(next) loadCandidate(next.candidate_id); }
+$('prev').addEventListener('click',()=>move(-1)); $('next').addEventListener('click',()=>move(1));
+loadQueue();
+</script>
+</body>
+</html>

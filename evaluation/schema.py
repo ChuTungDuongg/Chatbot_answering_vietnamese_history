@@ -23,6 +23,19 @@ class Question(BaseModel):
     answerable: bool | None = None
     in_domain: bool | None = None
     notes: str = ""
+    # Optional benchmark provenance. Existing unlabeled fixtures remain valid.
+    difficulty: Literal["easy", "medium", "hard"] | None = None
+    question_type: str | None = None
+    benchmark_split: Literal["dev", "test"] | None = None
+    review_status: Literal["accepted"] | None = None
+    retrieval_reviewed: bool | None = None
+    answer_reviewed: bool | None = None
+    citation_reviewed: bool | None = None
+    reviewed_at: str | None = None
+    deep_reviewed_at: str | None = None
+    review_version: int | None = Field(default=None, ge=1)
+    review_policy_version: int | None = Field(default=None, ge=1)
+    reviewer_id: str | None = None
 
 
 def load_questions(path: str | Path) -> list[Question]:

@@ -1,0 +1,35 @@
+{
+  "seed": 2026,
+  "base_target": 50,
+  "max_candidates_per_source": 1,
+  "max_candidates_per_title": 1,
+  "max_famous_topics": 2,
+  "category_targets": {
+    "dynasties": 3,
+    "rulers": 2,
+    "historical_figures": 2,
+    "battles": 3,
+    "wars": 2,
+    "revolutions": 2,
+    "treaties": 2,
+    "colonial_period": 2,
+    "independence": 2,
+    "political_events": 2,
+    "cultural_history": 2,
+    "religious_history": 2,
+    "economic_history": 2,
+    "social_history": 2,
+    "historical_geography": 2,
+    "archaeology_heritage": 2,
+    "chronology": 2,
+    "cause_consequence": 2,
+    "comparison": 2,
+    "multi_hop": 2
+  },
+  "edge_targets": {
+    "ambiguous": 2,
+    "insufficient_evidence": 2,
+    "out_of_domain": 2,
+    "false_premise": 2
+  }
+}
