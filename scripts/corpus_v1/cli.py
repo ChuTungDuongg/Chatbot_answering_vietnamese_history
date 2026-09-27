@@ -7,6 +7,7 @@ import sys
 
 from scripts.corpus_v1.audit import audit
 from scripts.corpus_v1.pipeline import build
+from scripts.corpus_v1.progress import ProgressReporter
 from scripts.corpus_v1.source import inspect, preset
 
 
@@ -29,6 +30,7 @@ def parser() -> argparse.ArgumentParser:
         else:
             item.add_argument("--output", type=Path, required=True)
             item.add_argument("--resume", action="store_true")
+            item.add_argument("--quiet", action="store_true", help="Suppress normal build progress on stderr")
             item.add_argument("--chunk-tokens", type=int, default=384)
             item.add_argument("--chunk-overlap", type=int, default=48)
             item.add_argument("--tokenizer-id", default="intfloat/multilingual-e5-base")
@@ -47,6 +49,8 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
     if args.action in ("inspect-source", "build"):
         cfg = preset(args.preset) if args.preset else {}
         dataset_id = args.dataset_id or cfg.get("dataset_id")
@@ -70,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
                        max_records_per_split=args.max_records_per_split,
                        shard_size=args.shard_size,
                        scratch_dir=str(args.scratch_dir) if args.scratch_dir else None)
+            progress = ProgressReporter(enabled=not args.quiet)
             if args.offline_fixture_dir:
                 if not args.max_records_per_split:
                     raise ValueError("Offline fixture builds require --max-records-per-split")
@@ -84,9 +89,9 @@ def main(argv: list[str] | None = None) -> int:
 
                 result = build(cfg, args.output, resume=args.resume, source_info=info,
                                source_factory=source_factory,
-                               token_counter=lambda value: len(value.split()))
+                               token_counter=lambda value: len(value.split()), progress=progress)
             else:
-                result = build(cfg, args.output, resume=args.resume)
+                result = build(cfg, args.output, resume=args.resume, progress=progress)
     elif args.action == "audit":
         result = audit(args.corpus)
     else:

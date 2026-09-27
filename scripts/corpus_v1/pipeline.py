@@ -19,6 +19,7 @@ from scripts.corpus_v1 import PIPELINE_VERSION, SCHEMA_VERSION
 from scripts.corpus_v1.chunking import CHUNKER_VERSION, chunk_text
 from scripts.corpus_v1.history_filter import FILTER_VERSION, YEAR, classify
 from scripts.corpus_v1.normalize import normalize_text
+from scripts.corpus_v1.progress import ProgressReporter
 from scripts.corpus_v1.provenance import atomic_json, canonical, digest_file, git_sha
 from scripts.corpus_v1.schema import sha256_text, stable_id
 from scripts.corpus_v1.shards import KINDS, commit_shard, completed_shards, shard_file
@@ -270,7 +271,22 @@ def _versions() -> dict[str, str | None]:
 def build(config: dict[str, Any], output: Path, *, resume: bool = False,
           source_factory: Callable[[str], Any] | None = None,
           token_counter: Callable[[str], int] | None = None,
-          source_info: dict[str, Any] | None = None) -> dict[str, Any]:
+          source_info: dict[str, Any] | None = None,
+          progress: ProgressReporter | None = None) -> dict[str, Any]:
+    reporter = progress if progress is not None else ProgressReporter()
+    try:
+        return _build(config, output, resume=resume, source_factory=source_factory,
+                      token_counter=token_counter, source_info=source_info, reporter=reporter)
+    except Exception as exc:
+        reporter.error(output, exc)
+        raise
+
+
+def _build(config: dict[str, Any], output: Path, *, resume: bool,
+           source_factory: Callable[[str], Any] | None,
+           token_counter: Callable[[str], int] | None,
+           source_info: dict[str, Any] | None,
+           reporter: ProgressReporter) -> dict[str, Any]:
     root = _safe_output(output)
     request = _request(config)
     if root.exists() and any(root.iterdir()) and not resume:
@@ -279,6 +295,7 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
     config_path = root / "config.json"
     source_path = root / "source_manifest.json"
     if config_path.exists():
+        reporter.phase("loading saved build configuration")
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         if not resume or cfg.get("request_options") != request or cfg.get("schema_version") != SCHEMA_VERSION:
             raise RuntimeError("Build configuration differs; use a new output directory")
@@ -298,15 +315,28 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
     else:
         if source_path.exists():
             raise RuntimeError("Source manifest exists without config.json")
+        reporter.phase(f"resolving source dataset={request['dataset_id']} requested_revision={request['requested_revision']}")
         info = source_info or resolve_source(request)
+        reporter.phase("resolving tokenizer revision and creating build configuration")
         cfg = _new_configuration(request, info, token_counter is not None)
         atomic_json(config_path, cfg)
         source_meta = {}
     fingerprint = hashlib.sha256(canonical(cfg).encode("utf-8")).hexdigest()
     created_at = source_meta.get("created_at_utc") or datetime.now(timezone.utc).isoformat()
-    shards = {split: completed_shards(root, split, fingerprint, resume=resume)
-              for split in cfg["source_splits"]}
+    scratch_parent = Path(config.get("scratch_dir") or tempfile.gettempdir()).expanduser().resolve()
+    reporter.startup(cfg, root, scratch_parent, resume=resume)
+    if resume:
+        reporter.resume_validating()
+    shards = {}
+    for split in cfg["source_splits"]:
+        shards[split] = completed_shards(root, split, fingerprint, resume=resume,
+                                         on_orphan_cleared=reporter.orphan_cleared if resume else None)
+        if resume:
+            reporter.resume_split(split, len(shards[split]),
+                                  sum(meta["source_count"] for meta in shards[split]))
     observed = {split: sum(meta["source_count"] for meta in parts) for split, parts in shards.items()}
+    if resume:
+        reporter.overall(observed)
     if source_meta.get("config_fingerprint") not in (None, fingerprint):
         raise RuntimeError("Source manifest configuration mismatch")
     source_meta = _source_manifest(info, cfg, fingerprint, observed, False, created_at)
@@ -315,15 +345,16 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
         final = json.loads(final_path.read_text(encoding="utf-8"))
         if final.get("config_fingerprint") != fingerprint:
             raise RuntimeError("Final manifest configuration mismatch")
+        reporter.phase("validating finalized corpus hashes")
         if all((root / name).is_file() and digest_file(root / name) == digest
                for name, digest in final.get("hashes", {}).items()):
+            reporter.done(final, root, already_complete=True)
             return final
         raise RuntimeError("Final corpus output hash mismatch")
     atomic_json(source_path, source_meta)
 
     started = time.monotonic()
     processed_this_run: Counter[str] = Counter()
-    scratch_parent = Path(config.get("scratch_dir") or tempfile.gettempdir()).expanduser().resolve()
     scratch_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="corpus-v1-", dir=scratch_parent) as scratch_name:
         scratch = Path(scratch_name)
@@ -331,9 +362,14 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
         try:
             for table in ("source_ids", "document_texts", "chunk_texts"):
                 connection.execute(f"CREATE TABLE {table} (hash TEXT PRIMARY KEY)")
+            if resume:
+                reporter.dedup(restored=False)
             _seed_seen(connection, root, shards)
+            if resume:
+                reporter.dedup(restored=True)
             counter = token_counter
             if counter is None:
+                reporter.phase("loading pinned tokenizer")
                 from transformers import AutoTokenizer
                 tokenizer = AutoTokenizer.from_pretrained(
                     cfg["tokenizer_id"], revision=cfg["tokenizer_revision_sha"],
@@ -342,24 +378,32 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
             for split in cfg["source_splits"]:
                 expected = cfg["expected_split_sizes"].get(split)
                 limit = cfg["record_limit_per_split"]
+                reporter.split_start(split, observed[split], expected, resume=resume)
                 if limit is not None and observed[split] >= limit:
+                    reporter.split_done(split, observed[split], expected, limit, exhausted=False)
                     continue
                 if limit is None and expected is not None and observed[split] >= expected:
+                    reporter.split_done(split, observed[split], expected, limit, exhausted=False)
                     continue
+                if resume and observed[split]:
+                    reporter.line(f"[resume] continuing {split} at row={observed[split]}")
                 dataset = source_factory(split) if source_factory else load_source(cfg, split)
                 dataset_fingerprint = getattr(dataset, "_fingerprint", None)
                 if isinstance(dataset_fingerprint, str) and dataset_fingerprint:
                     info.setdefault("hf_fingerprints_by_split", {})[split] = dataset_fingerprint
                 iterator = _source_iterator(dataset, observed[split])
+                exhausted = False
                 while True:
                     if limit is not None and observed[split] >= limit:
                         break
                     first = next(iterator, None)
                     if first is None:
+                        exhausted = True
                         break
                     size = cfg["shard_size"] if limit is None else min(cfg["shard_size"], limit - observed[split])
                     block = chain((first,), islice(iterator, size - 1))
                     part = len(shards[split])
+                    shard_started = reporter.shard_start(split, part + 1, observed[split], size)
                     files, counts = _process_shard(block, cfg, split, observed[split], connection,
                                                    counter, scratch)
                     if counts["source_count"] == 0:
@@ -371,8 +415,11 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
                     for key in ("source_count", "document_count", "chunk_count"):
                         processed_this_run[key] += counts[key]
                     atomic_json(source_path, _source_manifest(info, cfg, fingerprint, observed, False, created_at))
+                    reporter.shard_done(split, part + 1, counts, shard_started, observed)
                     if counts["source_count"] < size:
+                        exhausted = True
                         break
+                reporter.split_done(split, observed[split], expected, limit, exhausted=exhausted)
             if cfg["build_scope"] == "full":
                 for split in cfg["source_splits"]:
                     expected = cfg["expected_split_sizes"].get(split)
@@ -382,12 +429,21 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
             connection.close()
     complete = cfg["build_scope"] == "full"
     source_meta = _source_manifest(info, cfg, fingerprint, observed, complete, created_at)
+    reporter.finalize("writing source_manifest.json")
     atomic_json(source_path, source_meta)
+    reporter.finalize("writing source_manifest.json", completed=True)
+    reporter.finalize("aggregating documents")
     _aggregate(root, shards, "documents")
+    reporter.finalize("aggregating documents", completed=True)
+    reporter.finalize("aggregating chunks")
     _aggregate(root, shards, "chunks")
+    reporter.finalize("aggregating chunks", completed=True)
+    reporter.finalize("generating stats and filter audit")
     stats, filter_audit = summarize(root, shards, time.monotonic() - started, processed_this_run)
     atomic_json(root / "stats.json", stats)
     atomic_json(root / "filter_audit.json", filter_audit)
+    reporter.finalize("generating stats and filter audit", completed=True)
+    reporter.finalize("generating samples")
     sample_dir = root / "samples"
     sample_dir.mkdir(exist_ok=True)
     for decision, label in (("KEEP", "kept"), ("REVIEW", "review"), ("DROP", "dropped")):
@@ -397,11 +453,14 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
             for row in filter_audit["examples"][decision]:
                 _write(writer, row)
         os.replace(temporary, path)
+    reporter.finalize("generating samples", completed=True)
     files = ["config.json", "source_manifest.json", "documents.jsonl", "chunks.jsonl",
              "stats.json", "filter_audit.json", "samples/kept.jsonl",
              "samples/review.jsonl", "samples/dropped.jsonl"]
+    reporter.finalize("calculating hashes")
     hashes = {name: digest_file(root / name) for name in files}
     atomic_json(root / "hashes.json", hashes)
+    reporter.finalize("calculating hashes", completed=True)
     manifest = {"schema_version": SCHEMA_VERSION, "pipeline_version": PIPELINE_VERSION,
                 "git_sha": git_sha(), "built_at_utc": datetime.now(timezone.utc).isoformat(),
                 "config_fingerprint": fingerprint, "dataset_id": cfg["dataset_id"],
@@ -426,5 +485,8 @@ def build(config: dict[str, Any], output: Path, *, resume: bool = False,
                 "tokenizer_id": cfg["tokenizer_id"],
                 "tokenizer_revision_sha": cfg["tokenizer_revision_sha"],
                 "source": source_meta, "hashes": hashes, "software_versions": _versions()}
+    reporter.finalize("writing manifest.json")
     atomic_json(final_path, manifest)
+    reporter.finalize("writing manifest.json", completed=True)
+    reporter.done(manifest, root)
     return manifest

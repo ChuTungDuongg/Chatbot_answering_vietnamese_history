@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 from scripts.corpus_v1.provenance import atomic_json, digest_file
 
@@ -26,7 +26,8 @@ def shard_file(root: Path, split: str, part: int, kind: str) -> Path:
     return shard_directory(root, split) / f"part-{part:06d}.{kind}.jsonl"
 
 
-def completed_shards(root: Path, split: str, fingerprint: str, *, resume: bool) -> list[dict[str, Any]]:
+def completed_shards(root: Path, split: str, fingerprint: str, *, resume: bool,
+                     on_orphan_cleared: Callable[[Path], None] | None = None) -> list[dict[str, Any]]:
     directory = shard_directory(root, split)
     if not directory.exists():
         return []
@@ -61,6 +62,8 @@ def completed_shards(root: Path, split: str, fingerprint: str, *, resume: bool) 
         raise RuntimeError(f"Incomplete shard files in {directory}; use --resume")
     for path in orphaned:
         path.unlink()  # no manifest means not committed; rebuild only this shard
+        if on_orphan_cleared:
+            on_orphan_cleared(path)
     return result
 
 

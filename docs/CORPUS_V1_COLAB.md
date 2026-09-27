@@ -16,6 +16,26 @@ python -m scripts.corpus_v1.cli inspect-source --preset uvw-2026 --examples 3
 
 The bootstrap reports Colab status, Python and package versions, root, cache and scratch locations, free disk, and available RAM when observable. Corpus construction needs no GPU. `inspect-source` samples only a few streaming rows from each split, truncates article previews, shows field mapping and expected counts, and fails if the ref cannot be pinned. Inspect the resolved SHA and card metadata before building.
 
+## Progress logging
+
+Build progress is enabled by default and written as flushed lines to **stderr**; the final JSON remains on stdout. The builder logs startup settings, each split and shard, validated resume checkpoints, overall progress, finalization, and completion. The default shard size is 10,000 source rows, so there is one start/completion pair per shard and no per-document spam. `--quiet` suppresses normal progress without changing the corpus. ETA uses source rows completed during the current invocation divided by elapsed time; it is approximate and becomes `unknown` when the total or rate is unavailable. Pilot percentages use the per-split row limit; full percentages use Hub expected split sizes. Resume counts already completed rows in the numerator, while ETA uses the rate measured after resuming.
+
+This excerpt came from the tiny offline UVW-shaped fixture; its all-`a` revision is a test SHA, not the live dataset revision:
+
+```text
+[Corpus V1] dataset=undertheseanlp/UVW-2026 config=default requested_revision=main resolved_revision_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[Corpus V1] scope=pilot splits=train,validation,test expected_split_sizes=train:2,validation:2,test:2 limit_per_split=1
+[train] shard=1 starting rows=0-0 expected_rows=1
+[train] shard=1 completed processed=1 keep=1 review=0 drop=0 documents=1 chunks=1 duplicate_documents=0 duplicate_chunks=0 elapsed=00:00:00 rate=9.2 rows/s
+[overall] progress=1/3 percent=33.3% elapsed=00:00:00 rate=5.3 rows/s eta=00:00:01
+[train] pilot_limit_reached observed=1 expected=2 source_complete=false
+[finalize] aggregating documents starting
+[finalize] aggregating documents completed
+[done] Corpus V1 build complete scope=pilot source_rows=3 documents=1 chunks=1 keep=2 review=0 drop=1 duplicate_documents=1 duplicate_chunks=0 ...
+```
+
+For Colab subprocess calls, invoke `python -u -m scripts.corpus_v1.cli ...` as an extra buffering safeguard. For example, `subprocess.run([sys.executable, "-u", "-m", "scripts.corpus_v1.cli", "build", ...], check=True)` inherits live stderr/stdout. `capture_output=True` holds both streams until the subprocess finishes; use an inherited stream or iterate over a `Popen` pipe when displaying progress in a notebook. On `--resume`, logs show completed shard validation, rows skipped, any uncommitted files cleared, dedup reconstruction, and the row where each split continues.
+
 ## Pilot, review, and audit
 
 Use a new run directory and a fixed row limit per split. `--resume` is safe on the first invocation and required to continue the same run.

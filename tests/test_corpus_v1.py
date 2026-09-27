@@ -1,6 +1,7 @@
 """Offline UVW-shaped coverage of Corpus V1."""
 
 import json
+import io
 from pathlib import Path
 
 import pytest
@@ -10,12 +11,15 @@ from scripts.corpus_v1.chunking import chunk_text
 from scripts.corpus_v1.cli import main as corpus_cli
 from scripts.corpus_v1.history_filter import classify
 from scripts.corpus_v1.pipeline import _source_iterator, build
+from scripts.corpus_v1.progress import ProgressReporter, duration
 from scripts.corpus_v1.provenance import digest_file
 from scripts.corpus_v1.source import article_url, detect_fields, inspect, preset, resolve_source
 from scripts.colab.bootstrap import bootstrap
 
 
 SHA = "a" * 40
+BASELINE_DOCUMENTS_SHA256 = "72ef9c286e99a77d157bc4ebfb9683a473ad1a444462dc06dafc72d408ce11b1"
+BASELINE_CHUNKS_SHA256 = "51e94ed3ce0c6a1be830dd3363b871d5326fcbafead65870589ca67f9ee819d1"
 HISTORY = "Lịch sử triều đại Đại Việt và di sản văn hóa. " * 4
 FIELDS = ["id", "title", "content", "num_chars", "num_sentences", "quality_score",
           "wikidata_id", "main_category"]
@@ -161,6 +165,76 @@ def test_resume_uses_iterable_skip_when_available():
     assert list(_source_iterator(Stream([0, 1, 2, 3]), 2)) == [2, 3]
 
 
+def test_progress_output_and_quiet_preserve_corpus(tmp_path):
+    verbose_root = tmp_path / "corpus_v1" / "verbose"
+    quiet_root = tmp_path / "corpus_v1" / "quiet"
+    messages = io.StringIO()
+    verbose = build(config(), verbose_root, source_factory=source, source_info=source_info(),
+                    token_counter=counter, progress=ProgressReporter(stream=messages))
+    quiet_messages = io.StringIO()
+    quiet = build(config(), quiet_root, source_factory=source, source_info=source_info(),
+                  token_counter=counter, progress=ProgressReporter(enabled=False, stream=quiet_messages))
+    log = messages.getvalue()
+    assert "dataset=undertheseanlp/UVW-2026" in log
+    assert f"resolved_revision_sha={SHA}" in log
+    assert "scope=full splits=train,validation,test" in log
+    assert "[train] shard=1 starting rows=0-0 expected_rows=1" in log
+    assert "[train] shard=1 completed processed=1 keep=1 review=0 drop=0" in log
+    assert "[overall] progress=1/6 percent=16.7%" in log
+    assert "[finalize] aggregating documents starting" in log
+    assert "[finalize] generating stats and filter audit completed" in log
+    assert "[finalize] writing manifest.json completed" in log
+    assert "[done] Corpus V1 build complete scope=full source_rows=6" in log
+    assert quiet_messages.getvalue() == ""
+    assert duration(3661) == "01:01:01"
+    for filename, baseline in (("documents.jsonl", BASELINE_DOCUMENTS_SHA256),
+                               ("chunks.jsonl", BASELINE_CHUNKS_SHA256)):
+        assert digest_file(verbose_root / filename) == digest_file(quiet_root / filename) == baseline
+    assert [r["document_id"] for r in records(verbose_root / "documents.jsonl")] == [
+        r["document_id"] for r in records(quiet_root / "documents.jsonl")]
+    assert [r["chunk_id"] for r in records(verbose_root / "chunks.jsonl")] == [
+        r["chunk_id"] for r in records(quiet_root / "chunks.jsonl")]
+    semantic = ("config_fingerprint", "dataset_id", "resolved_revision_sha", "source_splits",
+                "expected_split_sizes", "observed_split_sizes", "source_complete", "build_scope",
+                "document_count", "chunk_count", "filter_counts", "duplicate_document_count",
+                "duplicate_chunk_count")
+    assert {key: verbose[key] for key in semantic} == {key: quiet[key] for key in semantic}
+    assert verbose["config_fingerprint"] == "8d92f0f4ce997023f20c010f31eb68de2667525429de0c79aded6bbaf61159cb"
+
+    resume_messages = io.StringIO()
+    again = build(config(), verbose_root, resume=True, source_factory=lambda _: pytest.fail("source reloaded"),
+                  token_counter=lambda _: pytest.fail("tokenizer reloaded"),
+                  progress=ProgressReporter(stream=resume_messages))
+    assert again == verbose
+    resumed = resume_messages.getvalue()
+    assert "[resume] validating completed shards..." in resumed
+    assert "[resume] train: completed_shards=2 rows_to_skip=2" in resumed
+    assert "[overall] progress=6/6 percent=100.0%" in resumed
+    assert "already_complete=true" in resumed
+
+
+def test_progress_lines_flush_and_unknown_eta():
+    class Flushed(io.StringIO):
+        flush_count = 0
+
+        def flush(self):
+            self.flush_count += 1
+            return super().flush()
+
+    stream = Flushed()
+    reporter = ProgressReporter(stream=stream)
+    reporter.phase("starting")
+    reporter.targets = {"train": None}
+    reporter.overall({"train": 4}, split="train")
+    assert stream.flush_count == 3
+    assert "eta=unknown" in stream.getvalue()
+    errors = io.StringIO()
+    quiet = ProgressReporter(enabled=False, stream=errors)
+    quiet.context = "split=train shard=2 rows=1-1"
+    quiet.error(Path("corpus_v1/run"), RuntimeError("checksum mismatch"))
+    assert "split=train shard=2 rows=1-1 RuntimeError: checksum mismatch" in errors.getvalue()
+
+
 def test_full_multisplit_resume_and_provenance(tmp_path):
     root = tmp_path / "corpus_v1" / "full"
     first = build(config(), root, source_factory=source, source_info=source_info(), token_counter=counter)
@@ -208,7 +282,7 @@ def test_full_multisplit_resume_and_provenance(tmp_path):
         build(config(), root, resume=True, source_factory=source, token_counter=counter)
 
 
-def test_interrupted_shard_recovery(tmp_path, monkeypatch):
+def test_interrupted_shard_recovery(tmp_path, monkeypatch, capsys):
     import scripts.corpus_v1.pipeline as pipeline
     root = tmp_path / "corpus_v1" / "interrupted"
     original = pipeline.commit_shard
@@ -228,7 +302,14 @@ def test_interrupted_shard_recovery(tmp_path, monkeypatch):
         build(config(), root, source_factory=source, source_info=source_info(), token_counter=counter)
     first_hash = digest_file(root / "intermediate" / "shards" / "train" / "part-000000.records.jsonl")
     monkeypatch.setattr(pipeline, "commit_shard", original)
+    capsys.readouterr()
     final = build(config(), root, resume=True, source_factory=source, token_counter=counter)
+    resumed_log = capsys.readouterr().err
+    assert "[resume] train: completed_shards=1 rows_to_skip=1" in resumed_log
+    assert "[resume] cleared_uncommitted=" in resumed_log
+    assert "[resume] rebuilding global dedup state..." in resumed_log
+    assert "[resume] global dedup state restored" in resumed_log
+    assert "[resume] continuing train at row=1" in resumed_log
     assert final["source_complete"] is True
     assert digest_file(root / "intermediate" / "shards" / "train" / "part-000000.records.jsonl") == first_hash
     assert not (root / "intermediate" / "shards" / "train" / "part-000001.records.jsonl.partial").exists()
@@ -261,11 +342,21 @@ def test_pilot_cli_and_count_mismatch(tmp_path, capsys):
     root = tmp_path / "corpus_v1" / "pilot"
     assert corpus_cli(["build", "--preset", "uvw-2026", "--offline-fixture-dir", str(fixture),
                        "--max-records-per-split", "1", "--shard-size", "1", "--output", str(root)]) == 0
-    capsys.readouterr()
+    pilot_output = capsys.readouterr()
+    assert "[Corpus V1] scope=pilot" in pilot_output.err
+    assert "[done] Corpus V1 build complete scope=pilot" in pilot_output.err
+    assert json.loads(pilot_output.out)["build_scope"] == "pilot"
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["build_scope"] == "pilot" and manifest["source_complete"] is False
     assert manifest["observed_split_sizes"] == dict.fromkeys(("train", "validation", "test"), 1)
     assert json.loads((root / "filter_audit.json").read_text(encoding="utf-8"))["quality_score_distribution"]
+    quiet_root = tmp_path / "corpus_v1" / "quiet_pilot"
+    assert corpus_cli(["build", "--preset", "uvw-2026", "--offline-fixture-dir", str(fixture),
+                       "--max-records-per-split", "1", "--shard-size", "1", "--quiet",
+                       "--output", str(quiet_root)]) == 0
+    quiet_output = capsys.readouterr()
+    assert quiet_output.err == ""
+    assert json.loads(quiet_output.out)["build_scope"] == "pilot"
     assert corpus_cli(["audit", "--corpus", str(root)]) == 0
     capsys.readouterr()
     info = source_info()
