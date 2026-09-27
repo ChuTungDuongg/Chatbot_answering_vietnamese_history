@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from app.config import settings
+from app.rag.artifact_identity import fingerprint, validate_v1_manifests
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,6 @@ class RAGService:
         self.config: dict[str, Any] | None = None
         self.manifest: dict[str, Any] | None = None
         self.chunks: list[dict[str, Any]] = []
-        self.chunk_by_id: dict[str, dict[str, Any]] = {}
         self.ordered_chunk_id_sha256: str | None = None
         self.corpus_sha256: str | None = None
         self.faiss_index = None
@@ -64,12 +64,13 @@ class RAGService:
         self.embedding_revision = None
         self.embedding_dimension = None
         self.chunks = []
-        self.chunk_by_id = {}
         self.ordered_chunk_id_sha256 = None
         self.corpus_sha256 = None
         self.loaded = False
 
     def _validate_artifacts(self) -> None:
+        if settings.retrieval_dense_backend == "qdrant" and not settings.qdrant_manifest_path.is_file():
+            raise RuntimeError("Qdrant V1 index is not finalized; retrieval/qdrant/manifest.json is missing.")
         missing = [str(path) for path in settings.required_retrieval_paths() if not path.exists()]
         if missing:
             raise FileNotFoundError("Missing retrieval artifacts: " + ", ".join(missing))
@@ -79,10 +80,21 @@ class RAGService:
             self.config = json.load(handle)
         with settings.manifest_path.open(encoding="utf-8") as handle:
             self.manifest = json.load(handle)
+        if settings.retrieval_root is not None:
+            if settings.retrieval_dense_backend not in self.manifest.get("available_dense_backends", []):
+                raise RuntimeError(f"{settings.retrieval_dense_backend} is not listed as a finalized dense backend")
+            retrieval = self.config.get("retrieval", {})
+            for key in ("embedding_model_id", "reranker_model_id", "reranker_model_revision"):
+                if retrieval.get(key) != self.manifest.get(key):
+                    raise RuntimeError(f"Runtime {key} differs from runtime manifest")
+            if {k: retrieval.get(k) for k in self.manifest.get("retrieval_settings", {})} != self.manifest.get("retrieval_settings"):
+                raise RuntimeError("Retrieval settings differ from runtime manifest")
 
     def _load_corpus(self) -> None:
         chunks = []
         corpus_digest = hashlib.sha256()
+        ids_digest = hashlib.sha256()
+        seen_ids: set[str] = set()
         with settings.corpus_path.open("rb") as handle:
             for line_number, raw in enumerate(handle, 1):
                 corpus_digest.update(raw)
@@ -95,19 +107,39 @@ class RAGService:
                     raise RuntimeError(f"Invalid corpus JSON at line {line_number}") from exc
                 if not chunk.get("chunk_id"):
                     raise RuntimeError(f"Corpus chunk_id missing at line {line_number}")
+                chunk_id = str(chunk["chunk_id"])
+                if chunk_id in seen_ids:
+                    raise RuntimeError("Duplicate chunk_id in corpus")
+                seen_ids.add(chunk_id)
+                ids_digest.update((chunk_id + "\n").encode("utf-8"))
                 chunks.append(chunk)
         expected = int(self.manifest["corpus"]["count"])
         if len(chunks) != expected:
             raise RuntimeError(f"Corpus count mismatch: {len(chunks)} != {expected}")
-        by_id = {str(chunk["chunk_id"]): chunk for chunk in chunks}
-        if len(by_id) != len(chunks):
-            raise RuntimeError("Duplicate chunk_id in corpus")
-        digest = hashlib.sha256()
-        for chunk in chunks:
-            digest.update((str(chunk["chunk_id"]) + "\n").encode("utf-8"))
-        self.ordered_chunk_id_sha256 = digest.hexdigest()
+        self.ordered_chunk_id_sha256 = ids_digest.hexdigest()
         self.corpus_sha256 = corpus_digest.hexdigest()
-        self.chunks, self.chunk_by_id = chunks, by_id
+        self.chunks = chunks
+        if settings.retrieval_root is not None:
+            expected = {"count": len(chunks), "corpus_sha256": self.corpus_sha256,
+                        "ordered_chunk_id_sha256": self.ordered_chunk_id_sha256}
+            for key, actual in expected.items():
+                if self.manifest["corpus"].get(key) != actual:
+                    raise RuntimeError(f"Runtime corpus {key} mismatch")
+            if settings.corpus_path.stat().st_size != int(self.manifest["corpus"].get("bytes", -1)):
+                raise RuntimeError("Runtime corpus byte count mismatch")
+            manifests = validate_v1_manifests(settings.retrieval_dir, expected,
+                include_qdrant=settings.retrieval_dense_backend == "qdrant")
+            for name in manifests:
+                path = {"faiss": settings.faiss_manifest_path,
+                        "bm25": settings.bm25_manifest_path,
+                        "index": settings.index_manifest_path,
+                        "qdrant": settings.qdrant_manifest_path}[name]
+                if self.manifest["manifest_fingerprints"].get(name) != fingerprint(path):
+                    raise RuntimeError(f"Runtime {name} manifest fingerprint mismatch; regenerate small runtime metadata")
+            faiss = manifests["faiss"]
+            for key in ("embedding_model_id", "embedding_model_resolved_revision", "embedding_dimension"):
+                if self.manifest.get(key) != faiss.get(key):
+                    raise RuntimeError(f"Runtime {key} differs from FAISS manifest")
 
     def _validate_index_manifest(self, path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as handle:
@@ -141,14 +173,20 @@ class RAGService:
         self.faiss_index = faiss.read_index(str(settings.faiss_path))
         if self.faiss_index.ntotal != len(self.chunks):
             raise RuntimeError("FAISS/corpus count mismatch")
+        if manifest.get("embedding_dimension") is not None and self.faiss_index.d != int(manifest["embedding_dimension"]):
+            raise RuntimeError("FAISS vector dimension differs from manifest")
         self.embedding_revision = manifest.get("embedding_model_resolved_revision")
         self.embedding_dimension = manifest.get("embedding_dimension")
-        self.dense_retriever = FaissDenseRetriever(
-            self.faiss_index, [str(row["chunk_id"]) for row in self.chunks])
+        from app.rag.dense_backend import ChunkIds
+        self.dense_retriever = FaissDenseRetriever(self.faiss_index, ChunkIds(self.chunks))
 
     def _load_qdrant(self) -> None:
+        if not settings.qdrant_manifest_path.is_file():
+            raise RuntimeError("Qdrant V1 index is not finalized; retrieval/qdrant/manifest.json is missing.")
         if not settings.qdrant_url:
             raise RuntimeError("RETRIEVAL_DENSE_BACKEND=qdrant requires QDRANT_URL")
+        if not settings.qdrant_api_key:
+            raise RuntimeError("RETRIEVAL_DENSE_BACKEND=qdrant requires QDRANT_API_KEY")
         try:
             from qdrant_client import QdrantClient
         except ImportError as exc:
@@ -173,7 +211,10 @@ class RAGService:
             raise RuntimeError("Qdrant collection unavailable or misconfigured") from None
         if count != len(self.chunks):
             raise RuntimeError(f"Qdrant/corpus count mismatch: {count} != {len(self.chunks)}")
-        collection = client.get_collection(settings.qdrant_collection)
+        try:
+            collection = client.get_collection(settings.qdrant_collection)
+        except Exception:
+            raise RuntimeError("Qdrant collection unavailable or misconfigured") from None
         if str(collection.status).casefold().split(".")[-1] != "green":
             raise RuntimeError(f"Qdrant collection is not ready: {collection.status}")
         vector = collection.config.params.vectors.get("dense_e5")
@@ -190,14 +231,17 @@ class RAGService:
         self.embedding_dimension = manifest.get("embedding_dimension")
         if not self.embedding_revision:
             raise RuntimeError("Qdrant manifest lacks pinned E5 revision")
+        from app.rag.dense_backend import ChunkIds
         self.dense_retriever = QdrantDenseRetriever(
-            client, settings.qdrant_collection, [str(row["chunk_id"]) for row in self.chunks],
+            client, settings.qdrant_collection, ChunkIds(self.chunks),
             hnsw_ef=settings.qdrant_hnsw_ef)
 
     def _load_bm25(self) -> None:
         import bm25s
 
-        self._validate_index_manifest(settings.bm25_manifest_path)
+        manifest = self._validate_index_manifest(settings.bm25_manifest_path)
+        if settings.retrieval_root is not None and manifest.get("embedding_model_id") != self.config["retrieval"]["embedding_model_id"]:
+            raise RuntimeError("BM25 embedding model differs from runtime config")
         self.bm25 = bm25s.BM25.load(str(settings.bm25_path), mmap=True, load_corpus=False)
         if int(self.bm25.scores["num_docs"]) != len(self.chunks):
             raise RuntimeError("BM25/corpus count mismatch")
@@ -225,9 +269,11 @@ class RAGService:
     def _load_reranker(self) -> None:
         from sentence_transformers import CrossEncoder
 
-        self.reranker = CrossEncoder(
-            self.config["retrieval"]["reranker_model_id"], device=self._compute_device()
-        )
+        kwargs = {"device": self._compute_device()}
+        revision = self.config["retrieval"].get("reranker_model_revision")
+        if revision:
+            kwargs["revision"] = revision
+        self.reranker = CrossEncoder(self.config["retrieval"]["reranker_model_id"], **kwargs)
 
     def readiness(self) -> dict[str, Any]:
         retrieval_ready = all((self.loaded, bool(self.chunks), self.dense_retriever is not None,
@@ -240,6 +286,7 @@ class RAGService:
             "dense_loaded": self.dense_retriever is not None,
             "qdrant_hnsw_ef": settings.qdrant_hnsw_ef if settings.retrieval_dense_backend == "qdrant" else None,
             "bm25_loaded": self.bm25 is not None,
+            "bm25_documents": int(self.bm25.scores["num_docs"]) if self.bm25 is not None else None,
             "embedder_loaded": self.embedder is not None,
             "reranker_loaded": self.reranker is not None,
             "model_loaded": False,

@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_mode: Literal["api-only", "retrieval-only", "full"] = "api-only"
     artifact_root: Path = Path("./artifacts/vn_history_deployment")
+    corpus_path_override: Path | None = Field(default=None, validation_alias="CORPUS_PATH")
+    retrieval_root: Path | None = None
+    inference_config_path_override: Path | None = Field(default=None, validation_alias="INFERENCE_CONFIG_PATH")
+    runtime_manifest_path: Path | None = None
     retrieval_dense_backend: Literal["faiss", "qdrant"] = "faiss"
     qdrant_url: str | None = None
     qdrant_api_key: SecretStr | None = None
@@ -50,14 +54,17 @@ class Settings(BaseSettings):
     chat_database_path: Path = Path("./data/chat.sqlite3")
     cors_origins_value: str = Field(default="http://localhost:5173,http://127.0.0.1:5173", validation_alias="CORS_ORIGINS", exclude=True)
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8",
+                                      extra="ignore", populate_by_name=True)
 
     @field_validator("default_inference_mode", mode="before")
     @classmethod
     def normalize_default_inference_mode(cls, value):
         return normalize_chat_mode(value, default=ChatMode.HYBRID)
 
-    @field_validator("hybrid_model_revision", "central_model_revision", "model_cache_dir", mode="before")
+    @field_validator("hybrid_model_revision", "central_model_revision", "model_cache_dir",
+                     "corpus_path_override", "retrieval_root", "inference_config_path_override",
+                     "runtime_manifest_path", mode="before")
     @classmethod
     def empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
@@ -102,19 +109,23 @@ class Settings(BaseSettings):
 
     @property
     def corpus_path(self) -> Path:
-        return self.artifact_root / "corpus" / "vn_history_rag_chunks_enriched.jsonl"
+        return self.corpus_path_override or self.artifact_root / "corpus" / "vn_history_rag_chunks_enriched.jsonl"
+
+    @property
+    def retrieval_dir(self) -> Path:
+        return self.retrieval_root or self.artifact_root / "retrieval"
 
     @property
     def faiss_path(self) -> Path:
-        return self.artifact_root / "retrieval" / "faiss" / "chunks.index"
+        return self.retrieval_dir / "faiss" / "chunks.index"
 
     @property
     def faiss_manifest_path(self) -> Path:
-        return self.artifact_root / "retrieval" / "faiss" / "manifest.json"
+        return self.retrieval_dir / "faiss" / "manifest.json"
 
     @property
     def bm25_path(self) -> Path:
-        return self.artifact_root / "retrieval" / "bm25s_index"
+        return self.retrieval_dir / "bm25s_index"
 
     @property
     def bm25_manifest_path(self) -> Path:
@@ -122,20 +133,33 @@ class Settings(BaseSettings):
 
     @property
     def qdrant_manifest_path(self) -> Path:
-        return self.artifact_root / "retrieval" / "qdrant" / "manifest.json"
+        return self.retrieval_dir / "qdrant" / "manifest.json"
+
+    @property
+    def index_manifest_path(self) -> Path:
+        return self.retrieval_dir / "index_manifest.json"
 
     @property
     def inference_config_path(self) -> Path:
+        if self.inference_config_path_override:
+            return self.inference_config_path_override
+        if self.corpus_path_override and self.retrieval_root:
+            return self.corpus_path.parent / "runtime" / "inference_config.json"
         return self.artifact_root / "config" / "inference_config.json"
 
     @property
     def manifest_path(self) -> Path:
+        if self.runtime_manifest_path:
+            return self.runtime_manifest_path
+        if self.corpus_path_override and self.retrieval_root:
+            return self.corpus_path.parent / "runtime" / "manifest.json"
         return self.artifact_root / "manifest.json"
 
     def required_retrieval_paths(self) -> list[Path]:
         dense = ([self.faiss_path, self.faiss_manifest_path]
                  if self.retrieval_dense_backend == "faiss" else [self.qdrant_manifest_path])
         return [self.corpus_path, *dense, self.bm25_path, self.bm25_manifest_path,
+                *([self.index_manifest_path] if self.retrieval_root is not None else []),
                 self.inference_config_path, self.manifest_path]
 
 

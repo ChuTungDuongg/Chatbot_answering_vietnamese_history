@@ -208,7 +208,7 @@ def test_faiss_mode_needs_no_qdrant_and_qdrant_needs_url(monkeypatch):
     import app.services.rag_service as service_module
     monkeypatch.setattr(service_module, "settings", Settings(
         _env_file=None, retrieval_dense_backend="qdrant", qdrant_url=None))
-    with pytest.raises(RuntimeError, match="requires QDRANT_URL"):
+    with pytest.raises(RuntimeError, match="index is not finalized"):
         RAGService()._load_qdrant()
 
 
@@ -243,7 +243,8 @@ def test_runtime_selects_qdrant_and_checks_collection(tmp_path, monkeypatch):
     import app.services.rag_service as service_module
     monkeypatch.setattr(service_module, "settings", Settings(
         _env_file=None, artifact_root=tmp_path, retrieval_dense_backend="qdrant",
-        qdrant_url="http://fake", qdrant_collection="test", qdrant_hnsw_ef=128))
+            qdrant_url="http://fake", qdrant_api_key="placeholder",
+            qdrant_collection="test", qdrant_hnsw_ef=128))
     monkeypatch.setattr("qdrant_client.QdrantClient", lambda **kwargs: client)
     service = RAGService()
     service.chunks = rows
@@ -254,6 +255,29 @@ def test_runtime_selects_qdrant_and_checks_collection(tmp_path, monkeypatch):
     assert service.faiss_index is None
     assert service.embedding_revision == "a" * 40
     assert service.dense_retriever.search(np.array([1.0, 1.0]), 2)[0].backend == "qdrant"
+    service_module.settings.qdrant_collection = "other"
+    with pytest.raises(RuntimeError, match="collection differs"):
+        service._load_qdrant()
+    service_module.settings.qdrant_collection = "test"
+    client.points.pop(4)
+    with pytest.raises(RuntimeError, match="count mismatch"):
+        service._load_qdrant()
+    client.points[4] = SimpleNamespace(id=4)
+    original_get_collection = client.get_collection
+    def wrong_dimension(collection):
+        info = original_get_collection(collection)
+        info.config.params.vectors["dense_e5"].size = 3
+        return info
+    client.get_collection = wrong_dimension
+    with pytest.raises(RuntimeError, match="vector configuration"):
+        service._load_qdrant()
+    client.get_collection = original_get_collection
+    def leaking_error(*_args):
+        raise RuntimeError("placeholder-secret")
+    client.get_collection = leaking_error
+    with pytest.raises(RuntimeError, match="unavailable or misconfigured") as error:
+        service._load_qdrant()
+    assert "placeholder-secret" not in str(error.value)
     client.get_collection = lambda *_: SimpleNamespace(status="yellow")
     with pytest.raises(RuntimeError, match="not ready"):
         service._load_qdrant()
