@@ -7,6 +7,7 @@ accelerate==1.14.0
 
 faiss-cpu==1.15.0
 bm25s==0.3.10
+qdrant-client==1.19.1
 
 fastapi==0.141.1
 uvicorn[standard]

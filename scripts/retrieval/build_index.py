@@ -1,4 +1,4 @@
-"""Build ordered E5/FAISS and BM25S indexes from explicit corpus paths.
+"""Build ordered E5/FAISS, E5/Qdrant, and shared BM25S indexes.
 
 Dense input is batched. BM25S still materializes token IDs and sparse arrays;
 its independent phase avoids holding the dense model and vectors at that time.
@@ -22,8 +22,8 @@ from typing import Any, Iterator
 
 
 MODEL_ID = "intfloat/multilingual-e5-base"
-INDEX_VERSION = "corpus_v1_index_v1"
-BUILDER_VERSION = "2"
+INDEX_VERSION = "corpus_v1_index_v2"
+BUILDER_VERSION = "3"
 PASSAGE_TEMPLATE = "passage: {title}\n{text}"
 PASSAGE_PREFIX = "passage: "
 QUERY_PREFIX = "query: "
@@ -149,6 +149,7 @@ def output_paths(out: Path) -> dict[str, str]:
         "faiss_manifest": str(out / "faiss" / "manifest.json"),
         "bm25_directory": str(out / "bm25s_index"),
         "bm25_manifest": str(out / "bm25s_index" / "phase9_manifest.json"),
+        "qdrant_manifest": str(out / "qdrant" / "manifest.json"),
         "index_manifest": str(out / "index_manifest.json"),
     }
 
@@ -181,6 +182,7 @@ def preflight_report(corpus: Path, out: Path, scan: dict[str, Any], *,
         "output_dir_exists": out.exists(),
         "components_already_present": {
             "faiss": (out / "faiss").exists(),
+            "qdrant": (out / "qdrant").exists(),
             "bm25": (out / "bm25s_index").exists(),
         },
         "duplicate_detection_memory": "Exact preflight duplicate checking retains unique IDs in a Python set; text and rows are streamed.",
@@ -212,6 +214,7 @@ def common_manifest(corpus: Path, scan: dict[str, Any]) -> dict[str, Any]:
         "schema_version": 1, "index_version": INDEX_VERSION,
         "builder_version": BUILDER_VERSION,
         "corpus_path": str(corpus), "corpus_sha256": scan["corpus_sha256"],
+        "corpus_bytes": scan["corpus_bytes"],
         "corpus_chunk_count": scan["chunk_count"],
         "ordered_chunk_id_sha256": scan["ordered_chunk_id_sha256"],
         "source_corpus_config_fingerprint": fingerprint,
@@ -221,7 +224,7 @@ def common_manifest(corpus: Path, scan: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_existing(out: Path, scan: dict[str, Any]) -> None:
-    for partial in (out / "faiss.partial", out / "bm25s_index.partial",
+    for partial in (out / "faiss.partial", out / "qdrant.partial", out / "bm25s_index.partial",
                     out / "index_manifest.json.partial"):
         if partial.exists():
             raise RuntimeError(f"Incomplete index output exists: {partial}; inspect it before retrying")
@@ -233,37 +236,73 @@ def check_existing(out: Path, scan: dict[str, Any]) -> None:
             raise RuntimeError(f"Incomplete index component exists: {directory}")
         if directory.exists() and not (directory / required_name).is_file():
             raise RuntimeError(f"Incomplete index component exists: {directory}")
-    for path in (out / "faiss" / "manifest.json", out / "bm25s_index" / "phase9_manifest.json"):
+    if (out / "qdrant").exists() and not (out / "qdrant" / "manifest.json").is_file():
+        raise RuntimeError(f"Incomplete index component exists: {out / 'qdrant'}")
+    for path in (out / "faiss" / "manifest.json", out / "qdrant" / "manifest.json",
+                 out / "bm25s_index" / "phase9_manifest.json"):
         if path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
             if (saved.get("count") != scan["chunk_count"] or
                     saved.get("corpus_sha256") != scan["corpus_sha256"] or
                     saved.get("ordered_chunk_id_sha256") != scan["ordered_chunk_id_sha256"]):
                 raise RuntimeError(f"Existing index component differs from corpus: {path}")
+    assert_dense_manifests_match(out)
 
 
-def add_faiss_batches(corpus: Path, scan: dict[str, Any], index, model, *,
-                      batch_size: int, dimension: int) -> None:
+def assert_dense_manifests_match(out: Path) -> None:
+    paths = [out / "faiss" / "manifest.json", out / "qdrant" / "manifest.json"]
+    if not all(path.exists() for path in paths):
+        return
+    faiss, qdrant = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+    for key in ("corpus_sha256", "corpus_bytes", "ordered_chunk_id_sha256", "count",
+                "embedding_model_id", "embedding_model_resolved_revision",
+                "embedding_dimension", "normalize_embeddings", "passage_prefix",
+                "query_prefix", "passage_template"):
+        if faiss.get(key) != qdrant.get(key):
+            raise RuntimeError(f"FAISS/Qdrant manifest mismatch: {key}")
+    if faiss.get("shared_embedding_stream") and qdrant.get("shared_embedding_stream"):
+        if faiss.get("embedding_stream_sha256") != qdrant.get("embedding_stream_sha256"):
+            raise RuntimeError("FAISS/Qdrant shared embedding stream hash mismatch")
+
+
+def add_dense_batches(corpus: Path, scan: dict[str, Any], model, *,
+                      batch_size: int, dimension: int, index=None, qdrant_sink=None) -> str:
     import numpy as np
     tracker = CorpusPass(corpus)
+    embedding_digest = hashlib.sha256()
     started = time.monotonic()
     for number, batch in enumerate(batches(tracker.rows(), batch_size), 1):
         first = tracker.count - len(batch)
-        log(f"[faiss] batch={number} rows={first}-{tracker.count - 1}")
+        if number == 1 or number % 100 == 0 or tracker.count == scan["chunk_count"]:
+            log(f"[dense] batch={number} rows={first}-{tracker.count - 1}")
         passages = [PASSAGE_TEMPLATE.format(title=row.get("title", ""), text=row["text"]) for row in batch]
-        vectors = np.asarray(model.encode(passages, normalize_embeddings=True,
-                                          batch_size=batch_size, convert_to_numpy=True,
-                                          show_progress_bar=False), dtype="float32")
+        vectors = np.ascontiguousarray(model.encode(passages, normalize_embeddings=True,
+                                                    batch_size=batch_size, convert_to_numpy=True,
+                                                    show_progress_bar=False), dtype="float32")
         if vectors.shape != (len(batch), dimension):
             raise RuntimeError(f"Embedding shape mismatch: {vectors.shape}")
-        index.add(vectors)
+        embedding_digest.update(vectors.tobytes(order="C"))
+        if index is not None:
+            index.add(vectors)
+        if qdrant_sink is not None:
+            qdrant_sink.add(batch, vectors, first)
         elapsed = max(time.monotonic() - started, 1e-9)
         rate = tracker.count / elapsed
         eta = (scan["chunk_count"] - tracker.count) / rate
-        log(f"[faiss] encoded={len(batch)} total={tracker.count}/{scan['chunk_count']} rate={rate:.2f} chunks/s elapsed={elapsed:.1f}s eta={eta:.1f}s")
+        if number == 1 or number % 100 == 0 or tracker.count == scan["chunk_count"]:
+            log(f"[dense] encoded={len(batch)} total={tracker.count}/{scan['chunk_count']} rate={rate:.2f} chunks/s elapsed={elapsed:.1f}s eta={eta:.1f}s")
     assert_same_corpus(tracker.report(), scan)
-    if index.ntotal != scan["chunk_count"]:
+    if index is not None and index.ntotal != scan["chunk_count"]:
         raise RuntimeError("FAISS vector count differs from corpus count")
+    if qdrant_sink is not None and qdrant_sink.count != scan["chunk_count"]:
+        raise RuntimeError("Qdrant upsert count differs from corpus count")
+    return embedding_digest.hexdigest()
+
+
+def add_faiss_batches(corpus: Path, scan: dict[str, Any], index, model, *,
+                      batch_size: int, dimension: int) -> str:
+    return add_dense_batches(corpus, scan, model, batch_size=batch_size,
+                             dimension=dimension, index=index)
 
 
 def build_faiss(corpus: Path, out: Path, scan: dict[str, Any], *,
@@ -271,6 +310,7 @@ def build_faiss(corpus: Path, out: Path, scan: dict[str, Any], *,
                 batch_size: int, model_factory=None, faiss_module=None) -> dict[str, Any]:
     if (out / "faiss").exists():
         raise FileExistsError(f"FAISS output already exists: {out / 'faiss'}")
+    started = time.monotonic()
     if faiss_module is None:
         import faiss as faiss_module
     if model_factory is None:
@@ -282,7 +322,24 @@ def build_faiss(corpus: Path, out: Path, scan: dict[str, Any], *,
     if dimension < 1:
         raise RuntimeError("Embedding model reported no valid dimension")
     index = faiss_module.IndexFlatIP(dimension)
-    add_faiss_batches(corpus, scan, index, model, batch_size=batch_size, dimension=dimension)
+    embedding_hash = add_faiss_batches(corpus, scan, index, model,
+                                       batch_size=batch_size, dimension=dimension)
+    manifest = commit_faiss(corpus, out, scan, index, faiss_module,
+                            requested_revision=requested_revision,
+                            resolved_revision=resolved_revision, device=device,
+                            batch_size=batch_size, dimension=dimension,
+                            build_duration_seconds=time.monotonic() - started,
+                            embedding_stream_sha256=embedding_hash,
+                            shared_embedding_stream=False)
+    del index, model
+    return manifest
+
+
+def commit_faiss(corpus: Path, out: Path, scan: dict[str, Any], index, faiss_module, *,
+                 requested_revision: str, resolved_revision: str, device: str,
+                 batch_size: int, dimension: int,
+                 build_duration_seconds: float, embedding_stream_sha256: str,
+                 shared_embedding_stream: bool) -> dict[str, Any]:
     manifest = {
         **common_manifest(corpus, scan), "count": scan["chunk_count"],
         "embedding_model_id": MODEL_ID,
@@ -292,18 +349,92 @@ def build_faiss(corpus: Path, out: Path, scan: dict[str, Any], *,
         "passage_prefix": PASSAGE_PREFIX, "query_prefix": QUERY_PREFIX,
         "passage_template": PASSAGE_TEMPLATE, "embedding_batch_size": batch_size,
         "device": device, "faiss_index_type": "IndexFlatIP",
+        "build_duration_seconds": round(build_duration_seconds, 3),
+        "embedding_stream_sha256": embedding_stream_sha256,
+        "shared_embedding_stream": shared_embedding_stream,
     }
     stage = out / "faiss.partial"
     stage.mkdir()
     faiss_module.write_index(index, str(stage / "chunks.index"))
     (stage / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(stage, out / "faiss")
-    del index, model
     return manifest
+
+
+def build_qdrant(corpus: Path, out: Path, scan: dict[str, Any], *,
+                 requested_revision: str, resolved_revision: str, device: str,
+                 batch_size: int, url: str | None, collection: str,
+                 model_factory=None, client=None) -> dict[str, Any]:
+    from scripts.retrieval.qdrant_index import QdrantSink, make_client
+    started = time.monotonic()
+
+    if model_factory is None:
+        from sentence_transformers import SentenceTransformer
+        model_factory = lambda: SentenceTransformer(MODEL_ID, revision=resolved_revision, device=device)
+    if client is None:
+        client = make_client(url, os.getenv("QDRANT_API_KEY"))
+    log(f"[qdrant] loading model={MODEL_ID} revision={resolved_revision} device={device}")
+    model = model_factory()
+    dimension = int(model.get_sentence_embedding_dimension())
+    if dimension < 1:
+        raise RuntimeError("Embedding model reported no valid dimension")
+    sink = QdrantSink(client, collection, dimension, out)
+    embedding_hash = add_dense_batches(corpus, scan, model, batch_size=batch_size,
+                                       dimension=dimension, qdrant_sink=sink)
+    manifest = sink.finish(common_manifest(corpus, scan), model_revision=resolved_revision,
+                           requested_revision=requested_revision, batch_size=batch_size,
+                           device=device, build_duration_seconds=time.monotonic() - started,
+                           embedding_stream_sha256=embedding_hash,
+                           shared_embedding_stream=False)
+    del model
+    return manifest
+
+
+def build_dense_pair(corpus: Path, out: Path, scan: dict[str, Any], *,
+                     requested_revision: str, resolved_revision: str, device: str,
+                     batch_size: int, url: str | None, collection: str,
+                     model_factory=None, faiss_module=None, client=None) -> tuple[dict[str, Any], dict[str, Any]]:
+    from scripts.retrieval.qdrant_index import QdrantSink, make_client
+    started = time.monotonic()
+
+    if faiss_module is None:
+        import faiss as faiss_module
+    if model_factory is None:
+        from sentence_transformers import SentenceTransformer
+        model_factory = lambda: SentenceTransformer(MODEL_ID, revision=resolved_revision, device=device)
+    if client is None:
+        client = make_client(url, os.getenv("QDRANT_API_KEY"))
+    log(f"[dense] loading shared model={MODEL_ID} revision={resolved_revision} device={device}")
+    model = model_factory()
+    dimension = int(model.get_sentence_embedding_dimension())
+    if dimension < 1:
+        raise RuntimeError("Embedding model reported no valid dimension")
+    index = faiss_module.IndexFlatIP(dimension)
+    sink = QdrantSink(client, collection, dimension, out)
+    embedding_hash = add_dense_batches(corpus, scan, model, batch_size=batch_size,
+                                       dimension=dimension, index=index,
+                                       qdrant_sink=sink)
+    faiss_manifest = commit_faiss(corpus, out, scan, index, faiss_module,
+                                  requested_revision=requested_revision,
+                                  resolved_revision=resolved_revision, device=device,
+                                  batch_size=batch_size, dimension=dimension,
+                                  build_duration_seconds=time.monotonic() - started,
+                                  embedding_stream_sha256=embedding_hash,
+                                  shared_embedding_stream=True)
+    qdrant_manifest = sink.finish(common_manifest(corpus, scan),
+                                  model_revision=resolved_revision,
+                                  requested_revision=requested_revision,
+                                  batch_size=batch_size, device=device,
+                                  build_duration_seconds=time.monotonic() - started,
+                                  embedding_stream_sha256=embedding_hash,
+                                  shared_embedding_stream=True)
+    del model, index
+    return faiss_manifest, qdrant_manifest
 
 
 def build_bm25(corpus: Path, out: Path, scan: dict[str, Any], *, batch_size: int,
                bm25_module=None) -> dict[str, Any]:
+    started = time.monotonic()
     if (out / "bm25s_index").exists():
         raise FileExistsError(f"BM25 output already exists: {out / 'bm25s_index'}")
     if bm25_module is None:
@@ -338,6 +469,7 @@ def build_bm25(corpus: Path, out: Path, scan: dict[str, Any], *, batch_size: int
             "title_repetitions": 2,
             "note": "title duplicated x2 + full text, normalized for Vietnamese lexical retrieval",
         },
+        "build_duration_seconds": round(time.monotonic() - started, 3),
     }
     stage = out / "bm25s_index.partial"
     stage.mkdir()
@@ -350,8 +482,10 @@ def build_bm25(corpus: Path, out: Path, scan: dict[str, Any], *, batch_size: int
 
 
 def write_index_manifest(corpus: Path, out: Path, scan: dict[str, Any]) -> dict[str, Any]:
+    assert_dense_manifests_match(out)
     components = {}
     for name, path in (("faiss", out / "faiss" / "manifest.json"),
+                       ("qdrant", out / "qdrant" / "manifest.json"),
                        ("bm25", out / "bm25s_index" / "phase9_manifest.json")):
         if path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
@@ -361,16 +495,21 @@ def write_index_manifest(corpus: Path, out: Path, scan: dict[str, Any]) -> dict[
                 raise RuntimeError(f"Index component differs from corpus: {path}")
             components[name] = saved
     dense = components.get("faiss", {})
+    if not dense:
+        dense = components.get("qdrant", {})
     sparse = components.get("bm25", {})
     manifest = {
         **common_manifest(corpus, scan), "components_present": sorted(components),
-        "component_status": {name: name in components for name in ("faiss", "bm25")},
+        "component_status": {name: name in components for name in ("faiss", "qdrant", "bm25")},
         **{key: dense.get(key) for key in (
             "embedding_model_requested_revision", "embedding_model_resolved_revision",
             "embedding_dimension", "normalize_embeddings", "passage_prefix",
             "query_prefix", "passage_template",
-            "embedding_batch_size", "device", "faiss_index_type")},
+            "embedding_batch_size", "device", "faiss_index_type",
+            "embedding_stream_sha256", "shared_embedding_stream")},
         "embedding_model_id": dense.get("embedding_model_id", MODEL_ID),
+        "qdrant_collection": components.get("qdrant", {}).get("collection_name"),
+        "qdrant_hnsw_configuration": components.get("qdrant", {}).get("hnsw_configuration"),
         "bm25_configuration": sparse.get("bm25_configuration"),
     }
     temp = out / "index_manifest.json.partial"
@@ -380,7 +519,7 @@ def write_index_manifest(corpus: Path, out: Path, scan: dict[str, Any]) -> dict[
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Preflight or build ordered E5/FAISS and BM25S indexes.")
+    parser = argparse.ArgumentParser(description="Preflight or build ordered E5/FAISS, E5/Qdrant and BM25S indexes.")
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--embedding-model", default=MODEL_ID)
@@ -389,7 +528,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Preflight estimate only; build uses actual model dimension.")
     parser.add_argument("--embedding-batch-size", type=int, default=64)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-    parser.add_argument("--component", choices=("all", "faiss", "bm25"), default="all")
+    parser.add_argument("--component", choices=("all", "all-backends", "dense-all", "faiss", "qdrant", "bm25"), default="all",
+                        help="all retains the FAISS+BM25S baseline; all-backends adds Qdrant")
+    parser.add_argument("--qdrant-url", default=os.getenv("QDRANT_URL"))
+    parser.add_argument("--qdrant-collection", default=os.getenv("QDRANT_COLLECTION", "vn_history_v1_e5"))
     parser.add_argument("--preflight", action="store_true",
                         help="Read and validate corpus without writing outputs or loading a model.")
     return parser
@@ -409,23 +551,44 @@ def main(argv: list[str] | None = None) -> int:
     report = preflight_report(corpus, out, scan, dimension=args.embedding_dimension,
                               batch_size=args.embedding_batch_size, device=device,
                               requested_revision=args.model_revision)
+    report["qdrant_collection"] = args.qdrant_collection
+    report["qdrant_configured"] = bool(args.qdrant_url)
     log(f"[index] chunks={scan['chunk_count']} corpus_sha256={scan['corpus_sha256']}")
     log(f"[index] embedding_dim_estimate={args.embedding_dimension} estimated_flat_index={report['estimated_faiss_vector_gib']} GiB")
     if args.preflight:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     check_existing(out, scan)
-    for component, path in (("faiss", out / "faiss"), ("bm25", out / "bm25s_index")):
-        if args.component in ("all", component) and path.exists():
+    requested_components = ({"faiss", "qdrant", "bm25"} if args.component == "all-backends" else
+                            {"faiss", "bm25"} if args.component == "all" else
+                            {"faiss", "qdrant"} if args.component == "dense-all" else
+                            {args.component})
+    for component, path in (("faiss", out / "faiss"), ("qdrant", out / "qdrant"),
+                            ("bm25", out / "bm25s_index")):
+        if component in requested_components and path.exists():
             raise FileExistsError(f"Selected index component already exists: {path}")
     out.mkdir(parents=True, exist_ok=True)
-    if args.component in ("all", "faiss"):
+    if {"faiss", "qdrant"} <= requested_components:
+        revision = resolve_model_revision(MODEL_ID, args.model_revision)
+        build_dense_pair(corpus, out, scan, requested_revision=args.model_revision,
+                         resolved_revision=revision, device=device,
+                         batch_size=args.embedding_batch_size,
+                         url=args.qdrant_url, collection=args.qdrant_collection)
+        gc.collect()
+    elif "faiss" in requested_components:
         revision = resolve_model_revision(MODEL_ID, args.model_revision)
         build_faiss(corpus, out, scan, requested_revision=args.model_revision,
                     resolved_revision=revision, device=device,
                     batch_size=args.embedding_batch_size)
         gc.collect()
-    if args.component in ("all", "bm25"):
+    elif "qdrant" in requested_components:
+        revision = resolve_model_revision(MODEL_ID, args.model_revision)
+        build_qdrant(corpus, out, scan, requested_revision=args.model_revision,
+                     resolved_revision=revision, device=device,
+                     batch_size=args.embedding_batch_size,
+                     url=args.qdrant_url, collection=args.qdrant_collection)
+        gc.collect()
+    if "bm25" in requested_components:
         build_bm25(corpus, out, scan, batch_size=args.embedding_batch_size)
     manifest = write_index_manifest(corpus, out, scan)
     log(f"[index] completed components={','.join(manifest['components_present'])} output={out}")

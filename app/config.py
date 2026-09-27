@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.chat_modes import ChatMode, normalize_chat_mode
@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_mode: Literal["api-only", "retrieval-only", "full"] = "api-only"
     artifact_root: Path = Path("./artifacts/vn_history_deployment")
+    retrieval_dense_backend: Literal["faiss", "qdrant"] = "faiss"
+    qdrant_url: str | None = None
+    qdrant_api_key: SecretStr | None = None
+    qdrant_collection: str = "vn_history_v1_e5"
+    qdrant_hnsw_ef: int | None = Field(default=None, ge=1)
     device: Literal["cpu", "cuda"] = "cpu"
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
     hybrid_model_id: str = HYBRID_MODEL_ID
@@ -116,6 +121,10 @@ class Settings(BaseSettings):
         return self.bm25_path / "phase9_manifest.json"
 
     @property
+    def qdrant_manifest_path(self) -> Path:
+        return self.artifact_root / "retrieval" / "qdrant" / "manifest.json"
+
+    @property
     def inference_config_path(self) -> Path:
         return self.artifact_root / "config" / "inference_config.json"
 
@@ -124,8 +133,10 @@ class Settings(BaseSettings):
         return self.artifact_root / "manifest.json"
 
     def required_retrieval_paths(self) -> list[Path]:
-        return [self.corpus_path, self.faiss_path, self.faiss_manifest_path,
-                self.bm25_path, self.bm25_manifest_path, self.inference_config_path, self.manifest_path]
+        dense = ([self.faiss_path, self.faiss_manifest_path]
+                 if self.retrieval_dense_backend == "faiss" else [self.qdrant_manifest_path])
+        return [self.corpus_path, *dense, self.bm25_path, self.bm25_manifest_path,
+                self.inference_config_path, self.manifest_path]
 
 
 settings = Settings()

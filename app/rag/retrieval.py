@@ -558,8 +558,8 @@ class HybridRetriever:
         if self.service.reranker is None:
             raise RuntimeError("Reranker is not loaded.")
 
-        if self.service.faiss_index is None:
-            raise RuntimeError("FAISS index is not loaded.")
+        if getattr(self.service, "dense_retriever", None) is None and self.service.faiss_index is None:
+            raise RuntimeError("Dense index is not loaded.")
 
         if self.service.bm25 is None:
             raise RuntimeError("BM25 index is not loaded.")
@@ -848,6 +848,16 @@ class HybridRetriever:
     # Dense search
     # ========================================================
 
+    def _dense_backend(self):
+        backend = getattr(self.service, "dense_retriever", None)
+        if backend is not None:
+            return backend
+        # Tiny legacy test services and V0 callers may expose only faiss_index.
+        from app.rag.dense_backend import FaissDenseRetriever
+
+        return FaissDenseRetriever(
+            self.service.faiss_index, [str(row["chunk_id"]) for row in self.service.chunks])
+
     def dense_search(
         self,
         question: str,
@@ -861,16 +871,8 @@ class HybridRetriever:
             normalize_embeddings=True,
         ).astype("float32")
 
-        scores, indexes = self.service.faiss_index.search(
-            embedding,
-            min(k, self.service.faiss_index.ntotal),
-        )
-
-        return [
-            (int(index), float(score))
-            for index, score in zip(indexes[0], scores[0])
-            if int(index) >= 0
-        ]
+        return [(hit.row_id, hit.score) for hit in
+                self._dense_backend().search(embedding[0], k)]
 
     # ========================================================
     # BM25 search
@@ -1198,15 +1200,8 @@ class HybridRetriever:
             ).astype("float32")
             embedding_ms += (time.perf_counter() - embedding_started) * 1000
             faiss_started = time.perf_counter()
-            scores, indexes = self.service.faiss_index.search(
-                embedding,
-                min(self.dense_fetch_k, self.service.faiss_index.ntotal),
-            )
-            dense = [
-                (int(index), float(score))
-                for index, score in zip(indexes[0], scores[0])
-                if int(index) >= 0
-            ]
+            dense = [(hit.row_id, hit.score) for hit in
+                     self._dense_backend().search(embedding[0], self.dense_fetch_k)]
             faiss_ms += (time.perf_counter() - faiss_started) * 1000
             bm25_started = time.perf_counter()
             bm25 = self.bm25_search(query)

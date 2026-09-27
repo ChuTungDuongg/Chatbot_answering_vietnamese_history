@@ -28,6 +28,8 @@ artifacts/corpus_v1/
     faiss/
       chunks.index
       manifest.json
+    qdrant/
+      manifest.json         # local proof for a remote or persistent collection
     bm25s_index/
       data.csc.index.npy
       indices.csc.index.npy
@@ -89,9 +91,14 @@ fragments. Review these before indexing; preflight does not change corpus bytes.
 
 ## Future component builds
 
-These commands are for a **later** indexing job. Run either the separate pair
-or the all-in-one command against a fresh output directory. The builder refuses
-to overwrite an existing component. It cannot resume an interrupted component.
+These commands are for a **later** indexing job. `--component all` retains the
+local FAISS+BM25S baseline. `dense-all` encodes each E5 batch once and sends
+the identical float32 batch to FAISS and Qdrant; `all-backends` also builds
+BM25S. Individual `faiss`, `qdrant`, and `bm25` modes remain available. Use a
+fresh output directory. The builder refuses to overwrite an existing component
+or Qdrant collection. It cannot resume an interrupted component.
+The paired mode records one SHA-256 over the ordered float32 embedding stream
+in both dense manifests; independent builds record their own stream hashes.
 
 PowerShell, separate FAISS and BM25S phases:
 
@@ -105,6 +112,23 @@ PowerShell, both components in one fresh output directory:
 ```powershell
 python -m scripts.retrieval.build_index --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --embedding-model intfloat/multilingual-e5-base --model-revision main --embedding-batch-size 64 --device cuda --component all
 ```
+
+PowerShell, both V1 dense backends with one embedding stream, then shared BM25S
+in a fresh CPU session:
+
+```powershell
+$env:QDRANT_URL = "http://localhost:6333" # persistent local server; use a private Cloud URL when chosen
+$env:QDRANT_COLLECTION = "vn_history_v1_e5"
+python -m scripts.retrieval.build_index --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --embedding-model intfloat/multilingual-e5-base --model-revision main --embedding-batch-size 64 --device cuda --component dense-all
+python -m scripts.retrieval.build_index --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --embedding-model intfloat/multilingual-e5-base --embedding-batch-size 64 --device cpu --component bm25
+```
+
+Set `QDRANT_API_KEY` privately in the environment for a secured server or
+Qdrant Cloud. The builder does not accept it as a CLI argument or write it to
+manifests/logs. A standalone Qdrant build uses `--component qdrant`. A fresh
+one-job build of all three uses `--component all-backends`; BM25S may need more
+system RAM than the GPU session provides. No real collection is created by
+this readiness change.
 
 Use `--device auto` when CUDA availability is uncertain. The FAISS phase
 resolves the requested Hugging Face model revision to an immutable SHA and
@@ -126,11 +150,81 @@ stemmer, and BM25 defaults as the prior builder. Run this phase separately on
 a high-RAM runtime if needed. No dense model or matrix is retained in that
 phase. The manifest records BM25 configuration and the same ordered chunk hash.
 
-Each component is written to a `.partial` directory and renamed only after
-its index and sidecar are complete. A later run refuses leftover partial or
-incomplete component paths for inspection. There is no shard checkpoint or
+Each local component is written to a `.partial` directory and renamed only
+after its index and sidecar are complete. An interrupted Qdrant upload also
+leaves a local `qdrant.partial` marker and may leave an incomplete remote
+collection. Inspect and explicitly clean up that collection before retrying;
+the builder never silently deletes or reuses it. A later run refuses leftover
+partial or incomplete component paths. There is no shard checkpoint or
 automatic resume for index generation. The Corpus V1 construction pipeline's
 resume support does not apply to indexing.
+
+## Two controlled retrieval lanes
+
+The primary comparison changes **only the dense backend**:
+
+| Lane | Dense search | Shared later stages |
+| --- | --- | --- |
+| A, local hybrid | normalized E5 → exact FAISS IndexFlatIP | BM25S → existing weighted RRF → existing BGE reranker → context selection |
+| B, Qdrant hybrid | same E5 → Qdrant HNSW (`exact=false`) | same BM25S → same RRF, reranker, and context selection |
+
+Qdrant uses named vector `dense_e5`, COSINE distance, full-precision vectors,
+server-default HNSW parameters, and no quantization. The build manifest captures
+effective `m`, `ef_construct`, and `full_scan_threshold` returned by the server,
+the server/client versions, count, corpus hashes, and resolved E5 revision.
+`point_id` is the zero-based `chunks.jsonl` row number. Thus FAISS row 12345,
+Qdrant point 12345, and corpus row 12345 identify the same chunk. Qdrant stores
+a compact payload containing IDs, title, URL, source split, filter decision,
+relevance score, and token count. It omits full text; the ordered corpus remains
+the text source. The runtime verifies returned `chunk_id` against its row map.
+
+Use a persistent local Qdrant server or Qdrant Cloud for the full collection.
+The Python client's in-process local mode is not used for the 624k-point build.
+The local FAISS lane needs no running Qdrant service. Qdrant runtime selection
+requires `QDRANT_URL`; `QDRANT_API_KEY` is optional and must stay private.
+`QDRANT_COLLECTION` defaults to `vn_history_v1_e5` and `QDRANT_HNSW_EF` is an
+explicit optional query parameter. When unset, server search defaults apply;
+record its chosen value in each controlled evaluation. Exact diagnostic search
+uses `exact=true` and is separate from the normal HNSW lane.
+
+After all indexes exist, validate the real counts and corpus identity before
+either hybrid evaluation:
+
+```powershell
+python -m scripts.retrieval.validate_indexes --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --components all-backends
+```
+
+### Evaluation levels
+
+**Level 1, dense backend:** Run the same normalized `query: ` E5 vectors
+through FAISS exact, Qdrant exact, and Qdrant HNSW. The diagnostic utility
+reports exact top-k overlap and score difference, HNSW ANN Recall@10/20/50
+against FAISS exact, and p50/p95 dense-search latency. Keep build time and
+index/storage size alongside that report. Qdrant storage size must be measured
+on its persistent volume or Cloud dashboard; the comparison utility leaves it
+unset. Record whether Qdrant is local or remote because network transit affects
+latency. Ties and floating-point differences
+can prevent identical ordering; inspect exact-search mismatches rather than
+assuming all are historical relevance errors.
+
+```powershell
+python -m scripts.retrieval.compare_dense --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --queries path/to/fixed_questions.jsonl --hnsw-ef 128
+```
+
+**Level 2, end-to-end hybrid:** Run the same human-reviewed history questions
+through two isolated app processes with the same V1 bundle, E5 revision,
+BM25S index, RRF configuration, BGE reranker, candidate depths, query analysis,
+and context selection. Set only `RETRIEVAL_DENSE_BACKEND=faiss` versus
+`RETRIEVAL_DENSE_BACKEND=qdrant` (plus Qdrant connection settings). Save each
+run's predictions and compare HitRate@1/3/5/10, MRR@10, nDCG@10, source recall
+when labeled, reranked overlap, and retrieval latency. The existing
+`evaluation.runner` scores saved predictions. ANN recall and historical
+relevance metrics belong in separate reports. Do not promote a winner from
+unlabeled fixture questions.
+
+Qdrant-native sparse retrieval, Query API fusion, and `qdrant_native_hybrid`
+remain a possible **third, later experiment**. They are absent from the two
+primary lanes, which both use the same BM25S and weighted RRF.
 
 ## Runtime and V0 comparison
 
@@ -144,14 +238,23 @@ would also occupy considerably more RAM as Python dictionaries and strings.
 
 A future, isolated V1 deployment bundle must provide the expected
 `corpus/vn_history_rag_chunks_enriched.jsonl` path (link or copy the V1 chunks
-without changing their row order), the newly built `retrieval/faiss/` and
-`retrieval/bm25s_index/`, a compatible `config/inference_config.json`, and a
+without changing their row order), `retrieval/bm25s_index/`, either
+`retrieval/faiss/` or `retrieval/qdrant/manifest.json` for the selected lane,
+a compatible `config/inference_config.json`, and a
 runtime `manifest.json` with `corpus.count = 624288`. Validate its corpus hash,
 ordered-ID hash, model ID/revision, and index counts before setting
 `ARTIFACT_ROOT` to that bundle. The current loader accepts schema 2 rows but
 holds all 624,288 parsed chunk objects plus an ID dictionary in RAM. This
 packaging and memory check remain separate work; neither the V1 root nor the
 current V0 runtime default is changed here.
+
+For Lane A, set `RETRIEVAL_DENSE_BACKEND=faiss`; for Lane B, set
+`RETRIEVAL_DENSE_BACKEND=qdrant` with `QDRANT_URL`, `QDRANT_COLLECTION`, and
+optionally `QDRANT_API_KEY` and `QDRANT_HNSW_EF`. Both lanes point to the same
+BM25S files in their isolated V1 bundles. The app loads the resolved E5 SHA
+from the dense manifest where present. The runtime's older `faiss_ms` telemetry
+field measures the selected dense call in either lane; interpret it as dense
+latency for Lane B.
 
 For an initial V1 smoke test, an isolated high-RAM adapter can load V1 rows
 in memory while retaining the ordered-ID checks. A scalable runtime should

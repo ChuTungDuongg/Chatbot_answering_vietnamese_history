@@ -45,6 +45,11 @@ class FakeIndex:
         self.vectors.extend(vectors.tolist())
         self.ntotal += len(vectors)
 
+    def search(self, queries, k):
+        scores = np.asarray(queries, dtype="float32") @ np.asarray(self.vectors, dtype="float32").T
+        order = np.argsort(-scores, axis=1)[:, :k]
+        return np.take_along_axis(scores, order, axis=1), order
+
 
 class FakeFaiss:
     def __init__(self):
@@ -78,7 +83,7 @@ def test_preflight_is_read_only_and_keeps_order(tmp_path, capsys, monkeypatch):
     assert report["embedding_model_requested_revision"] == "main"
     assert report["embedding_model_resolved_revision"] is None
     assert report["output_dir_exists"] is False
-    assert report["components_already_present"] == {"faiss": False, "bm25": False}
+    assert report["components_already_present"] == {"faiss": False, "qdrant": False, "bm25": False}
 
 
 @pytest.mark.parametrize("rows,error", [
@@ -127,7 +132,7 @@ def test_faiss_batches_preserve_row_order_and_manifest(tmp_path):
     overall = builder.write_index_manifest(corpus, output, scan)
     assert overall["components_present"] == ["faiss"]
     assert overall["corpus_chunk_count"] == 5
-    assert overall["component_status"] == {"faiss": True, "bm25": False}
+    assert overall["component_status"] == {"faiss": True, "qdrant": False, "bm25": False}
 
 
 def test_changed_corpus_is_rejected_before_faiss_commit(tmp_path):

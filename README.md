@@ -35,7 +35,7 @@ The project includes real model-token SSE streaming, an HTTP latency benchmark, 
 | `evaluation/datasets/` | Two unlabeled demonstration questions | Gold labels need human review; not training data. |
 | `datasets/` | Former role SFT data removed | Research, Evidence, and History Answerer datasets are recoverable through Git history. |
 
-See [Corpus V1 Colab workflow](docs/CORPUS_V1_COLAB.md), [V1 indexing readiness](docs/CORPUS_V1_INDEXING.md), [legacy cleanup](docs/LEGACY_DATA_CLEANUP.md), [repository audit](docs/REPO_AUDIT.md), and [gold-set guidance](docs/GOLD_EVALUATION_DATASET.md).
+See [Corpus V1 Colab workflow](docs/CORPUS_V1_COLAB.md), [V1 two-lane indexing and evaluation readiness](docs/CORPUS_V1_INDEXING.md), [legacy cleanup](docs/LEGACY_DATA_CLEANUP.md), [repository audit](docs/REPO_AUDIT.md), and [gold-set guidance](docs/GOLD_EVALUATION_DATASET.md). The proposed V1 comparison uses FAISS or Qdrant for dense retrieval with the same BM25S, fusion, and reranker; V0 remains the default runtime.
 
 ## Run locally
 
