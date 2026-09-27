@@ -1,6 +1,7 @@
 """Offline two-lane tests; no Qdrant server or model download."""
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,6 +62,118 @@ class FakeQdrant:
                                     payload=point.payload if kwargs["with_payload"] else {},
                                     score=float(np.dot(vector, point.vector["dense_e5"])))
                                        for point in scored])
+
+
+def write_dense_manifest_pair(out, scan):
+    """Write a legacy FAISS and newer Qdrant sidecar without building indexes."""
+    base = {"count": 5, "corpus_sha256": scan["corpus_sha256"],
+            "ordered_chunk_id_sha256": scan["ordered_chunk_id_sha256"],
+            "embedding_model_id": "intfloat/multilingual-e5-base",
+            "embedding_model_resolved_revision": "a" * 40,
+            "embedding_dimension": 2, "normalize_embeddings": True,
+            "passage_prefix": "passage: ", "query_prefix": "query: ",
+            "passage_template": "passage: {title}\n{text}"}
+    faiss_path = out / "faiss" / "manifest.json"
+    qdrant_path = out / "qdrant" / "manifest.json"
+    faiss_path.parent.mkdir(parents=True)
+    qdrant_path.parent.mkdir(parents=True)
+    faiss_path.write_text(json.dumps(base), encoding="utf-8")
+    qdrant_path.write_text(json.dumps({**base, "corpus_bytes": scan["corpus_bytes"]}),
+                           encoding="utf-8")
+    return faiss_path, qdrant_path
+
+
+@pytest.mark.parametrize("missing_from", ["faiss", "qdrant"])
+def test_legacy_dense_manifest_missing_corpus_bytes_matches_new_peer(tmp_path, missing_from):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    faiss_path, qdrant_path = write_dense_manifest_pair(out, scan)
+    if missing_from == "qdrant":
+        faiss = json.loads(faiss_path.read_text(encoding="utf-8"))
+        faiss["corpus_bytes"] = scan["corpus_bytes"]
+        faiss_path.write_text(json.dumps(faiss), encoding="utf-8")
+        qdrant = json.loads(qdrant_path.read_text(encoding="utf-8"))
+        qdrant.pop("corpus_bytes")
+        qdrant_path.write_text(json.dumps(qdrant), encoding="utf-8")
+    original_faiss = faiss_path.read_bytes()
+    builder.assert_dense_manifests_match(out)
+    assert faiss_path.read_bytes() == original_faiss
+    assert qdrant_path.is_file()
+
+
+@pytest.mark.parametrize("faiss_bytes,qdrant_bytes,compatible", [
+    (100, 100, True),
+    (100, 200, False),
+])
+def test_present_corpus_bytes_must_match(tmp_path, faiss_bytes, qdrant_bytes, compatible):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    faiss_path, qdrant_path = write_dense_manifest_pair(out, scan)
+    faiss = json.loads(faiss_path.read_text(encoding="utf-8"))
+    qdrant = json.loads(qdrant_path.read_text(encoding="utf-8"))
+    faiss["corpus_bytes"] = faiss_bytes
+    qdrant["corpus_bytes"] = qdrant_bytes
+    faiss_path.write_text(json.dumps(faiss), encoding="utf-8")
+    qdrant_path.write_text(json.dumps(qdrant), encoding="utf-8")
+    if compatible:
+        builder.assert_dense_manifests_match(out)
+    else:
+        with pytest.raises(RuntimeError, match="manifest mismatch: corpus_bytes"):
+            builder.assert_dense_manifests_match(out)
+
+
+@pytest.mark.parametrize("key,bad_value", [
+    ("corpus_sha256", "wrong"),
+    ("ordered_chunk_id_sha256", "wrong"),
+    ("count", 6),
+    ("embedding_model_resolved_revision", "b" * 40),
+    ("embedding_dimension", 3),
+    ("normalize_embeddings", False),
+    ("embedding_model_id", "wrong"),
+    ("passage_prefix", "wrong"),
+    ("query_prefix", "wrong"),
+    ("passage_template", "wrong"),
+])
+def test_legacy_optional_field_does_not_weaken_required_identity(tmp_path, key, bad_value):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    _, qdrant_path = write_dense_manifest_pair(out, scan)
+    qdrant = json.loads(qdrant_path.read_text(encoding="utf-8"))
+    qdrant[key] = bad_value
+    qdrant_path.write_text(json.dumps(qdrant), encoding="utf-8")
+    with pytest.raises(RuntimeError, match=f"manifest mismatch: {key}"):
+        builder.assert_dense_manifests_match(out)
+
+
+def test_required_identity_missing_from_both_manifests_is_rejected(tmp_path):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    faiss_path, qdrant_path = write_dense_manifest_pair(out, scan)
+    for path in (faiss_path, qdrant_path):
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved.pop("embedding_model_resolved_revision")
+        path.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="manifest mismatch: embedding_model_resolved_revision"):
+        builder.assert_dense_manifests_match(out)
+
+
+def test_legacy_and_new_dense_manifests_combine_with_bm25_without_rewrite(tmp_path):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    faiss_path, _ = write_dense_manifest_pair(out, scan)
+    original_faiss = faiss_path.read_bytes()
+    bm25_path = out / "bm25s_index" / "phase9_manifest.json"
+    bm25_path.parent.mkdir(parents=True)
+    bm25_path.write_text(json.dumps({"count": 5, "corpus_sha256": scan["corpus_sha256"],
+        "ordered_chunk_id_sha256": scan["ordered_chunk_id_sha256"]}), encoding="utf-8")
+    manifest = builder.write_index_manifest(corpus, out, scan)
+    assert manifest["components_present"] == ["bm25", "faiss", "qdrant"]
+    assert faiss_path.read_bytes() == original_faiss
 
 
 def test_one_embedding_stream_feeds_identical_dense_rows(tmp_path):
@@ -299,8 +412,14 @@ def test_index_validator_and_dense_metrics_on_tiny_fixture(tmp_path):
                              resolved_revision="a" * 40, device="cpu", batch_size=2,
                              url=None, collection="test", model_factory=FakeModel,
                              faiss_module=faiss, client=client)
+    faiss_path = out / "faiss" / "manifest.json"
+    legacy = json.loads(faiss_path.read_text(encoding="utf-8"))
+    legacy.pop("corpus_bytes")
+    faiss_path.write_text(json.dumps(legacy), encoding="utf-8")
+    original_faiss = faiss_path.read_bytes()
     builder.build_bm25(corpus, out, scan, batch_size=2)
     builder.write_index_manifest(corpus, out, scan)
+    assert faiss_path.read_bytes() == original_faiss
 
     class Reader:
         def read_index(self, path):
@@ -311,6 +430,7 @@ def test_index_validator_and_dense_metrics_on_tiny_fixture(tmp_path):
                                        qdrant_client=client, faiss_module=Reader())
     assert result["validated"] is True
     assert result["component_counts"] == {"faiss": 5, "bm25": 5, "qdrant": 5}
+    assert faiss_path.read_bytes() == original_faiss
     metrics = compare_dense.compare_vector(np.array([1.0, 1.0]), faiss.index,
                                             client, "test", hnsw_ef=128)
     assert metrics["ann_recall@10"] == 1.0
@@ -330,3 +450,37 @@ def test_index_validator_and_dense_metrics_on_tiny_fixture(tmp_path):
     with pytest.raises(RuntimeError, match="qdrant count mismatch"):
         validate_indexes.validate(corpus, out, components=("faiss", "qdrant", "bm25"),
                                   qdrant_client=client, faiss_module=Reader())
+
+
+def test_dense_comparison_accepts_legacy_faiss_without_loading_real_model(tmp_path, monkeypatch, capsys):
+    corpus, _ = fixture(tmp_path)
+    scan = builder.scan_corpus(corpus)
+    out = tmp_path / "retrieval"
+    out.mkdir()
+    client, faiss = FakeQdrant(), FakeFaiss()
+    builder.build_dense_pair(corpus, out, scan, requested_revision="main",
+                             resolved_revision="a" * 40, device="cpu", batch_size=2,
+                             url=None, collection="test", model_factory=FakeModel,
+                             faiss_module=faiss, client=client)
+    faiss_path = out / "faiss" / "manifest.json"
+    legacy = json.loads(faiss_path.read_text(encoding="utf-8"))
+    legacy.pop("corpus_bytes")
+    faiss_path.write_text(json.dumps(legacy), encoding="utf-8")
+    queries = tmp_path / "queries.jsonl"
+    queries.write_text('{"question":"Lịch sử Việt Nam?"}\n', encoding="utf-8")
+
+    class QueryModel:
+        def get_sentence_embedding_dimension(self):
+            return 2
+
+        def encode(self, *_args, **_kwargs):
+            return np.array([[1.0, 1.0]], dtype="float32")
+
+    monkeypatch.setitem(sys.modules, "faiss", SimpleNamespace(read_index=lambda _: faiss.index))
+    monkeypatch.setitem(sys.modules, "sentence_transformers",
+                        SimpleNamespace(SentenceTransformer=lambda *_args, **_kwargs: QueryModel()))
+    monkeypatch.setattr(compare_dense, "make_client", lambda *_args, **_kwargs: client)
+    assert compare_dense.main(["--output-dir", str(out), "--corpus", str(corpus),
+                               "--queries", str(queries), "--hnsw-ef", "128"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["metrics"]["query_count"] == 1

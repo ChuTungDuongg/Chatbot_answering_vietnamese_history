@@ -29,6 +29,14 @@ PASSAGE_PREFIX = "passage: "
 QUERY_PREFIX = "query: "
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 PROTECTED = {"vn_history_deployment", "vn_history_modal", "old_corpus"}
+REQUIRED_DENSE_MATCH_FIELDS = (
+    "corpus_sha256", "ordered_chunk_id_sha256", "count",
+    "embedding_model_id", "embedding_model_resolved_revision",
+    "embedding_dimension", "normalize_embeddings", "passage_prefix",
+    "query_prefix", "passage_template",
+)
+# Older valid FAISS manifests predate corpus_bytes; compare it when both save it.
+OPTIONAL_DENSE_MATCH_FIELDS = ("corpus_bytes",)
 
 
 def log(message: str) -> None:
@@ -254,11 +262,13 @@ def assert_dense_manifests_match(out: Path) -> None:
     if not all(path.exists() for path in paths):
         return
     faiss, qdrant = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
-    for key in ("corpus_sha256", "corpus_bytes", "ordered_chunk_id_sha256", "count",
-                "embedding_model_id", "embedding_model_resolved_revision",
-                "embedding_dimension", "normalize_embeddings", "passage_prefix",
-                "query_prefix", "passage_template"):
-        if faiss.get(key) != qdrant.get(key):
+    for key in REQUIRED_DENSE_MATCH_FIELDS:
+        if (key not in faiss or key not in qdrant or
+                faiss[key] is None or qdrant[key] is None or
+                faiss[key] != qdrant[key]):
+            raise RuntimeError(f"FAISS/Qdrant manifest mismatch: {key}")
+    for key in OPTIONAL_DENSE_MATCH_FIELDS:
+        if key in faiss and key in qdrant and faiss[key] != qdrant[key]:
             raise RuntimeError(f"FAISS/Qdrant manifest mismatch: {key}")
     if faiss.get("shared_embedding_stream") and qdrant.get("shared_embedding_stream"):
         if faiss.get("embedding_stream_sha256") != qdrant.get("embedding_stream_sha256"):

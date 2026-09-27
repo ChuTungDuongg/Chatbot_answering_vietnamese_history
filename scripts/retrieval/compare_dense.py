@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from scripts.retrieval.build_index import assert_dense_manifests_match, assert_same_corpus, scan_corpus
+from scripts.retrieval.build_index import check_existing, scan_corpus
 from scripts.retrieval.qdrant_index import VECTOR_NAME, make_client
 
 
@@ -89,14 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.hnsw_ef < 1:
         raise ValueError("--hnsw-ef must be positive")
     out = args.output_dir.resolve()
-    assert_dense_manifests_match(out)
+    scan = scan_corpus(args.corpus.resolve())
+    check_existing(out, scan)
     faiss_manifest = json.loads((out / "faiss" / "manifest.json").read_text(encoding="utf-8"))
     qdrant_manifest = json.loads((out / "qdrant" / "manifest.json").read_text(encoding="utf-8"))
-    scan = scan_corpus(args.corpus.resolve())
-    assert_same_corpus(scan, {"chunk_count": faiss_manifest["count"],
-                              "corpus_bytes": faiss_manifest["corpus_bytes"],
-                              "corpus_sha256": faiss_manifest["corpus_sha256"],
-                              "ordered_chunk_id_sha256": faiss_manifest["ordered_chunk_id_sha256"]})
     revision = faiss_manifest.get("embedding_model_resolved_revision")
     if not revision:
         raise RuntimeError("Dense manifests lack a pinned embedding revision")

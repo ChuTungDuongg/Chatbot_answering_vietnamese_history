@@ -142,6 +142,12 @@ once, then loads the immutable SHA; for an explicitly pinned rebuild, pass
 that SHA through `--model-revision`. Keep the same model and revision for
 V0/V1 comparison.
 
+Older valid FAISS manifests may omit `corpus_bytes`. The corpus SHA-256 and
+ordered chunk-ID SHA-256 remain the authoritative identity checks. Newer
+manifests record `corpus_bytes` as extra provenance: its absence in a legacy
+manifest is tolerated, while conflicting values present in both dense
+manifests fail validation. Validation never rewrites component manifests.
+
 BM25S 0.3.10 does not offer a bounded-memory incremental index writer. The
 builder streams JSON rows and normalizes/tokenizes bounded batches, but retains
 all token-ID lists and the sparse score arrays during `BM25.index`. It uses the
