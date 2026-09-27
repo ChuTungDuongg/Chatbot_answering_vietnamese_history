@@ -49,6 +49,8 @@ def summarize(root: Path, manifests: dict[str, list[dict[str, Any]]],
               elapsed_seconds: float, processed_this_run: Counter[str]) -> tuple[dict[str, Any], dict[str, Any]]:
     decision_counts: Counter[str] = Counter()
     reasons: Counter[str] = Counter()
+    reason_combinations: Counter[str] = Counter()
+    diagnostic_counts: Counter[str] = Counter()
     categories: Counter[str] = Counter()
     by_category: dict[str, Counter[str]] = {}
     quality: Counter[str] = Counter()
@@ -76,6 +78,15 @@ def summarize(root: Path, manifests: dict[str, list[dict[str, Any]]],
                 decision = row["decision"]
                 decision_counts[decision] += 1
                 reasons.update(row["reasons"])
+                reason_set = set(row["reasons"])
+                reason_combinations[" + ".join(sorted(reason_set)) or "<none>"] += 1
+                for marker in ("date_or_period_only", "historical_text_only", "weak_signal_review"):
+                    if marker in reason_set:
+                        diagnostic_counts[marker] += 1
+                if decision == "DROP":
+                    for marker in ("generic_municipality_stub", "wikimedia_maintenance"):
+                        if marker in reason_set:
+                            diagnostic_counts[f"{marker}_drop"] += 1
                 category = row.get("main_category") or "<missing>"
                 categories[category] += 1
                 by_category.setdefault(category, Counter())[decision] += 1
@@ -123,12 +134,22 @@ def summarize(root: Path, manifests: dict[str, list[dict[str, Any]]],
                     heapq.heapreplace(largest_chunks, item)
     total = sum(decision_counts.values())
     top_categories = categories.most_common(30)
+    top_by_decision = {
+        decision: sorted(((category, counts[decision]) for category, counts in by_category.items()
+                          if counts[decision]), key=lambda item: (-item[1], item[0]))[:20]
+        for decision in reservoir
+    }
     filter_audit = {"total_documents": total,
                     "counts": {key: decision_counts[key] for key in reservoir},
                     "rates": {key: round(decision_counts[key] / total, 6) if total else 0 for key in reservoir},
                     "top_reasons": reasons.most_common(30),
+                    "top_reason_combinations": reason_combinations.most_common(20),
                     "top_main_categories": top_categories,
                     "decision_by_main_category": {category: dict(by_category[category]) for category, _ in top_categories},
+                    "top_categories_by_decision": top_by_decision,
+                    "diagnostic_counts": {key: diagnostic_counts[key] for key in
+                                          ("date_or_period_only", "historical_text_only", "weak_signal_review",
+                                           "generic_municipality_stub_drop", "wikimedia_maintenance_drop")},
                     "missing_main_category_rate": round(missing["main_category"] / total, 6) if total else 0,
                     "wikidata_id_coverage": round(1 - missing["wikidata_id"] / total, 6) if total else 0,
                     "quality_score_distribution": dict(sorted(quality.items())),

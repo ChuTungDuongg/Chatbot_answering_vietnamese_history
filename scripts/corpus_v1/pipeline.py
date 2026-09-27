@@ -297,7 +297,9 @@ def _build(config: dict[str, Any], output: Path, *, resume: bool,
     if config_path.exists():
         reporter.phase("loading saved build configuration")
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        if not resume or cfg.get("request_options") != request or cfg.get("schema_version") != SCHEMA_VERSION:
+        if (not resume or cfg.get("request_options") != request or
+                cfg.get("schema_version") != SCHEMA_VERSION or
+                cfg.get("filter_version") != FILTER_VERSION):
             raise RuntimeError("Build configuration differs; use a new output directory")
         if source_path.exists():
             source_meta = json.loads(source_path.read_text(encoding="utf-8"))

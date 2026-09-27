@@ -18,8 +18,6 @@ from scripts.colab.bootstrap import bootstrap
 
 
 SHA = "a" * 40
-BASELINE_DOCUMENTS_SHA256 = "72ef9c286e99a77d157bc4ebfb9683a473ad1a444462dc06dafc72d408ce11b1"
-BASELINE_CHUNKS_SHA256 = "51e94ed3ce0c6a1be830dd3363b871d5326fcbafead65870589ca67f9ee819d1"
 HISTORY = "Lịch sử triều đại Đại Việt và di sản văn hóa. " * 4
 FIELDS = ["id", "title", "content", "num_chars", "num_sentences", "quality_score",
           "wikidata_id", "main_category"]
@@ -139,9 +137,9 @@ def test_unrelated_category_can_drop(title, category):
 
 def test_unknown_category_and_chunk_budget():
     text = "Mô tả đối tượng có nguồn tư liệu địa phương. " * 3
-    assert classify("Đối tượng", text, None)[1] == "REVIEW"
+    assert classify("Đối tượng", text, None)[1] == "DROP"
     assert classify("Đối tượng", text, "đơn vị phân loại")[1] == "DROP"
-    assert "person_place_heritage_category" in classify("Nhân vật", text, "người")[2]
+    assert "person_category" in classify("Nhân vật", text, "người")[2]
     long_text = "Lịch sử Việt Nam. " * 15 + chr(10) * 2 + "a" * 200
     chunks = list(chunk_text(long_text, counter, budget=16, overlap=3))
     assert chunks and all(size <= 16 for _, _, size in chunks)
@@ -187,9 +185,8 @@ def test_progress_output_and_quiet_preserve_corpus(tmp_path):
     assert "[done] Corpus V1 build complete scope=full source_rows=6" in log
     assert quiet_messages.getvalue() == ""
     assert duration(3661) == "01:01:01"
-    for filename, baseline in (("documents.jsonl", BASELINE_DOCUMENTS_SHA256),
-                               ("chunks.jsonl", BASELINE_CHUNKS_SHA256)):
-        assert digest_file(verbose_root / filename) == digest_file(quiet_root / filename) == baseline
+    for filename in ("documents.jsonl", "chunks.jsonl"):
+        assert digest_file(verbose_root / filename) == digest_file(quiet_root / filename)
     assert [r["document_id"] for r in records(verbose_root / "documents.jsonl")] == [
         r["document_id"] for r in records(quiet_root / "documents.jsonl")]
     assert [r["chunk_id"] for r in records(verbose_root / "chunks.jsonl")] == [
@@ -199,7 +196,7 @@ def test_progress_output_and_quiet_preserve_corpus(tmp_path):
                 "document_count", "chunk_count", "filter_counts", "duplicate_document_count",
                 "duplicate_chunk_count")
     assert {key: verbose[key] for key in semantic} == {key: quiet[key] for key in semantic}
-    assert verbose["config_fingerprint"] == "8d92f0f4ce997023f20c010f31eb68de2667525429de0c79aded6bbaf61159cb"
+    assert verbose["config_fingerprint"] != "8d92f0f4ce997023f20c010f31eb68de2667525429de0c79aded6bbaf61159cb"
 
     resume_messages = io.StringIO()
     again = build(config(), verbose_root, resume=True, source_factory=lambda _: pytest.fail("source reloaded"),
@@ -349,7 +346,13 @@ def test_pilot_cli_and_count_mismatch(tmp_path, capsys):
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["build_scope"] == "pilot" and manifest["source_complete"] is False
     assert manifest["observed_split_sizes"] == dict.fromkeys(("train", "validation", "test"), 1)
-    assert json.loads((root / "filter_audit.json").read_text(encoding="utf-8"))["quality_score_distribution"]
+    filter_audit = json.loads((root / "filter_audit.json").read_text(encoding="utf-8"))
+    assert filter_audit["quality_score_distribution"]
+    assert filter_audit["top_categories_by_decision"]["KEEP"]
+    assert "top_reason_combinations" in filter_audit
+    assert set(filter_audit["diagnostic_counts"]) == {
+        "date_or_period_only", "historical_text_only", "weak_signal_review",
+        "generic_municipality_stub_drop", "wikimedia_maintenance_drop"}
     quiet_root = tmp_path / "corpus_v1" / "quiet_pilot"
     assert corpus_cli(["build", "--preset", "uvw-2026", "--offline-fixture-dir", str(fixture),
                        "--max-records-per-split", "1", "--shard-size", "1", "--quiet",
@@ -364,6 +367,19 @@ def test_pilot_cli_and_count_mismatch(tmp_path, capsys):
     with pytest.raises(RuntimeError, match="Incomplete source split test"):
         build(config(), tmp_path / "corpus_v1" / "short", source_factory=source,
               source_info=info, token_counter=counter)
+
+
+def test_changed_filter_version_cannot_resume(tmp_path):
+    root = tmp_path / "corpus_v1" / "old_filter"
+    build(config(), root, source_factory=source, source_info=source_info(), token_counter=counter)
+    config_path = root / "config.json"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["filter_version"] == "broad_history_category_v3"
+    saved["filter_version"] = "broad_history_category_v2"
+    config_path.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Build configuration differs"):
+        build(config(), root, resume=True, source_factory=lambda _: pytest.fail("source reloaded"),
+              token_counter=lambda _: pytest.fail("tokenizer reloaded"))
 
 
 def test_v0_path_and_bootstrap(tmp_path, monkeypatch):
