@@ -1,0 +1,12 @@
+{
+  "preset_version": 1,
+  "name": "uvw-2026",
+  "dataset_id": "undertheseanlp/UVW-2026",
+  "dataset_config": "default",
+  "requested_revision": "main",
+  "split": "all",
+  "source_kind": "uvw-2026",
+  "language": "vi",
+  "fields": {"title": "title", "text": "content", "id": "id", "url": null},
+  "metadata_fields": ["num_chars", "num_sentences", "quality_score", "wikidata_id", "main_category"]
+}

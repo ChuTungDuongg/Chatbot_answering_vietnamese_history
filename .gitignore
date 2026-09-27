@@ -63,6 +63,7 @@ tensorboard/
 hf_cache/
 transformers_cache/
 dataset_cache/
+datasets_cache/
 
 # =========================
 # Model checkpoints / weights
@@ -90,6 +91,9 @@ output/
 # Deployment bundles belong in Modal Volume / Drive, not Git.
 artifacts/vn_history_deployment/
 artifacts/vn_history_modal/
+/artifacts/corpus_v1/
+/corpus_v1/
+*.partial
 
 # =========================
 # Preserved historical generated artifacts

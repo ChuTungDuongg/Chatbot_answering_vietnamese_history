@@ -1,11 +1,11 @@
-"""Atomic stage files and verifiable checkpoint metadata."""
+"""Canonical serialization, hashes, and atomic provenance JSON."""
 
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, Callable
+from typing import Any
 
 
 def canonical(value: Any) -> str:
@@ -30,32 +30,3 @@ def atomic_json(path: Path, data: Any) -> None:
     temp = path.with_name(path.name + ".partial")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temp, path)
-
-
-def stage(root: Path, name: str, fingerprint: str, resume: bool,
-          produce: Callable[[Path], dict[str, Any]]) -> dict[str, Any]:
-    path = root / "intermediate" / (name + ".jsonl")
-    manifest_path = root / "intermediate" / (name + ".manifest.json")
-    if path.exists() or manifest_path.exists():
-        if not resume:
-            raise FileExistsError(f"Stage {name} exists; use --resume or a fresh output directory")
-        if not path.exists() or not manifest_path.exists():
-            raise RuntimeError(f"Incomplete stage {name}; inspect/remove partial stage before resume")
-        meta = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if meta.get("config_fingerprint") != fingerprint or meta.get("sha256") != digest_file(path):
-            raise RuntimeError(f"Stage {name} config or SHA256 mismatch; use a new output directory")
-        return meta
-    temp = path.with_name(path.name + ".partial")
-    if temp.exists():
-        raise RuntimeError(f"Incomplete temporary stage {temp}; inspect/remove it before resume")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        counts = produce(temp)
-        os.replace(temp, path)
-        meta = {"stage": name, "config_fingerprint": fingerprint,
-                "sha256": digest_file(path), "size_bytes": path.stat().st_size, **counts}
-        atomic_json(manifest_path, meta)
-        return meta
-    except Exception:
-        # Keep partial output for diagnosis; it can never be mistaken for a checkpoint.
-        raise

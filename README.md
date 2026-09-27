@@ -29,7 +29,7 @@ The project includes real model-token SSE streaming, an HTTP latency benchmark, 
 | Data | Status | Meaning |
 | --- | --- | --- |
 | Corpus V0 | Frozen runtime baseline | 58,603 enriched chunks plus protected FAISS/BM25S indexes; current Hybrid and Central retrieval source. |
-| Corpus V1 | Offline build pipeline, no accepted build in this repository | Vietnamese Wikipedia via configurable Hugging Face dataset; build to a separate `corpus_v1/` directory, preferably Drive. No quality superiority claim until evaluation. |
+| Corpus V1 | Offline build pipeline, no accepted build in this repository | The `uvw-2026` preset uses all three splits of `undertheseanlp/UVW-2026`; build to a separate `corpus_v1/` directory, preferably Drive. No quality superiority claim until evaluation. |
 | `training/Dataset/` | Protected legacy historical source data | 520 chunk-ID records in its merged JSONL; not the runtime corpus or a new SFT set. |
 | `Dataset/` | Protected ignored historical sample packs only | Former 1,000-message RAG-SFT export removed from tracked tree. |
 | `evaluation/datasets/` | Two unlabeled demonstration questions | Gold labels need human review; not training data. |
