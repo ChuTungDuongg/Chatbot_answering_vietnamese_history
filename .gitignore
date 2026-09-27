@@ -203,6 +203,9 @@ node_modules/
 /reports/
 /reports/annotation/
 /evaluation/annotation/workspace/
+/evaluation/annotation/workspace_silver_v1/
+/evaluation/datasets/v1_silver/
+/evaluation/datasets/v1_gold/
 /evaluation/annotation/**/candidates.jsonl
 /evaluation/annotation/**/deep_queue.jsonl
 !/evaluation/logs/

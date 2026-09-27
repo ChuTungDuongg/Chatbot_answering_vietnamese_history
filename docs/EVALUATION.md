@@ -14,6 +14,9 @@ The human review workflow for Corpus V1 is documented in
 [`GOLD_ANNOTATION_GUIDE.md`](GOLD_ANNOTATION_GUIDE.md). It keeps draft questions,
 retrieved evidence, and approved gold labels in separate workspace fields.
 Only explicitly accepted records can be exported into this evaluation schema.
+The separate automatic SILVER pipeline is documented in
+[`SILVER_BENCHMARK.md`](SILVER_BENCHMARK.md). Its outputs carry explicit
+automatic provenance and cannot enter GOLD export without human review.
 
 `evaluation/datasets/question.schema.json` defines schema version 1. Required fields are `id`, `question`, and `category`. Optional fields are `gold_answer`, `relevant_chunk_ids`, `relevant_source_ids`, `gold_citation_source_ids`, `required_facts`, `factual_paragraph_indices`, `answerable`, `in_domain`, and `notes`. An **omitted** label means unknown. The two included questions are unlabeled examples; their answer and retrieval scores are N/A. Curate and version real labels before claiming any historical quality result.
 

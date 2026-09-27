@@ -23,9 +23,9 @@ class ReviewRequest(BaseModel):
     expected_revision: int | None = None
 
 
-def create_app(workspace_path: Path, corpus_path: Path) -> FastAPI:
+def create_app(workspace_path: Path, corpus_path: Path, *, lookup_workspace: Path | None = None) -> FastAPI:
     workspace = Workspace(workspace_path)
-    lookup = CorpusLookup(corpus_path, workspace_path / "corpus_lookup.sqlite3")
+    lookup = CorpusLookup(corpus_path, (lookup_workspace or workspace_path) / "corpus_lookup.sqlite3")
     lock = threading.RLock()
 
     @asynccontextmanager
@@ -106,10 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, default=Path("evaluation/annotation/workspace"))
     parser.add_argument("--corpus", type=Path, default=Path("artifacts/corpus_v1/chunks.jsonl"))
+    parser.add_argument("--lookup-workspace", type=Path)
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     import uvicorn
-    uvicorn.run(create_app(args.workspace, args.corpus), host="127.0.0.1", port=args.port,
+    uvicorn.run(create_app(args.workspace, args.corpus, lookup_workspace=args.lookup_workspace), host="127.0.0.1", port=args.port,
                 log_level="warning")
     return 0
 

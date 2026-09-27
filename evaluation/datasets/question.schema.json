@@ -293,6 +293,57 @@
       ],
       "default": null,
       "title": "Reviewer Id"
+    },
+    "annotation_origin": {
+      "anyOf": [
+        {
+          "enum": [
+            "automatic",
+            "human"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Annotation Origin"
+    },
+    "annotation_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "draft",
+            "auto_reviewed",
+            "needs_human_review",
+            "human_accepted"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Annotation Status"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
     }
   },
   "required": [

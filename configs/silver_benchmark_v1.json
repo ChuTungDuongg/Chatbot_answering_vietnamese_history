@@ -1,0 +1,43 @@
+{
+  "policy_version": 1,
+  "seed": 2026,
+  "base_target": 500,
+  "max_attempts": 1500,
+  "max_candidates_per_source": 2,
+  "max_candidates_per_title": 3,
+  "max_famous_topics": 10,
+  "max_evidence_chunks": 12,
+  "semantic_batch_size": 6,
+  "evidence_text_chars": 1400,
+  "audit_size": 50,
+  "audit_risky": 35,
+  "category_targets": {
+    "dynasties": 22,
+    "rulers": 22,
+    "historical_figures": 22,
+    "battles": 22,
+    "wars": 22,
+    "revolutions": 21,
+    "treaties": 21,
+    "colonial_period": 21,
+    "independence": 21,
+    "political_events": 21,
+    "cultural_history": 21,
+    "religious_history": 21,
+    "economic_history": 21,
+    "social_history": 21,
+    "historical_geography": 21,
+    "archaeology_heritage": 21,
+    "chronology": 21,
+    "cause_consequence": 21,
+    "comparison": 21,
+    "multi_hop": 21
+  },
+  "edge_targets": {
+    "ambiguous": 12,
+    "insufficient_evidence": 13,
+    "false_premise": 25,
+    "out_of_domain": 25
+  },
+  "difficulty_targets": {"easy": 175, "medium": 225, "hard": 100}
+}

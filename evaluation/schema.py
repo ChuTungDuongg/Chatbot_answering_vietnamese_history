@@ -36,6 +36,10 @@ class Question(BaseModel):
     review_version: int | None = Field(default=None, ge=1)
     review_policy_version: int | None = Field(default=None, ge=1)
     reviewer_id: str | None = None
+    # Provenance makes automatic evaluation labels distinguishable from human gold.
+    annotation_origin: Literal["automatic", "human"] | None = None
+    annotation_status: Literal["draft", "auto_reviewed", "needs_human_review", "human_accepted"] | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
 
 
 def load_questions(path: str | Path) -> list[Question]:
