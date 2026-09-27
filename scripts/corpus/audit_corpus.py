@@ -244,7 +244,8 @@ def audit_manifest(manifest_path: Path, repo_root: Path = REPO_ROOT, *, all_file
         raise ValueError("Manifest 'files' must be a list")
     expected_files = [
         entry for entry in inventory
-        if all_files or entry.get("preservation_tier", "protected") == "protected"
+        if entry.get("preservation_tier") != "retired_legacy"
+        and (all_files or entry.get("preservation_tier", "protected") == "protected")
     ]
     inventory_paths = [entry["path"] for entry in inventory]
     if len(inventory_paths) != len(set(inventory_paths)):

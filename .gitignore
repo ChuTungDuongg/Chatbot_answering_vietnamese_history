@@ -134,8 +134,7 @@ qdrant_storage/
 *_messages.jsonl
 *_stats.json
 
-# Canonical datasets that SHOULD stay in Git.
-!Dataset/merged_jsonl/all_messages.jsonl
+# The old RAG-SFT message export was removed from the active tree.
 
 # =========================
 # Chunk export outputs

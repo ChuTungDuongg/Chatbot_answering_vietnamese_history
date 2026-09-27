@@ -45,7 +45,7 @@ Dependencies flow from API to mode runtimes to the retriever and model runtime. 
 
 The existing retrieval algorithm remains the baseline: multilingual E5 embeddings and FAISS dense search; BM25S sparse search; weighted reciprocal-rank fusion; cross-encoder reranking; metadata signals, deduplication, and context diversity. Deterministic query expansion and domain checks can run before retrieval. Both modes call this implementation through the same retrieval interface. The corpus and indexes are read as existing artifacts and are never rebuilt when the server starts.
 
-The original data locations are intentionally retained. See [`corpus_preservation_manifest.json`](corpus_preservation_manifest.json) for filenames, sizes, counts, and hashes captured before the refactor. The read-only `python -m scripts.corpus.audit_corpus` command checks those bytes against the manifest. Corpus building and indexing commands are explicit operations in `scripts/corpus/` and `scripts/retrieval/`; they are not part of application startup or an audit.
+The protected V0 data locations remain unchanged. See [`corpus_preservation_manifest.json`](corpus_preservation_manifest.json) for filenames, sizes, counts, and hashes captured before the refactor; intentionally removed SFT entries are marked `retired_legacy`. The read-only `python -m scripts.corpus.audit_corpus` command checks remaining protected bytes. Corpus building and indexing commands are explicit operations in `scripts/`; they are not part of application startup or an audit. [Corpus V1](CORPUS_V1_COLAB.md) uses a separate output root.
 
 The retrieval interface permits a later Qdrant experiment without changing answer generation. Qdrant is not used in this baseline.
 
@@ -61,4 +61,4 @@ The API records request timestamps and spans; the external benchmark measures th
 
 The versioned question dataset supports unlabeled questions. Retrieval metrics use relevant chunk or source IDs when provided. Answer similarity uses a gold answer when provided. Grounding and citation checks are reported separately from answer similarity. Missing labels yield N/A. See [`EVALUATION.md`](EVALUATION.md).
 
-Future changes should compare one variable at a time against this baseline, using the same corpus, questions, hardware, and measurement process. [`EXPERIMENTS.md`](EXPERIMENTS.md) provides the recording template. The first proposed experiment compares serving backends while keeping retrieval unchanged.
+Future changes should compare one variable at a time against this baseline, using the same questions, hardware, and measurement process. [`EXPERIMENTS.md`](EXPERIMENTS.md) provides the recording template. First create a [human-reviewed gold set](GOLD_EVALUATION_DATASET.md) and compare V0 against V1. Serving and retrieval backend experiments should come later as separate changes.

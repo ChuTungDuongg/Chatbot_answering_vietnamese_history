@@ -28,6 +28,6 @@ Interpretation and limitations:
 Decision:
 ```
 
-The first proposed optimization experiment is **Transformers serving versus vLLM serving** for one mode at a time. Keep the exact Qwen model and revision, prompt, generation settings, corpus, FAISS + BM25S retrieval, dataset, hardware, and concurrency fixed. Compare externally observed answer TTFT, E2E, throughput, and answer/citation outputs. Record any output differences and backend-specific settings. Do not implement this experiment as part of baseline V0.
+The next stage is a human-reviewed retrieval and answer gold set, followed by a Corpus V0 versus Corpus V1 comparison on the same questions. Do not claim either corpus is superior before that comparison. Afterward, an isolated optimization experiment may compare **Transformers serving versus vLLM serving** for one mode at a time. Keep the exact Qwen model and revision, prompt, generation settings, corpus, FAISS + BM25S retrieval, dataset, hardware, and concurrency fixed. Compare externally observed answer TTFT, E2E, throughput, and answer/citation outputs. Record any output differences and backend-specific settings.
 
 A later, separate backend experiment can compare the preserved FAISS + BM25S baseline with Qdrant-backed dense retrieval. Record collection version, payload/filter policy, cosine configuration, import/index hash, health state, retrieved IDs, and latency. That experiment must not silently become the V0 default or change chunking, embedding model, BM25, reranker, and model settings at the same time.

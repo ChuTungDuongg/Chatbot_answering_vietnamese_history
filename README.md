@@ -7,7 +7,7 @@ A reproducible baseline for answering Vietnamese history questions with grounded
 | `hybrid` | Existing hybrid retrieval → cited prompt → answer | Vanilla `Qwen/Qwen3-4B-Instruct-2507` |
 | `central` | Tool-using agent → history retrieval and other configured tools → final answer | Vanilla `Qwen/Qwen3-8B` |
 
-Both modes use the same preserved historical corpus. The baseline keeps the existing multilingual E5, FAISS, BM25S, weighted fusion, cross-encoder reranking, and context-selection behavior. Neither mode requires a LoRA adapter. Generation defaults to `do_sample=false` and `enable_thinking=false`.
+Both modes use the same preserved historical corpus and shared retriever. The baseline keeps multilingual E5, FAISS, BM25S, weighted RRF, cross-encoder reranking, and context selection. Neither mode requires a LoRA adapter. Generation defaults to `do_sample=false` and `enable_thinking=false`.
 
 The project includes real model-token SSE streaming, an HTTP latency benchmark, retrieval and answer evaluation, and a read-only corpus audit. See [the architecture](docs/ARCHITECTURE.md) for the execution paths.
 
@@ -21,6 +21,21 @@ The project includes real model-token SSE streaming, an HTTP latency benchmark, 
 | [`evaluation/`](docs/EVALUATION.md) | Versioned questions and separate retrieval, answer, grounding, and citation metrics. |
 | [`scripts/corpus/`](scripts/corpus/audit_corpus.py) | Read-only preservation audit and explicit corpus utilities. |
 | [`scripts/retrieval/`](scripts/retrieval/build_index.py) | Explicit index-build utility; server startup does not run it. |
+| [`scripts/corpus_v1/`](scripts/corpus_v1/cli.py) | Standalone, resumable Vietnamese Wikipedia Corpus V1 construction and audit. |
+| [`scripts/colab/`](scripts/colab/bootstrap.py) | Optional Google Drive mount and workspace setup. |
+
+## Data versions
+
+| Data | Status | Meaning |
+| --- | --- | --- |
+| Corpus V0 | Frozen runtime baseline | 58,603 enriched chunks plus protected FAISS/BM25S indexes; current Hybrid and Central retrieval source. |
+| Corpus V1 | Offline build pipeline, no accepted build in this repository | Vietnamese Wikipedia via configurable Hugging Face dataset; build to a separate `corpus_v1/` directory, preferably Drive. No quality superiority claim until evaluation. |
+| `training/Dataset/` | Protected legacy historical source data | 520 chunk-ID records in its merged JSONL; not the runtime corpus or a new SFT set. |
+| `Dataset/` | Protected ignored historical sample packs only | Former 1,000-message RAG-SFT export removed from tracked tree. |
+| `evaluation/datasets/` | Two unlabeled demonstration questions | Gold labels need human review; not training data. |
+| `datasets/` | Former role SFT data removed | Research, Evidence, and History Answerer datasets are recoverable through Git history. |
+
+See [Corpus V1 Colab workflow](docs/CORPUS_V1_COLAB.md), [legacy cleanup](docs/LEGACY_DATA_CLEANUP.md), [repository audit](docs/REPO_AUDIT.md), and [gold-set guidance](docs/GOLD_EVALUATION_DATASET.md).
 
 ## Run locally
 
@@ -57,7 +72,7 @@ Set `VITE_API_BASE_URL=http://127.0.0.1:8000` in `frontend/.env` before starting
 
 ## Preserve and audit the corpus
 
-The historical data and index bytes were inventoried in [`docs/corpus_preservation_manifest.json`](docs/corpus_preservation_manifest.json). Legacy data locations remain in place, including paths under `Dataset/`, `training/Dataset/`, and `artifacts/`. This refactor does not clean, rechunk, rewrite, or automatically rebuild them.
+The historical data and index bytes were inventoried in [`docs/corpus_preservation_manifest.json`](docs/corpus_preservation_manifest.json). The five removed SFT JSONL paths retain recorded hashes as `retired_legacy` entries. Protected V0 files, `training/Dataset/`, and `training/InvestigatingDataset.zip` remain unchanged. V1 writes only to a separate root.
 
 Check the preservation snapshot without modifying data:
 

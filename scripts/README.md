@@ -27,3 +27,5 @@ python -m scripts.retrieval.build_index --corpus path/to/curated_corpus.jsonl --
 ```
 
 The baseline uses the preserved files and retrieval behavior already recorded in the manifest. A proposed corpus or index change is a new experiment and must use its own artifact hash, dataset, and benchmark run.
+
+For the new Wikipedia Corpus V1, use `python -m scripts.corpus_v1.cli` and the [Colab workflow](../docs/CORPUS_V1_COLAB.md). It streams documents through checkpoints and never imports the FastAPI runtime. Its output must be a separate `corpus_v1/` root.

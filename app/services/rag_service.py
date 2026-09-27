@@ -4,6 +4,7 @@ This service has no generation model and never builds or modifies an index.
 """
 
 import json
+import hashlib
 import logging
 import time
 from typing import Any
@@ -24,6 +25,7 @@ class RAGService:
         self.manifest: dict[str, Any] | None = None
         self.chunks: list[dict[str, Any]] = []
         self.chunk_by_id: dict[str, dict[str, Any]] = {}
+        self.ordered_chunk_id_sha256: str | None = None
         self.faiss_index = None
         self.bm25 = None
         self.embedder = None
@@ -55,6 +57,7 @@ class RAGService:
         self.faiss_index = None
         self.chunks = []
         self.chunk_by_id = {}
+        self.ordered_chunk_id_sha256 = None
         self.loaded = False
 
     def _validate_artifacts(self) -> None:
@@ -87,11 +90,25 @@ class RAGService:
         by_id = {str(chunk["chunk_id"]): chunk for chunk in chunks}
         if len(by_id) != len(chunks):
             raise RuntimeError("Duplicate chunk_id in corpus")
+        digest = hashlib.sha256()
+        for chunk in chunks:
+            digest.update((str(chunk["chunk_id"]) + "\n").encode("utf-8"))
+        self.ordered_chunk_id_sha256 = digest.hexdigest()
         self.chunks, self.chunk_by_id = chunks, by_id
+
+    def _validate_index_manifest(self, path) -> None:
+        with path.open(encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        if int(manifest.get("count", -1)) != len(self.chunks):
+            raise RuntimeError(f"Index/corpus count mismatch: {path}")
+        expected = manifest.get("ordered_chunk_id_sha256")
+        if expected is not None and expected != self.ordered_chunk_id_sha256:
+            raise RuntimeError(f"Index/corpus row order mismatch: {path}")
 
     def _load_faiss(self) -> None:
         import faiss
 
+        self._validate_index_manifest(settings.faiss_manifest_path)
         self.faiss_index = faiss.read_index(str(settings.faiss_path))
         if self.faiss_index.ntotal != len(self.chunks):
             raise RuntimeError("FAISS/corpus count mismatch")
@@ -99,10 +116,7 @@ class RAGService:
     def _load_bm25(self) -> None:
         import bm25s
 
-        with settings.bm25_manifest_path.open(encoding="utf-8") as handle:
-            manifest = json.load(handle)
-        if int(manifest.get("count", -1)) != len(self.chunks):
-            raise RuntimeError("BM25S/corpus count mismatch")
+        self._validate_index_manifest(settings.bm25_manifest_path)
         self.bm25 = bm25s.BM25.load(str(settings.bm25_path), mmap=True, load_corpus=False)
 
     def _compute_device(self) -> str:

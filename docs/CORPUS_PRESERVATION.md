@@ -9,10 +9,11 @@ so a fresh Git clone alone will not contain every listed artifact.
 | Scope | Files | Bytes |
 | --- | ---: | ---: |
 | Full local inventory | 264 | 3,210,595,277 |
-| Protected corpus, data, and indexes | 184 | 1,491,752,505 |
+| Originally protected corpus, data, and indexes | 184 | 1,491,752,505 |
 
-The historical locations remain in place: `Dataset/`, `training/Dataset/`,
-`datasets/`, and the corpus and retrieval subdirectories of both
+Five obsolete SFT JSONL entries and their obsolete README were later retired with their original hashes still recorded. The current protected count is 178; run the audit for its live byte total. `retired_legacy` entries are excluded even with `--all-files` because the tracked files were intentionally removed. This does not change any V0 file or its recorded SHA-256.
+
+The protected historical locations remain in place: ignored `Dataset/Samples/`, `training/Dataset/`, and the corpus and retrieval subdirectories of both
 `artifacts/vn_history_deployment/` and `artifacts/vn_history_modal/`.
 `training/Dataset/` is a legacy **data** path, even though its parent is named
 `training`. The two deployed enriched corpus files are byte-identical and each
@@ -31,7 +32,7 @@ python -m scripts.corpus.audit_corpus
 ```
 
 It prints a JSON report and exits with status 1 if a protected file is missing,
-changed, or unreadable. `--all-files` checks every inventoried file, including
+changed, or unreadable. `--all-files` checks every non-retired inventoried file, including
 mutable and obsolete model files. `--strict-new` additionally fails when a new
 file appears under an inventoried root. The audit does not write to any data
 path or rebuild an index.

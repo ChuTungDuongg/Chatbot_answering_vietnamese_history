@@ -928,7 +928,7 @@
       "physical_lines": 1000,
       "jsonl_record_count_estimate": 1000,
       "artifact_kind": "historical_source_data",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "Dataset/README.md",
@@ -937,7 +937,7 @@
       "git_status": "tracked",
       "physical_lines": 125,
       "artifact_kind": "historical_source_data",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "Dataset/Samples/Pack1/bach_dang_ngo_quyen_rag_sft_messages_20.jsonl",
@@ -2087,7 +2087,7 @@
       "physical_lines": 1013,
       "jsonl_record_count_estimate": 1013,
       "artifact_kind": "derived_dataset",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "datasets/evidence_agent/train_v2.jsonl",
@@ -2097,7 +2097,7 @@
       "physical_lines": 994,
       "jsonl_record_count_estimate": 994,
       "artifact_kind": "derived_dataset",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "datasets/history_answerer/train.jsonl",
@@ -2107,7 +2107,7 @@
       "physical_lines": 994,
       "jsonl_record_count_estimate": 994,
       "artifact_kind": "derived_dataset",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "datasets/research_agent/history_trajectories.jsonl",
@@ -2117,7 +2117,7 @@
       "physical_lines": 2974,
       "jsonl_record_count_estimate": 2974,
       "artifact_kind": "derived_dataset",
-      "preservation_tier": "protected"
+      "preservation_tier": "retired_legacy"
     },
     {
       "path": "evaluation/datasets/fixtures/questions.jsonl",
