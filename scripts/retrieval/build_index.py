@@ -1,73 +1,435 @@
-"""Build the existing FAISS and BM25S retrieval indexes on explicit request."""
+"""Build ordered E5/FAISS and BM25S indexes from explicit corpus paths.
+
+Dense input is batched. BM25S still materializes token IDs and sparse arrays;
+its independent phase avoids holding the dense model and vectors at that time.
+"""
 
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from datetime import datetime, timezone
+import gc
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+from typing import Any, Iterator
 
-from scripts.corpus.jsonl import read_jsonl
+
+MODEL_ID = "intfloat/multilingual-e5-base"
+INDEX_VERSION = "corpus_v1_index_v1"
+BUILDER_VERSION = "2"
+PASSAGE_TEMPLATE = "passage: {title}\n{text}"
+PASSAGE_PREFIX = "passage: "
+QUERY_PREFIX = "query: "
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+PROTECTED = {"vn_history_deployment", "vn_history_modal", "old_corpus"}
 
 
-def ordered_chunk_id_sha256(rows: list[dict]) -> str:
+def log(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def ordered_chunk_id_sha256(rows) -> str:
+    """Keep the original ordered-ID hash contract for iterable rows."""
     digest = hashlib.sha256()
     for row in rows:
         chunk_id = row.get("chunk_id")
-        if not chunk_id:
+        if not isinstance(chunk_id, str) or not chunk_id.strip():
             raise ValueError("Every indexed row requires chunk_id")
-        digest.update((str(chunk_id) + "\n").encode("utf-8"))
+        digest.update((chunk_id + "\n").encode("utf-8"))
     return digest.hexdigest()
 
 
+class CorpusPass:
+    def __init__(self, path: Path, *, unique: bool = False):
+        self.path = path
+        self.digest = hashlib.sha256()
+        self.ids_digest = hashlib.sha256()
+        self.count = self.size = self.total_chars = self.max_chars = self.near_empty = 0
+        self.min_chars: int | None = None
+        self.schema_versions: Counter[str] = Counter()
+        # Exact duplicate detection costs O(unique IDs), never O(corpus text).
+        self.seen: set[str] | None = set() if unique else None
+
+    def rows(self) -> Iterator[dict[str, Any]]:
+        with self.path.open("rb") as stream:
+            for line_number, raw in enumerate(stream, 1):
+                self.digest.update(raw)
+                self.size += len(raw)
+                try:
+                    row = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise ValueError(f"Malformed JSONL at {self.path}:{line_number}") from exc
+                if not isinstance(row, dict):
+                    raise ValueError(f"Expected JSON object at {self.path}:{line_number}")
+                chunk_id = row.get("chunk_id")
+                if not isinstance(chunk_id, str) or not chunk_id.strip():
+                    raise ValueError(f"Missing chunk_id at {self.path}:{line_number}")
+                if self.seen is not None:
+                    if chunk_id in self.seen:
+                        raise ValueError(f"Duplicate chunk_id {chunk_id!r} at {self.path}:{line_number}")
+                    self.seen.add(chunk_id)
+                content = row.get("text")
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError(f"Empty or invalid text at {self.path}:{line_number}")
+                if not isinstance(row.get("title", ""), str):
+                    raise ValueError(f"Invalid title at {self.path}:{line_number}")
+                schema = row.get("schema_version")
+                if schema not in (None, 1, 2):
+                    raise ValueError(f"Unsupported schema at {self.path}:{line_number}")
+                self.schema_versions[str(schema) if schema is not None else "unspecified"] += 1
+                self.ids_digest.update((chunk_id + "\n").encode("utf-8"))
+                self.count += 1
+                chars = len(content)
+                self.total_chars += chars
+                self.max_chars = max(chars, self.max_chars)
+                self.min_chars = chars if self.min_chars is None else min(chars, self.min_chars)
+                self.near_empty += int(len(content.strip()) < 40)
+                yield row
+
+    def report(self) -> dict[str, Any]:
+        if not self.count:
+            raise ValueError(f"Cannot index an empty corpus: {self.path}")
+        return {
+            "chunk_count": self.count, "corpus_bytes": self.size,
+            "corpus_sha256": self.digest.hexdigest(),
+            "ordered_chunk_id_sha256": self.ids_digest.hexdigest(),
+            "text_chars": {"min": self.min_chars, "max": self.max_chars,
+                           "mean": round(self.total_chars / self.count, 2)},
+            "near_empty_chunks_under_40_chars": self.near_empty,
+            "schema_versions_observed": dict(sorted(self.schema_versions.items())),
+            "missing_ids": 0, "duplicate_ids": 0, "malformed_rows": 0,
+            "missing_or_empty_text": 0,
+        }
+
+
+def scan_corpus(path: Path) -> dict[str, Any]:
+    tracker = CorpusPass(path, unique=True)
+    for _ in tracker.rows():
+        pass
+    result = tracker.report()
+    if result["corpus_bytes"] != path.stat().st_size:
+        raise RuntimeError("Corpus size changed during preflight")
+    return result
+
+
+def batches(rows: Iterator[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
+    batch: list[dict[str, Any]] = []
+    for row in rows:
+        batch.append(row)
+        if len(batch) == size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def assert_same_corpus(actual: dict[str, Any], expected: dict[str, Any]) -> None:
+    keys = ("chunk_count", "corpus_bytes", "corpus_sha256", "ordered_chunk_id_sha256")
+    if any(actual[key] != expected[key] for key in keys):
+        raise RuntimeError("Corpus changed between preflight and index pass")
+
+
+def safe_output(path: Path) -> Path:
+    result = path.expanduser().resolve()
+    if any(part.casefold() in PROTECTED for part in result.parts):
+        raise ValueError("Refusing to write indexes inside frozen V0 or archived artifacts")
+    return result
+
+
+def output_paths(out: Path) -> dict[str, str]:
+    return {
+        "faiss_index": str(out / "faiss" / "chunks.index"),
+        "faiss_manifest": str(out / "faiss" / "manifest.json"),
+        "bm25_directory": str(out / "bm25s_index"),
+        "bm25_manifest": str(out / "bm25s_index" / "phase9_manifest.json"),
+        "index_manifest": str(out / "index_manifest.json"),
+    }
+
+
+def selected_device(requested: str) -> str:
+    if requested == "cpu":
+        return "cpu"
+    import torch
+    available = bool(torch.cuda.is_available())
+    if requested == "cuda" and not available:
+        raise RuntimeError("CUDA requested but unavailable")
+    return "cuda" if available else "cpu"
+
+
+def preflight_report(corpus: Path, out: Path, scan: dict[str, Any], *,
+                     dimension: int, batch_size: int, device: str,
+                     requested_revision: str) -> dict[str, Any]:
+    vector_bytes = scan["chunk_count"] * dimension * 4
+    return {
+        "schema_version": 1, "mode": "preflight", "corpus_path": str(corpus), **scan,
+        "embedding_model_id": MODEL_ID,
+        "embedding_model_requested_revision": requested_revision,
+        "embedding_model_resolved_revision": None,
+        "model_resolution_note": "Local preflight does not contact the model hub; FAISS build resolves and loads an immutable revision.",
+        "embedding_dimension_estimate": dimension,
+        "estimated_faiss_vector_bytes": vector_bytes,
+        "estimated_faiss_vector_gib": round(vector_bytes / 2**30, 3),
+        "minimum_ram_consideration": "FAISS vectors alone need the stated bytes in RAM; allow more for model, batch, library, OS, and BM25S separately.",
+        "device": device, "embedding_batch_size": batch_size,
+        "output_dir_exists": out.exists(),
+        "components_already_present": {
+            "faiss": (out / "faiss").exists(),
+            "bm25": (out / "bm25s_index").exists(),
+        },
+        "duplicate_detection_memory": "Exact preflight duplicate checking retains unique IDs in a Python set; text and rows are streamed.",
+        "expected_outputs": output_paths(out),
+    }
+
+
+def resolve_model_revision(model_id: str, requested: str) -> str:
+    from huggingface_hub import HfApi
+    resolved = requested if SHA40.fullmatch(requested) else HfApi().model_info(model_id, revision=requested).sha
+    if not isinstance(resolved, str) or not SHA40.fullmatch(resolved):
+        raise RuntimeError("Embedding model revision did not resolve to an immutable SHA")
+    return resolved
+
+
+def builder_git_sha() -> str | None:
+    result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                            cwd=Path(__file__).resolve().parents[2], check=False)
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and SHA40.fullmatch(value) else None
+
+
+def common_manifest(corpus: Path, scan: dict[str, Any]) -> dict[str, Any]:
+    source_manifest = corpus.parent / "manifest.json"
+    fingerprint = None
+    if source_manifest.exists():
+        fingerprint = json.loads(source_manifest.read_text(encoding="utf-8")).get("config_fingerprint")
+    return {
+        "schema_version": 1, "index_version": INDEX_VERSION,
+        "builder_version": BUILDER_VERSION,
+        "corpus_path": str(corpus), "corpus_sha256": scan["corpus_sha256"],
+        "corpus_chunk_count": scan["chunk_count"],
+        "ordered_chunk_id_sha256": scan["ordered_chunk_id_sha256"],
+        "source_corpus_config_fingerprint": fingerprint,
+        "builder_git_sha": builder_git_sha(),
+        "built_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def check_existing(out: Path, scan: dict[str, Any]) -> None:
+    for partial in (out / "faiss.partial", out / "bm25s_index.partial",
+                    out / "index_manifest.json.partial"):
+        if partial.exists():
+            raise RuntimeError(f"Incomplete index output exists: {partial}; inspect it before retrying")
+    for directory, manifest_name, required_name in (
+        (out / "faiss", "manifest.json", "chunks.index"),
+        (out / "bm25s_index", "phase9_manifest.json", "params.index.json"),
+    ):
+        if directory.exists() and not (directory / manifest_name).is_file():
+            raise RuntimeError(f"Incomplete index component exists: {directory}")
+        if directory.exists() and not (directory / required_name).is_file():
+            raise RuntimeError(f"Incomplete index component exists: {directory}")
+    for path in (out / "faiss" / "manifest.json", out / "bm25s_index" / "phase9_manifest.json"):
+        if path.exists():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if (saved.get("count") != scan["chunk_count"] or
+                    saved.get("corpus_sha256") != scan["corpus_sha256"] or
+                    saved.get("ordered_chunk_id_sha256") != scan["ordered_chunk_id_sha256"]):
+                raise RuntimeError(f"Existing index component differs from corpus: {path}")
+
+
+def add_faiss_batches(corpus: Path, scan: dict[str, Any], index, model, *,
+                      batch_size: int, dimension: int) -> None:
+    import numpy as np
+    tracker = CorpusPass(corpus)
+    started = time.monotonic()
+    for number, batch in enumerate(batches(tracker.rows(), batch_size), 1):
+        first = tracker.count - len(batch)
+        log(f"[faiss] batch={number} rows={first}-{tracker.count - 1}")
+        passages = [PASSAGE_TEMPLATE.format(title=row.get("title", ""), text=row["text"]) for row in batch]
+        vectors = np.asarray(model.encode(passages, normalize_embeddings=True,
+                                          batch_size=batch_size, convert_to_numpy=True,
+                                          show_progress_bar=False), dtype="float32")
+        if vectors.shape != (len(batch), dimension):
+            raise RuntimeError(f"Embedding shape mismatch: {vectors.shape}")
+        index.add(vectors)
+        elapsed = max(time.monotonic() - started, 1e-9)
+        rate = tracker.count / elapsed
+        eta = (scan["chunk_count"] - tracker.count) / rate
+        log(f"[faiss] encoded={len(batch)} total={tracker.count}/{scan['chunk_count']} rate={rate:.2f} chunks/s elapsed={elapsed:.1f}s eta={eta:.1f}s")
+    assert_same_corpus(tracker.report(), scan)
+    if index.ntotal != scan["chunk_count"]:
+        raise RuntimeError("FAISS vector count differs from corpus count")
+
+
+def build_faiss(corpus: Path, out: Path, scan: dict[str, Any], *,
+                requested_revision: str, resolved_revision: str, device: str,
+                batch_size: int, model_factory=None, faiss_module=None) -> dict[str, Any]:
+    if (out / "faiss").exists():
+        raise FileExistsError(f"FAISS output already exists: {out / 'faiss'}")
+    if faiss_module is None:
+        import faiss as faiss_module
+    if model_factory is None:
+        from sentence_transformers import SentenceTransformer
+        model_factory = lambda: SentenceTransformer(MODEL_ID, revision=resolved_revision, device=device)
+    log(f"[faiss] loading model={MODEL_ID} revision={resolved_revision} device={device}")
+    model = model_factory()
+    dimension = int(model.get_sentence_embedding_dimension())
+    if dimension < 1:
+        raise RuntimeError("Embedding model reported no valid dimension")
+    index = faiss_module.IndexFlatIP(dimension)
+    add_faiss_batches(corpus, scan, index, model, batch_size=batch_size, dimension=dimension)
+    manifest = {
+        **common_manifest(corpus, scan), "count": scan["chunk_count"],
+        "embedding_model_id": MODEL_ID,
+        "embedding_model_requested_revision": requested_revision,
+        "embedding_model_resolved_revision": resolved_revision,
+        "embedding_dimension": dimension, "normalize_embeddings": True,
+        "passage_prefix": PASSAGE_PREFIX, "query_prefix": QUERY_PREFIX,
+        "passage_template": PASSAGE_TEMPLATE, "embedding_batch_size": batch_size,
+        "device": device, "faiss_index_type": "IndexFlatIP",
+    }
+    stage = out / "faiss.partial"
+    stage.mkdir()
+    faiss_module.write_index(index, str(stage / "chunks.index"))
+    (stage / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(stage, out / "faiss")
+    del index, model
+    return manifest
+
+
+def build_bm25(corpus: Path, out: Path, scan: dict[str, Any], *, batch_size: int,
+               bm25_module=None) -> dict[str, Any]:
+    if (out / "bm25s_index").exists():
+        raise FileExistsError(f"BM25 output already exists: {out / 'bm25s_index'}")
+    if bm25_module is None:
+        import bm25s as bm25_module
+    from app.rag.retrieval import match_norm
+    log("[bm25] phase=tokenizing; BM25S retains token IDs and sparse arrays in RAM")
+    tracker = CorpusPass(corpus)
+    vocab: dict[str, int] = {}
+    token_ids: list[list[int]] = []
+    for number, batch in enumerate(batches(tracker.rows(), batch_size), 1):
+        normalized = [match_norm(f"{row.get('title', '')} {row.get('title', '')} {row['text']}") for row in batch]
+        tokens = bm25_module.tokenize(normalized, stopwords=None, stemmer=None,
+                                      return_ids=False, show_progress=False)
+        for document in tokens:
+            token_ids.append([vocab.setdefault(token, len(vocab)) for token in document])
+        if number == 1 or number % 100 == 0 or tracker.count == scan["chunk_count"]:
+            log(f"[bm25] tokenized={tracker.count}/{scan['chunk_count']} vocab={len(vocab)}")
+    assert_same_corpus(tracker.report(), scan)
+    if len(token_ids) != scan["chunk_count"]:
+        raise RuntimeError("BM25 token document count differs from corpus count")
+    log("[bm25] phase=indexing")
+    bm25 = bm25_module.BM25()
+    bm25.index((token_ids, vocab), show_progress=False)
+    del token_ids, vocab
+    manifest = {
+        **common_manifest(corpus, scan), "count": scan["chunk_count"],
+        "embedding_model_id": MODEL_ID,
+        "bm25_configuration": {
+            "method": bm25.method, "k1": bm25.k1, "b": bm25.b, "delta": bm25.delta,
+            "normalization": "app.rag.retrieval.match_norm",
+            "tokenizer": "bm25s.tokenize", "stopwords": None, "stemmer": None,
+            "title_repetitions": 2,
+            "note": "title duplicated x2 + full text, normalized for Vietnamese lexical retrieval",
+        },
+    }
+    stage = out / "bm25s_index.partial"
+    stage.mkdir()
+    log("[bm25] phase=saving")
+    bm25.save(str(stage), corpus=None, show_progress=False)
+    (stage / "phase9_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(stage, out / "bm25s_index")
+    del bm25
+    return manifest
+
+
+def write_index_manifest(corpus: Path, out: Path, scan: dict[str, Any]) -> dict[str, Any]:
+    components = {}
+    for name, path in (("faiss", out / "faiss" / "manifest.json"),
+                       ("bm25", out / "bm25s_index" / "phase9_manifest.json")):
+        if path.exists():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if (saved.get("count") != scan["chunk_count"] or
+                    saved.get("corpus_sha256") != scan["corpus_sha256"] or
+                    saved.get("ordered_chunk_id_sha256") != scan["ordered_chunk_id_sha256"]):
+                raise RuntimeError(f"Index component differs from corpus: {path}")
+            components[name] = saved
+    dense = components.get("faiss", {})
+    sparse = components.get("bm25", {})
+    manifest = {
+        **common_manifest(corpus, scan), "components_present": sorted(components),
+        "component_status": {name: name in components for name in ("faiss", "bm25")},
+        **{key: dense.get(key) for key in (
+            "embedding_model_requested_revision", "embedding_model_resolved_revision",
+            "embedding_dimension", "normalize_embeddings", "passage_prefix",
+            "query_prefix", "passage_template",
+            "embedding_batch_size", "device", "faiss_index_type")},
+        "embedding_model_id": dense.get("embedding_model_id", MODEL_ID),
+        "bm25_configuration": sparse.get("bm25_configuration"),
+    }
+    temp = out / "index_manifest.json.partial"
+    temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp, out / "index_manifest.json")
+    return manifest
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Phase 9 build FAISS and BM25S indexes for the enriched corpus.")
-    parser.add_argument("--corpus", default="artifacts/corpus/vn_history_rag_chunks_enriched.jsonl")
-    parser.add_argument("--output-dir", default="artifacts/retrieval")
-    parser.add_argument("--embedding-model", default="intfloat/multilingual-e5-base")
+    parser = argparse.ArgumentParser(description="Preflight or build ordered E5/FAISS and BM25S indexes.")
+    parser.add_argument("--corpus", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--embedding-model", default=MODEL_ID)
+    parser.add_argument("--model-revision", default="main")
+    parser.add_argument("--embedding-dimension", type=int, default=768,
+                        help="Preflight estimate only; build uses actual model dimension.")
+    parser.add_argument("--embedding-batch-size", type=int, default=64)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--component", choices=("all", "faiss", "bm25"), default="all")
+    parser.add_argument("--preflight", action="store_true",
+                        help="Read and validate corpus without writing outputs or loading a model.")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    import bm25s
-    import faiss
-    import numpy as np
-    from sentence_transformers import SentenceTransformer
-
-    from app.rag.retrieval import match_norm
-
-    out = Path(args.output_dir).resolve()
-    if any(part.casefold() in ("vn_history_deployment", "vn_history_modal") for part in out.parts):
-        raise ValueError("Refusing to write indexes inside frozen V0 artifacts")
-    rows = read_jsonl(args.corpus)
-    if not rows:
-        raise ValueError("Cannot index an empty corpus")
-    ids_sha256 = ordered_chunk_id_sha256(rows)
-    texts = [f"passage: {row.get('title', '')}\n{row.get('text', '')}" for row in rows]
-    faiss_dir = out / "faiss"
-    bm25_dir = out / "bm25s_index"
-    faiss_dir.mkdir(parents=True, exist_ok=True)
-    bm25_dir.mkdir(parents=True, exist_ok=True)
-
-    model = SentenceTransformer(args.embedding_model)
-    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=32, show_progress_bar=True)
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(np.asarray(embeddings, dtype="float32"))
-    faiss.write_index(index, str(faiss_dir / "chunks.index"))
-    (faiss_dir / "manifest.json").write_text(json.dumps({"count": len(rows), "embedding_model_id": args.embedding_model,
-                                                         "ordered_chunk_id_sha256": ids_sha256}, indent=2), encoding="utf-8")
-
-    corpus_tokens = bm25s.tokenize([
-        match_norm(f"{row.get('title', '')} {row.get('title', '')} {row.get('text', '')}")
-        for row in rows], stopwords=None, stemmer=None)
-    bm25 = bm25s.BM25()
-    bm25.index(corpus_tokens)
-    bm25.save(str(bm25_dir), corpus=None)
-    (bm25_dir / "phase9_manifest.json").write_text(json.dumps({"count": len(rows),
-                                                                 "ordered_chunk_id_sha256": ids_sha256,
-                                                                 "note": "title duplicated x2 + full text, normalized for Vietnamese lexical retrieval"}, indent=2), encoding="utf-8")
-    print(f"Built FAISS/BM25 indexes for {len(rows)} chunks in {out}")
+    if args.embedding_model != MODEL_ID:
+        raise ValueError(f"Baseline indexing requires {MODEL_ID}")
+    if args.embedding_batch_size < 1 or args.embedding_dimension < 1:
+        raise ValueError("Embedding batch size and dimension must be positive")
+    corpus = args.corpus.expanduser().resolve()
+    out = safe_output(args.output_dir)
+    device = selected_device(args.device)
+    log(f"[index] scanning corpus={corpus}")
+    scan = scan_corpus(corpus)
+    report = preflight_report(corpus, out, scan, dimension=args.embedding_dimension,
+                              batch_size=args.embedding_batch_size, device=device,
+                              requested_revision=args.model_revision)
+    log(f"[index] chunks={scan['chunk_count']} corpus_sha256={scan['corpus_sha256']}")
+    log(f"[index] embedding_dim_estimate={args.embedding_dimension} estimated_flat_index={report['estimated_faiss_vector_gib']} GiB")
+    if args.preflight:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    check_existing(out, scan)
+    for component, path in (("faiss", out / "faiss"), ("bm25", out / "bm25s_index")):
+        if args.component in ("all", component) and path.exists():
+            raise FileExistsError(f"Selected index component already exists: {path}")
+    out.mkdir(parents=True, exist_ok=True)
+    if args.component in ("all", "faiss"):
+        revision = resolve_model_revision(MODEL_ID, args.model_revision)
+        build_faiss(corpus, out, scan, requested_revision=args.model_revision,
+                    resolved_revision=revision, device=device,
+                    batch_size=args.embedding_batch_size)
+        gc.collect()
+    if args.component in ("all", "bm25"):
+        build_bm25(corpus, out, scan, batch_size=args.embedding_batch_size)
+    manifest = write_index_manifest(corpus, out, scan)
+    log(f"[index] completed components={','.join(manifest['components_present'])} output={out}")
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
 
 

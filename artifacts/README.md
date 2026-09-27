@@ -120,3 +120,8 @@ inspection. Copy genuine small build manifests and reports if available;
 do not fabricate them. `artifacts/corpus_v1/` is generated local data and
 must not be committed. `artifacts/old_corpus/` is the user's local archive,
 not a new runtime source of truth, and must not be committed.
+
+The historical preservation manifest still targets the original V0 paths; its
+audit reports missing files while those artifacts are archived locally. The
+runtime default remains V0. See [the V1 indexing guide](../docs/CORPUS_V1_INDEXING.md)
+for preflight and future index-build instructions.

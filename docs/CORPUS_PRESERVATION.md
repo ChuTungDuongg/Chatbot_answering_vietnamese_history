@@ -13,7 +13,7 @@ so a fresh Git clone alone will not contain every listed artifact.
 
 Five obsolete SFT JSONL entries and their obsolete README were later retired with their original hashes still recorded. The current protected count is 178; run the audit for its live byte total. `retired_legacy` entries are excluded even with `--all-files` because the tracked files were intentionally removed. This does not change any V0 file or its recorded SHA-256.
 
-The protected historical locations remain in place: ignored `Dataset/Samples/`, `training/Dataset/`, and the corpus and retrieval subdirectories of both
+The snapshot names the protected historical locations: ignored `Dataset/Samples/`, `training/Dataset/`, and the corpus and retrieval subdirectories of both
 `artifacts/vn_history_deployment/` and `artifacts/vn_history_modal/`.
 `training/Dataset/` is a legacy **data** path, even though its parent is named
 `training`. The two deployed enriched corpus files are byte-identical and each
@@ -24,6 +24,13 @@ has 520 lines; it is not a replacement for the deployed corpus.
 The manifest also inventories model files, mutable `data/chat.sqlite3`,
 evaluation fixtures, and local outputs to make cleanup reviewable. Those entries are marked
 `inventory_only`; the default audit checks the `protected` data and indexes.
+
+In the current local workspace, the user archived the ignored V0 deployment trees and
+artifact-training files under `artifacts/old_corpus/`. The historical snapshot still
+names their original paths. The default preservation audit therefore reports those
+protected files as missing until the original layout is restored for a V0 comparison.
+The archive is local and Git-ignored; it is not a new source of truth. Do not edit the
+snapshot hashes or interpret an archived copy as a passing audit at the original paths.
 
 Run the read-only preservation check from the repository root:
 

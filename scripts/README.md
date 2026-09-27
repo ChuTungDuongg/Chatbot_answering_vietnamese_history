@@ -20,12 +20,13 @@ The report summarizes chunk IDs, duplicate text, empty chunks, metadata coverage
 
 ## Explicit data-producing commands
 
-`scripts/corpus/build_corpus.py` and `scripts/corpus/enrich_corpus.py` create new corpus outputs. `scripts/retrieval/build_index.py` creates FAISS and BM25S indexes from a chosen corpus. Use separate output paths when investigating a future rebuild; these commands are not part of the baseline startup or audit.
+`scripts/corpus/build_corpus.py` and `scripts/corpus/enrich_corpus.py` create new corpus outputs. `scripts/retrieval/build_index.py` preflights a chosen corpus and can build FAISS and BM25S separately or together. Use explicit input and output paths; these commands are not part of baseline startup or audit.
 
 ```powershell
-python -m scripts.retrieval.build_index --corpus path/to/curated_corpus.jsonl --output-dir path/to/new_index_directory
+python -m scripts.retrieval.build_index --corpus artifacts/corpus_v1/chunks.jsonl --output-dir artifacts/corpus_v1/retrieval --preflight
 ```
 
 The baseline uses the preserved files and retrieval behavior already recorded in the manifest. A proposed corpus or index change is a new experiment and must use its own artifact hash, dataset, and benchmark run.
 
 For the new Wikipedia Corpus V1, use `python -m scripts.corpus_v1.cli` and the [Colab workflow](../docs/CORPUS_V1_COLAB.md). It streams documents through checkpoints and never imports the FastAPI runtime. Its output must be a separate `corpus_v1/` root.
+See [V1 indexing readiness](../docs/CORPUS_V1_INDEXING.md) for resource behavior, component builds, and the runtime-loading gap.

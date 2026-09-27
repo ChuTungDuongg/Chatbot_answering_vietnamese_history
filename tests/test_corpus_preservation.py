@@ -143,4 +143,6 @@ def test_neutral_corpus_build_and_enrich_keep_legacy_serialization(tmp_path: Pat
         ensure_ascii=False,
     )
     assert {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()} == source_hashes
-    assert build_index.build_parser().parse_args([]).embedding_model == "intfloat/multilingual-e5-base"
+    parsed = build_index.build_parser().parse_args([
+        "--corpus", str(built), "--output-dir", str(tmp_path / "new_indexes")])
+    assert parsed.embedding_model == "intfloat/multilingual-e5-base"

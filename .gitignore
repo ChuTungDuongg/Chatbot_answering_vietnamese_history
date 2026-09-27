@@ -92,6 +92,7 @@ output/
 artifacts/vn_history_deployment/
 artifacts/vn_history_modal/
 /artifacts/corpus_v1/
+/artifacts/old_corpus/
 /corpus_v1/
 *.partial
 
