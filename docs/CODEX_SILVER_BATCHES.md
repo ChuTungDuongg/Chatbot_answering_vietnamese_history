@@ -33,8 +33,7 @@ delete them; the 5,000-question master is rebuilt from completed batch files.
 
 ## Local storage and commands
 
-The ignored workspace `evaluation/annotation/workspace_codex_500/` retains its
-original name for continuity and contains a
+The ignored workspace `evaluation/annotation/workspace_codex_5000/` contains a
 SQLite draft store and `batches/batch_01.jsonl`, etc. Each accepted record is
 saved in one SQLite transaction, so an interrupted batch resumes at the next
 stable ID. The ignored cumulative master is rebuilt from validated batches in

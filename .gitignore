@@ -204,7 +204,7 @@ node_modules/
 /reports/annotation/
 /evaluation/annotation/workspace/
 /evaluation/annotation/workspace_silver_v1/
-/evaluation/annotation/workspace_codex_500/
+/evaluation/annotation/workspace_codex_*/
 /evaluation/datasets/v1_silver/
 /evaluation/datasets/v1_gold/
 /evaluation/annotation/**/candidates.jsonl

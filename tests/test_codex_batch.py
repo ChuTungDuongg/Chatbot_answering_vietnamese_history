@@ -1,5 +1,7 @@
 """Tiny fixtures for manually curated Codex SILVER batch safety."""
 
+from pathlib import Path
+
 import pytest
 
 from evaluation.annotation import codex_batch
@@ -75,6 +77,7 @@ def test_batch_persists_and_merges_with_silver_provenance(tmp_path, monkeypatch)
 def test_five_thousand_target_milestones_and_terminal_batch(tmp_path):
     assert codex_batch.TARGET_QUESTIONS == 5000
     assert codex_batch.MAX_BATCHES == 100
+    assert codex_batch.WORKSPACE == Path("evaluation/annotation/workspace_codex_5000")
     assert codex_batch.MASTER.name == "questions_5000.jsonl"
     assert f"{codex_batch.ID_PREFIX}{5000:04d}" == "vn_hist_silver_5000"
     record, audit = entry(5000, "chk_2")

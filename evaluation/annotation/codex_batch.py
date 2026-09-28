@@ -19,7 +19,7 @@ from evaluation.annotation.workspace import dumps, now
 from evaluation.schema import Question, load_questions
 
 
-WORKSPACE = Path("evaluation/annotation/workspace_codex_500")
+WORKSPACE = Path("evaluation/annotation/workspace_codex_5000")
 MASTER = Path("evaluation/datasets/v1_silver/questions_5000.jsonl")
 CORPUS = Path("artifacts/corpus_v1/chunks.jsonl")
 LOOKUP = Path("evaluation/annotation/workspace/corpus_lookup.sqlite3")
