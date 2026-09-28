@@ -20,11 +20,13 @@ from evaluation.schema import Question, load_questions
 
 
 WORKSPACE = Path("evaluation/annotation/workspace_codex_500")
-MASTER = Path("evaluation/datasets/v1_silver/questions_500.jsonl")
+MASTER = Path("evaluation/datasets/v1_silver/questions_1000.jsonl")
 CORPUS = Path("artifacts/corpus_v1/chunks.jsonl")
 LOOKUP = Path("evaluation/annotation/workspace/corpus_lookup.sqlite3")
 BATCH_SIZE = 50
-MAX_BATCHES = 10
+TARGET_QUESTIONS = 1000
+MAX_BATCHES = TARGET_QUESTIONS // BATCH_SIZE
+DIFFICULTY_QUOTA = {"easy": 18, "medium": 22, "hard": 10}
 ID_PREFIX = "vn_hist_silver_"
 REQUIRED = {"id", "question", "category", "difficulty", "gold_answer", "relevant_chunk_ids",
             "relevant_source_ids", "gold_citation_source_ids", "required_facts",
@@ -191,6 +193,8 @@ class CodexBatchStore:
         return self.workspace / "batches" / f"batch_{batch:02d}.audit.jsonl"
 
     def completed(self) -> int:
+        if self._batch_path(MAX_BATCHES + 1).exists():
+            raise RuntimeError(f"Batch {MAX_BATCHES + 1:02d} exceeds the benchmark target")
         count = 0
         for batch in range(1, MAX_BATCHES + 1):
             if not self._batch_path(batch).is_file():
@@ -203,7 +207,7 @@ class CodexBatchStore:
     def next_batch(self) -> int:
         complete = self.completed()
         if complete >= MAX_BATCHES:
-            raise RuntimeError("All ten batches are complete")
+            raise RuntimeError(f"All {MAX_BATCHES} batches are complete")
         return complete + 1
 
     def draft_rows(self, batch: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
@@ -263,6 +267,10 @@ class CodexBatchStore:
         exact, near = duplicate_pairs(result)
         if exact or near:
             raise ValueError(f"Batch {batch:02d} contains duplicate questions")
+        difficulty_counts = Counter(row["difficulty"] for row in result)
+        if difficulty_counts != DIFFICULTY_QUOTA:
+            raise ValueError(f"Batch {batch:02d} difficulty counts {dict(difficulty_counts)}; "
+                             f"expected {DIFFICULTY_QUOTA}")
         return result
 
     def merge(self, master: Path = MASTER) -> int:

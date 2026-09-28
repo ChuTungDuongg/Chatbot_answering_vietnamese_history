@@ -45,8 +45,11 @@ def entry(number, chunk_id):
 
 def test_batch_persists_and_merges_with_silver_provenance(tmp_path, monkeypatch):
     monkeypatch.setattr(codex_batch, "BATCH_SIZE", 2)
+    monkeypatch.setattr(codex_batch, "DIFFICULTY_QUOTA", {"easy": 2})
     store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
-    master = tmp_path / "questions_500.jsonl"
+    master = tmp_path / "questions_1000.jsonl"
+    legacy = tmp_path / "questions_500.jsonl"
+    legacy.write_text("legacy snapshot\n", encoding="utf-8")
     try:
         first = entry(1, "chk_1")
         store.add(*first)
@@ -61,12 +64,56 @@ def test_batch_persists_and_merges_with_silver_provenance(tmp_path, monkeypatch)
         assert [row.id for row in rows] == ["vn_hist_silver_0001", "vn_hist_silver_0002"]
         assert all(row.annotation_origin == "automatic" and row.review_status is None for row in rows)
         assert store.status()["completed_batches"] == 1
+        assert legacy.read_text(encoding="utf-8") == "legacy snapshot\n"
+    finally:
+        store.close()
+
+
+def test_thousand_target_keeps_batch_eleven_available_and_stops_after_twenty(tmp_path):
+    assert codex_batch.TARGET_QUESTIONS == 1000
+    assert codex_batch.MAX_BATCHES == 20
+    assert codex_batch.MASTER.name == "questions_1000.jsonl"
+    assert f"{codex_batch.ID_PREFIX}{1000:04d}" == "vn_hist_silver_1000"
+    store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
+    try:
+        batch_dir = store.workspace / "batches"
+        batch_dir.mkdir()
+        for number in range(1, 11):
+            store._batch_path(number).touch()
+        assert store.completed() == 10
+        assert store.next_batch() == 11  # 500 is halfway, not terminal.
+        for number in range(11, 21):
+            store._batch_path(number).touch()
+        assert store.completed() == 20
+        assert store.status()["next_batch"] is None
+        with pytest.raises(RuntimeError, match="complete"):
+            store.next_batch()
+        store._batch_path(21).touch()
+        with pytest.raises(RuntimeError, match="exceeds"):
+            store.completed()
+    finally:
+        store.close()
+
+
+def test_batch_rejects_wrong_difficulty_mix(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_batch, "BATCH_SIZE", 2)
+    monkeypatch.setattr(codex_batch, "DIFFICULTY_QUOTA", {"easy": 2})
+    store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
+    try:
+        store.add(*entry(1, "chk_1"))
+        record, audit = entry(2, "chk_2")
+        record["difficulty"] = "medium"
+        store.add(record, audit)
+        with pytest.raises(ValueError, match="difficulty counts"):
+            store.complete(tmp_path / "master.jsonl")
+        assert not (tmp_path / "master.jsonl").exists()
     finally:
         store.close()
 
 
 def test_rejects_human_provenance_unknown_chunk_and_duplicate(tmp_path, monkeypatch):
     monkeypatch.setattr(codex_batch, "BATCH_SIZE", 2)
+    monkeypatch.setattr(codex_batch, "DIFFICULTY_QUOTA", {"easy": 2})
     store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
     try:
         record, audit = entry(1, "chk_1")
