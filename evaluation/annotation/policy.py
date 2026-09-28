@@ -44,13 +44,16 @@ def similar(a: str, b: str, *, threshold: float = 0.88) -> bool:
 
 def duplicate_pairs(rows: list[dict]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     exact, near = [], []
-    for index, left in enumerate(rows):
-        for right in rows[index + 1:]:
-            left_id = str(left.get("id") or left.get("candidate_id"))
-            right_id = str(right.get("id") or right.get("candidate_id"))
-            a, b = str(left.get("question") or ""), str(right.get("question") or "")
-            if question_key(a) == question_key(b):
+    prepared = []
+    for row in rows:
+        key = question_key(str(row.get("question") or ""))
+        prepared.append((str(row.get("id") or row.get("candidate_id")), key, set(key.split())))
+    for index, (left_id, left_key, left_tokens) in enumerate(prepared):
+        for right_id, right_key, right_tokens in prepared[index + 1:]:
+            if left_key == right_key:
                 exact.append((left_id, right_id))
-            elif similar(a, b):
+            elif (left_key and right_key
+                  and len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens)) >= 0.75
+                  and SequenceMatcher(None, left_key, right_key).ratio() >= 0.88):
                 near.append((left_id, right_id))
     return exact, near
