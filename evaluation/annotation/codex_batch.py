@@ -20,11 +20,11 @@ from evaluation.schema import Question, load_questions
 
 
 WORKSPACE = Path("evaluation/annotation/workspace_codex_500")
-MASTER = Path("evaluation/datasets/v1_silver/questions_1000.jsonl")
+MASTER = Path("evaluation/datasets/v1_silver/questions_5000.jsonl")
 CORPUS = Path("artifacts/corpus_v1/chunks.jsonl")
 LOOKUP = Path("evaluation/annotation/workspace/corpus_lookup.sqlite3")
 BATCH_SIZE = 50
-TARGET_QUESTIONS = 1000
+TARGET_QUESTIONS = 5000
 MAX_BATCHES = TARGET_QUESTIONS // BATCH_SIZE
 DIFFICULTY_QUOTA = {"easy": 18, "medium": 22, "hard": 10}
 ID_PREFIX = "vn_hist_silver_"

@@ -1,20 +1,21 @@
 # Codex SILVER batches
 
-The canonical benchmark under `evaluation/datasets/v1_silver/questions_1000.jsonl` is
+The canonical benchmark under `evaluation/datasets/v1_silver/questions_5000.jsonl` is
 automatically annotated **SILVER**, even when the schema names a field
 `gold_answer`. It is separate from the human review workspace and GOLD exports.
 Do not claim that these records were reviewed by a person.
 
-The previous `questions_500.jsonl` remains an ignored legacy snapshot of the
-first three validated batches. It is not updated after the 1,000-question
-target migration. Do not delete it or use it as the current master.
+The ignored `questions_500.jsonl` and `questions_1000.jsonl` are legacy snapshots
+of the first three and four validated batches, respectively. Do not update or
+delete them; the 5,000-question master is rebuilt from completed batch files.
 
 ## Batch contract
 
-- Twenty ordered batches of 50 new records yield 1,000 records. Batch `n` owns IDs
+- One hundred ordered batches of 50 new records yield 5,000 records. Batch `n` owns IDs
   `vn_hist_silver_{(n-1)*50+1:04d}` through `vn_hist_silver_{n*50:04d}`.
-- Batch 10 reaches 500/1,000 and is not terminal. Batch 20 ends at
-  `vn_hist_silver_1000` with 360 easy, 440 medium, and 200 hard records.
+- Batches 10 (500), 20 (1,000), and 50 (2,500) are milestones, not terminal.
+  Batch 100 ends at `vn_hist_silver_5000` with 1,800 easy, 2,200 medium, and
+  1,000 hard records.
 - Each completed batch has **18 easy, 22 medium, and 10 hard** questions.
   Difficulty reflects evidence and reasoning: an easy question asks one direct
   fact, medium combines facts or explanation, and hard requires genuine

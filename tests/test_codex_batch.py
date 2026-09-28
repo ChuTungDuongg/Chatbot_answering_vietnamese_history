@@ -47,9 +47,11 @@ def test_batch_persists_and_merges_with_silver_provenance(tmp_path, monkeypatch)
     monkeypatch.setattr(codex_batch, "BATCH_SIZE", 2)
     monkeypatch.setattr(codex_batch, "DIFFICULTY_QUOTA", {"easy": 2})
     store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
-    master = tmp_path / "questions_1000.jsonl"
+    master = tmp_path / "questions_5000.jsonl"
     legacy = tmp_path / "questions_500.jsonl"
+    legacy_thousand = tmp_path / "questions_1000.jsonl"
     legacy.write_text("legacy snapshot\n", encoding="utf-8")
+    legacy_thousand.write_text("legacy thousand\n", encoding="utf-8")
     try:
         first = entry(1, "chk_1")
         store.add(*first)
@@ -65,30 +67,36 @@ def test_batch_persists_and_merges_with_silver_provenance(tmp_path, monkeypatch)
         assert all(row.annotation_origin == "automatic" and row.review_status is None for row in rows)
         assert store.status()["completed_batches"] == 1
         assert legacy.read_text(encoding="utf-8") == "legacy snapshot\n"
+        assert legacy_thousand.read_text(encoding="utf-8") == "legacy thousand\n"
     finally:
         store.close()
 
 
-def test_thousand_target_keeps_batch_eleven_available_and_stops_after_twenty(tmp_path):
-    assert codex_batch.TARGET_QUESTIONS == 1000
-    assert codex_batch.MAX_BATCHES == 20
-    assert codex_batch.MASTER.name == "questions_1000.jsonl"
-    assert f"{codex_batch.ID_PREFIX}{1000:04d}" == "vn_hist_silver_1000"
+def test_five_thousand_target_milestones_and_terminal_batch(tmp_path):
+    assert codex_batch.TARGET_QUESTIONS == 5000
+    assert codex_batch.MAX_BATCHES == 100
+    assert codex_batch.MASTER.name == "questions_5000.jsonl"
+    assert f"{codex_batch.ID_PREFIX}{5000:04d}" == "vn_hist_silver_5000"
+    record, audit = entry(5000, "chk_2")
+    codex_batch.validate_record(record, audit, TinyCorpus())
     store = codex_batch.CodexBatchStore(tmp_path / "workspace", TinyCorpus())
     try:
         batch_dir = store.workspace / "batches"
         batch_dir.mkdir()
-        for number in range(1, 11):
+        for milestone in (10, 20, 50):
+            for number in range(store.completed() + 1, milestone + 1):
+                store._batch_path(number).touch()
+            assert store.completed() == milestone
+            assert store.next_batch() == milestone + 1
+        for number in range(51, 101):
             store._batch_path(number).touch()
-        assert store.completed() == 10
-        assert store.next_batch() == 11  # 500 is halfway, not terminal.
-        for number in range(11, 21):
-            store._batch_path(number).touch()
-        assert store.completed() == 20
+            if number == 99:
+                assert store.next_batch() == 100
+        assert store.completed() == 100
         assert store.status()["next_batch"] is None
         with pytest.raises(RuntimeError, match="complete"):
             store.next_batch()
-        store._batch_path(21).touch()
+        store._batch_path(101).touch()
         with pytest.raises(RuntimeError, match="exceeds"):
             store.completed()
     finally:
