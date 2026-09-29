@@ -437,8 +437,12 @@ def test_six_way_reuses_identical_faiss_retrieval_for_vanilla_and_sft(tmp_path, 
     calls = []
     class FakeModel:
         def __init__(self, **kwargs):
-            calls.append(("model", kwargs["adapter_path"] is not None))
+            self.sft = kwargs["adapter_path"] is not None
+            assert kwargs["do_sample"] is False and kwargs["enable_thinking"] is False
+            calls.append(("model", self.sft))
         async def generate(self, messages, *, max_new_tokens):
+            assert max_new_tokens == 768
+            calls.append(("generate", self.sft))
             return "Năm 938 [c].", SimpleNamespace(input_tokens=6, output_tokens=4,
                 model_id="fake", model_revision="fixture")
     class FakeService:
@@ -462,5 +466,6 @@ def test_six_way_reuses_identical_faiss_retrieval_for_vanilla_and_sft(tmp_path, 
         "--retrieval-root", str(index)])
     result = asyncio.run(six.run(args))
     assert calls.count(("retrieve", "Năm nào?")) == 1
-    assert ("model", False) in calls and ("model", True) in calls
+    assert [event for event in calls if event[0] in ("model", "generate")] == [
+        ("model", False), ("generate", False), ("model", True), ("generate", True)]
     assert result["systems"]["sft_faiss"]["question_count"] == 1

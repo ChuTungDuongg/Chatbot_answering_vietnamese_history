@@ -26,6 +26,7 @@ from typing import Any
 
 from app.config import HYBRID_MODEL_ID, settings
 from app.rag.prompting import build_messages, build_no_rag_messages
+from evaluation.gpu_memory import CudaMemory, append_sample
 from evaluation.metrics.grounding import score_grounding
 from evaluation.metrics.retrieval import score_retrieval
 from evaluation.report import summarize
@@ -309,6 +310,7 @@ async def run(args: argparse.Namespace) -> dict:
     if manifest_path.exists():
         old = json.loads(manifest_path.read_text(encoding="utf-8"))
         if args.overwrite:
+            (args.output_dir / "gpu_memory.jsonl").unlink(missing_ok=True)
             for system in systems:
                 (args.output_dir / system.name / "predictions.jsonl").unlink(missing_ok=True)
                 (args.output_dir / system.name / "progress.log").unlink(missing_ok=True)
@@ -332,12 +334,24 @@ async def run(args: argparse.Namespace) -> dict:
         _atomic_json(manifest_path, {"identity": identity, "created_at": datetime.now(timezone.utc).isoformat(),
                                      "git_commit": _git_commit(), "hardware": hardware,
                                      "status": "running"})
+    elif args.resume:
+        # Code provenance is additive metadata, never part of experiment identity.
+        saved_run = json.loads(manifest_path.read_text(encoding="utf-8"))
+        current_commit = _git_commit()
+        if current_commit and current_commit != saved_run.get("git_commit"):
+            history = saved_run.setdefault("resume_git_commits", [])
+            if current_commit not in history:
+                history.append(current_commit)
+                _atomic_json(manifest_path, saved_run)
     random.seed(args.seed)
+    memory = CudaMemory(args.device)
+    memory_path = args.output_dir / "gpu_memory.jsonl"
     settings.corpus_path_override = args.corpus_path
     settings.retrieval_root = args.retrieval_root
     settings.app_mode = "retrieval-only"
     summaries = {}
     for system in systems:
+        system_start_memory = memory.sample()
         output = args.output_dir / system.name
         predictions_path = output / "predictions.jsonl"
         predictions = _read_jsonl(predictions_path)
@@ -379,6 +393,8 @@ async def run(args: argparse.Namespace) -> dict:
             for index, question in enumerate(questions, 1):
                 if question.id in predictions:
                     continue
+                memory.reset_peaks()
+                before_generation = after_generation = None
                 began = time.perf_counter()
                 row: dict[str, Any] = {"question_id": question.id, "system": system.name,
                                        "response_mode": args.response_mode, "success": False,
@@ -409,8 +425,12 @@ async def run(args: argparse.Namespace) -> dict:
                         messages = build_messages(question.question, sources, response_mode=args.response_mode)
                     else:
                         messages = build_no_rag_messages(question.question, response_mode=args.response_mode)
+                    before_generation = memory.sample()
                     generation_start = time.perf_counter()
-                    answer, done = await _generate(model, messages, args)
+                    try:
+                        answer, done = await _generate(model, messages, args)
+                    finally:
+                        after_generation = memory.sample()
                     if done.model_revision:
                         saved_run = json.loads(manifest_path.read_text(encoding="utf-8"))
                         previous_revision = saved_run.get("resolved_model_revision")
@@ -429,9 +449,24 @@ async def run(args: argparse.Namespace) -> dict:
                     raise
                 except Exception as exc:
                     row["error"] = f"{type(exc).__name__}: {exc}"
+                # Keep only scalar/string prediction data across questions. The
+                # Qwen stream has joined its worker before this point.
+                messages = answer = done = result = None
                 row["latency_ms"] = (time.perf_counter() - began) * 1000
                 _append(predictions_path, row)
                 predictions[question.id] = row
+                # Periodic collection bounds cached/fragmented CUDA blocks while
+                # avoiding allocator synchronization on every question.
+                cleaned = index % 10 == 0
+                if cleaned:
+                    gc.collect()
+                    memory.empty_cache()
+                after_cleanup = memory.sample()
+                append_sample(memory_path, {"event": "question", "system": system.name,
+                    "question_index": index, "question_total": len(questions),
+                    "question_id": question.id, "before_generation": before_generation,
+                    "after_generation": after_generation, "after_cleanup": after_cleanup,
+                    "cache_cleanup": cleaned, "success": row["success"]})
                 _atomic_json(output / "progress.json", {"completed": len(predictions), "total": len(questions),
                                                          "last_question_id": question.id})
                 with (output / "progress.log").open("a", encoding="utf-8") as log:
@@ -447,20 +482,35 @@ async def run(args: argparse.Namespace) -> dict:
                       f"retrieval_ms={row.get('retrieval_ms', 0):.1f} generation_ms={row.get('generation_ms', 0):.1f} "
                       f"success={row['success']} successes={successes} failures={len(predictions)-successes} "
                       f"avg_latency_ms={average_ms:.1f} ETA_s={remaining:.0f}", flush=True)
+                if index % 10 == 0 and after_cleanup is not None:
+                    print(f"[GPU] system={system.name} q={index}/{len(questions)} "
+                          f"allocated={after_cleanup['allocated_mib']:.0f}MiB "
+                          f"reserved={after_cleanup['reserved_mib']:.0f}MiB "
+                          f"peak_allocated={after_cleanup['peak_allocated_mib']:.0f}MiB "
+                          f"peak_reserved={after_cleanup['peak_reserved_mib']:.0f}MiB", flush=True)
             summary = aggregate(questions, predictions, system)
             summaries[system.name] = summary
             _atomic_json(output / "metrics.json", summary)
         finally:
-            if service is not None:
-                service.shutdown()
-            del model, retriever, service
-            gc.collect()
+            before_teardown = memory.sample()
             try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except ImportError:
-                pass
+                if service is not None:
+                    service.shutdown()
+            finally:
+                del model, retriever, service
+                gc.collect()
+                memory.empty_cache()
+                after_teardown = memory.sample()
+                append_sample(memory_path, {"event": "system_teardown", "system": system.name,
+                    "system_start": system_start_memory, "before_teardown": before_teardown,
+                    "after_teardown": after_teardown})
+                if system_start_memory and after_teardown:
+                    residual = after_teardown["allocated_mib"] - system_start_memory["allocated_mib"]
+                    peak = before_teardown["peak_allocated_mib"] if before_teardown else 0
+                    if residual > max(256, 0.1 * peak):
+                        print(f"[GPU] WARNING system={system.name} teardown retained "
+                              f"{residual:.0f}MiB allocated above system start; inspect gpu_memory.jsonl",
+                              flush=True)
     result = {"identity": identity, "systems": summaries,
               "completed_at": datetime.now(timezone.utc).isoformat()}
     _atomic_json(args.output_dir / "summary.json", result)

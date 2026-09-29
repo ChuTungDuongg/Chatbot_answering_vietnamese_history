@@ -107,8 +107,6 @@ class QwenRuntime:
 
         inputs, input_tokens = await asyncio.to_thread(self._prepare, messages, tools)
         messages_queue: queue.Queue[tuple[str, Any, int]] = queue.Queue()
-        runtime = self
-
         class TimedStreamer(TextIteratorStreamer):
             def on_finalized_text(self, text: str, stream_end: bool = False) -> None:
                 if text:
@@ -135,7 +133,7 @@ class QwenRuntime:
             started_ns = time.perf_counter_ns()
             try:
                 while not cancel.is_set():
-                    if runtime._generate_lock.acquire(timeout=0.1):
+                    if self._generate_lock.acquire(timeout=0.1):
                         break
                 else:
                     messages_queue.put(("cancelled", None, time.perf_counter_ns()))
@@ -146,21 +144,21 @@ class QwenRuntime:
                         return
                     started_ns = time.perf_counter_ns()
                     with torch.inference_mode():
-                        sampling = ({"temperature": runtime.temperature, "top_p": runtime.top_p}
-                                    if runtime.do_sample else {})
-                        runtime.model.generate(
+                        sampling = ({"temperature": self.temperature, "top_p": self.top_p}
+                                    if self.do_sample else {})
+                        self.model.generate(
                             **inputs, streamer=streamer, max_new_tokens=max_new_tokens,
-                            do_sample=runtime.do_sample, use_cache=True,
+                            do_sample=self.do_sample, use_cache=True,
                             **sampling,
-                            pad_token_id=runtime.tokenizer.pad_token_id,
-                            eos_token_id=runtime.tokenizer.eos_token_id,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
                             stopping_criteria=StoppingCriteriaList([clock]),
                         )
                 finally:
-                    runtime._generate_lock.release()
+                    self._generate_lock.release()
                 finished_ns = clock.last_ns or time.perf_counter_ns()
                 messages_queue.put(("done", ModelDone(
-                    model_id=runtime.model_id, model_revision=runtime.resolved_revision,
+                    model_id=self.model_id, model_revision=self.resolved_revision,
                     started_ns=started_ns, first_token_ns=clock.first_ns,
                     finished_ns=finished_ns, input_tokens=input_tokens,
                     output_tokens=clock.output_tokens,
@@ -189,19 +187,26 @@ class QwenRuntime:
                     break
         finally:
             cancel.set()
-            await asyncio.to_thread(worker.join, 5.0)
+            # A timed join can leave generate() and its CUDA inputs alive after
+            # the caller has moved to the next question or model.
+            worker.join()
+            del worker, generate_worker, inputs, streamer, clock, messages_queue
 
     async def generate(self, messages: list[dict[str, Any]], *, max_new_tokens: int,
                        tools: list[dict[str, Any]] | None = None,
                        cancel: threading.Event | None = None) -> tuple[str, ModelDone]:
         parts: list[str] = []
         completed: ModelDone | None = None
-        async for event in self.stream(messages, max_new_tokens=max_new_tokens,
-                                       cancel=cancel or threading.Event(), tools=tools):
-            if isinstance(event, ModelDelta):
-                parts.append(event.text)
-            else:
-                completed = event
+        stream = self.stream(messages, max_new_tokens=max_new_tokens,
+                             cancel=cancel or threading.Event(), tools=tools)
+        try:
+            async for event in stream:
+                if isinstance(event, ModelDelta):
+                    parts.append(event.text)
+                else:
+                    completed = event
+        finally:
+            await stream.aclose()
         if completed is None:
             raise RuntimeError("Generation was cancelled")
         return "".join(parts), completed
