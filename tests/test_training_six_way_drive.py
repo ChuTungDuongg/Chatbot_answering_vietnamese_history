@@ -17,8 +17,9 @@ from evaluation.schema import Question
 from evaluation.six_way import (SYSTEMS, SYSTEM_NAMES, _append, _read_jsonl,
                                 aggregate, score_prediction, select_systems)
 from tools.drive_cli import copy_verified, sha256
-from training.train_qwen3 import (assert_split_isolation, build_parser,
-                                  effective_batch, lora_kwargs, prepare, read_sft)
+from training.train_qwen3 import (SFT_LOSS_OPTIONS, assert_split_isolation, build_parser,
+                                  effective_batch, lora_kwargs, prepare, read_sft,
+                                  to_prompt_completion, validate_prompt_lengths)
 
 
 @pytest.mark.parametrize("mode", ["concise", "standard", "detailed"])
@@ -78,6 +79,64 @@ def test_training_parsing_batch_lora_and_split(tmp_path, monkeypatch):
     _write(train, [_row("a", "concise"), _row("a", "concise")])
     with pytest.raises(ValueError, match="Duplicate"):
         read_sft(train)
+
+
+def test_qlora_train_and_validation_use_conversational_prompt_completion(tmp_path):
+    train = tmp_path / "train_sft.jsonl"
+    valid = tmp_path / "validation_sft.jsonl"
+    train_rows = [_row("a", "concise"), _row("a", "detailed")]
+    valid_rows = [_row("b", "standard")]
+    _write(train, train_rows)
+    _write(valid, valid_rows)
+    (tmp_path / "split_manifest.json").write_text(json.dumps({"ids": {
+        "train": ["a"], "validation": ["b"], "test": ["c"]}}), encoding="utf-8")
+    args = build_parser().parse_args(["--train-file", str(train), "--validation-file", str(valid),
+                                      "--output-dir", str(tmp_path / "run"), "--dry-run"])
+    parsed_train, parsed_valid, _, _ = prepare(args)
+    for original, converted in zip(parsed_train, to_prompt_completion(parsed_train), strict=True):
+        assert converted == {"prompt": original["messages"][:2],
+                             "completion": [original["messages"][2]]}
+        assert MODE_INSTRUCTIONS[original["response_mode"]] in converted["prompt"][0]["content"]
+    assert to_prompt_completion(parsed_valid) == [{
+        "prompt": valid_rows[0]["messages"][:2],
+        "completion": [valid_rows[0]["messages"][2]],
+    }]
+    assert train_rows == parsed_train and valid_rows == parsed_valid
+    with pytest.raises(ValueError, match="TEST ID"):
+        assert_split_isolation(parsed_train, [_row("c", "standard")], {
+            "ids": {"train": ["a"], "validation": ["c"], "test": ["c"]}})
+
+
+def test_qlora_completion_mask_does_not_need_generation_markers():
+    assert SFT_LOSS_OPTIONS == {"assistant_only_loss": False, "completion_only_loss": True}
+    class TokenizerWithoutGenerationMask:
+        chat_template = "{% for message in messages %}{{ message.content }}{% endfor %}"
+        calls = []
+        def apply_chat_template(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            assert "return_assistant_tokens_mask" not in kwargs
+            return [1, 2, 3]
+    tokenizer = TokenizerWithoutGenerationMask()
+    row = _row("a", "concise")
+    assert "{% generation %}" not in tokenizer.chat_template
+    validate_prompt_lengths([row], tokenizer, 128)
+    assert tokenizer.calls == [(row["messages"][:2], {
+        "tokenize": True, "add_generation_prompt": True, "enable_thinking": False})]
+    with pytest.raises(ValueError, match="before assistant answer"):
+        validate_prompt_lengths([row], tokenizer, 34)
+
+
+def test_qlora_dry_run_still_works_with_tiny_splits(tmp_path, capsys):
+    from training.train_qwen3 import main
+    train = tmp_path / "train_sft.jsonl"
+    valid = tmp_path / "validation_sft.jsonl"
+    _write(train, [_row("a", "concise")])
+    _write(valid, [_row("b", "standard")])
+    (tmp_path / "split_manifest.json").write_text(json.dumps({"ids": {
+        "train": ["a"], "validation": ["b"], "test": ["c"]}}), encoding="utf-8")
+    assert main(["--train-file", str(train), "--validation-file", str(valid),
+                 "--output-dir", str(tmp_path / "run"), "--dry-run"]) == 0
+    assert '"dry_run": true' in capsys.readouterr().out
 
 
 def test_training_resume_requires_matching_config(tmp_path):

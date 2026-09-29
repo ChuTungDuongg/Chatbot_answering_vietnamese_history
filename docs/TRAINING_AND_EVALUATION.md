@@ -71,7 +71,7 @@ The dry run verifies SFT and split hashes/IDs and prints the effective batch and
 python -m training.train_qwen3 --train-file /content/drive/MyDrive/VN_History_LLM/datasets/sft/train_sft.jsonl --validation-file /content/drive/MyDrive/VN_History_LLM/datasets/sft/validation_sft.jsonl --output-dir /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/smoke_01 --max-train-samples 16 --max-eval-samples 8 --fast-dev-run
 ```
 
-The trainer uses the official Qwen chat template through TRL's conversational SFT path, `assistant_only_loss`, 4-bit NF4 with double quantization, bf16 when supported (otherwise fp16), and LoRA over the attention/MLP projection modules. No special chat tokens are constructed manually. The smoke runs one training step plus validation. This repository has not run a GPU smoke job on this Windows host.
+At training time, the frozen SFT `messages` are converted in memory to a conversational `prompt` (system + user/context) and `completion` (assistant answer), for both train and validation. TRL uses the tokenizer's chat template and computes loss on the completion only (`completion_only_loss=True`, `assistant_only_loss=False`). This does not require `{% generation %}` assistant-mask markers in the tokenizer template. The trainer also uses 4-bit NF4 with double quantization, bf16 when supported (otherwise fp16), and LoRA over the attention/MLP projection modules. No special chat tokens are constructed manually, and the frozen SFT files and split artifacts remain unchanged. The smoke runs one training step plus validation. The GPU training path still needs to be rechecked on Colab after this fix.
 
 ## 4. Full training and resume
 

@@ -12,6 +12,7 @@ import math
 import os
 import platform
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from app.rag.response_modes import MODE_INSTRUCTIONS
 
 LOG = logging.getLogger(__name__)
 LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+SFT_LOSS_OPTIONS = {"assistant_only_loss": False, "completion_only_loss": True}
 
 
 def sha256(path: Path) -> str:
@@ -41,10 +43,10 @@ def read_sft(path: Path, limit: int | None = None) -> list[dict]:
             messages = row.get("messages")
             mode = row.get("response_mode")
             key = (str(row.get("canonical_id")), str(mode))
-            if (not isinstance(messages, list) or len(messages) < 3 or
-                [item.get("role") for item in messages[-3:]] != ["system", "user", "assistant"] or
-                mode not in MODE_INSTRUCTIONS or MODE_INSTRUCTIONS[mode] not in messages[-3]["content"] or
-                not all(isinstance(item.get("content"), str) and item["content"].strip() for item in messages[-3:])):
+            if (not isinstance(messages, list) or len(messages) != 3 or
+                [item.get("role") for item in messages] != ["system", "user", "assistant"] or
+                mode not in MODE_INSTRUCTIONS or MODE_INSTRUCTIONS[mode] not in messages[0]["content"] or
+                not all(isinstance(item.get("content"), str) and item["content"].strip() for item in messages)):
                 raise ValueError(f"Invalid mode-conditioned SFT row {path}:{line_number}")
             if key in seen:
                 raise ValueError(f"Duplicate canonical ID/response mode: {key}")
@@ -55,6 +57,26 @@ def read_sft(path: Path, limit: int | None = None) -> list[dict]:
     if not rows:
         raise ValueError(f"Empty SFT file: {path}")
     return rows
+
+
+def to_prompt_completion(rows: list[dict]) -> list[dict]:
+    """Convert frozen SFT messages in memory; keep system/mode text unchanged."""
+    converted = []
+    for row in rows:
+        messages = row["messages"]
+        if len(messages) != 3 or [item.get("role") for item in messages] != ["system", "user", "assistant"]:
+            raise ValueError(f"Expected system/user/assistant SFT messages: {row.get('id')}")
+        converted.append({"prompt": messages[:-1], "completion": [messages[-1]]})
+    return converted
+
+
+def validate_prompt_lengths(rows: Iterable[dict], tokenizer, max_seq_length: int) -> None:
+    """Reject prompts that leave no room for the assistant completion."""
+    for row in rows:
+        prompt_tokens = tokenizer.apply_chat_template(row["messages"][:-1], tokenize=True,
+                                                      add_generation_prompt=True, enable_thinking=False)
+        if len(prompt_tokens) >= max_seq_length - 32:
+            raise ValueError(f"SFT prompt exceeds --max-seq-length before assistant answer: {row.get('id')}")
 
 
 def assert_split_isolation(train: list[dict], validation: list[dict], split_manifest: dict | None) -> None:
@@ -244,11 +266,7 @@ def run(args: argparse.Namespace) -> dict:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     # A truncated prompt with no assistant tokens cannot teach the response mode.
-    for row in (*train, *validation):
-        prompt_tokens = tokenizer.apply_chat_template(row["messages"][:-1], tokenize=True,
-                                                      add_generation_prompt=True, enable_thinking=False)
-        if len(prompt_tokens) >= args.max_seq_length - 32:
-            raise ValueError(f"SFT prompt exceeds --max-seq-length before assistant answer: {row.get('id')}")
+    validate_prompt_lengths((*train, *validation), tokenizer, args.max_seq_length)
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id, **model_args, device_map="auto", dtype=dtype,
         quantization_config=BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
@@ -267,7 +285,7 @@ def run(args: argparse.Namespace) -> dict:
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        max_length=args.max_seq_length, packing=args.packing, assistant_only_loss=True,
+        max_length=args.max_seq_length, packing=args.packing, **SFT_LOSS_OPTIONS,
         gradient_checkpointing=args.gradient_checkpointing, bf16=dtype == torch.bfloat16,
         fp16=dtype == torch.float16, seed=args.seed, logging_steps=args.logging_steps,
         eval_strategy="steps", eval_steps=args.eval_steps, save_strategy="steps",
@@ -299,8 +317,8 @@ def run(args: argparse.Namespace) -> dict:
             LOG.info("checkpoint saved: step %s", state.global_step)
     trainer = SFTTrainer(
         model=model, args=config, processing_class=tokenizer,
-        train_dataset=Dataset.from_list([{"messages": row["messages"]} for row in train]),
-        eval_dataset=Dataset.from_list([{"messages": row["messages"]} for row in validation]),
+        train_dataset=Dataset.from_list(to_prompt_completion(train)),
+        eval_dataset=Dataset.from_list(to_prompt_completion(validation)),
         peft_config=LoraConfig(**lora_kwargs(args)), callbacks=[Progress()])
     trainer.train(resume_from_checkpoint=str(resume) if resume else None)
     if args.fast_dev_run:
