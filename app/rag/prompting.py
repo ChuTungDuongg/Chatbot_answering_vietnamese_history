@@ -31,3 +31,13 @@ def build_messages(question: str, contexts: list[dict[str, Any]],
             messages.append({"role": item["role"], "content": str(item.get("content") or "")[:1800]})
     messages.append({"role": "user", "content": f"Câu hỏi: {question}\n\nNguồn được truy xuất:\n{context_text}"})
     return messages
+
+
+def build_no_rag_messages(question: str, *, response_mode: ResponseMode = "standard") -> list[dict[str, str]]:
+    """Knowledge-only baseline: no retrieved context or fabricated citations."""
+    return [
+        {"role": "system", "content": (
+            "Bạn là trợ lý trả lời câu hỏi lịch sử. Nếu không biết chắc, hãy nói rõ giới hạn; "
+            "không tạo trích dẫn hay mã nguồn. " + mode_instruction(response_mode))},
+        {"role": "user", "content": question},
+    ]

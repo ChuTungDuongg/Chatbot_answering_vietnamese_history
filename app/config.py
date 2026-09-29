@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.chat_modes import ChatMode, normalize_chat_mode
@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     device: Literal["cpu", "cuda"] = "cpu"
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
     hybrid_model_id: str = HYBRID_MODEL_ID
+    model_variant: Literal["vanilla", "sft"] = "vanilla"
+    model_adapter_path: Path | None = None
     central_model_id: str = CENTRAL_MODEL_ID
     hybrid_model_revision: str | None = None
     central_model_revision: str | None = None
@@ -38,6 +40,8 @@ class Settings(BaseSettings):
     model_local_files_only: bool = False
     runtime_loading_strategy: Literal["lazy", "eager"] = "lazy"
     do_sample: bool = False
+    model_temperature: float = Field(default=0.7, ge=0)
+    model_top_p: float = Field(default=1.0, gt=0, le=1)
     enable_thinking: bool = False
     hybrid_max_new_tokens: int = Field(default=768, ge=1)
     central_action_max_new_tokens: int = Field(default=256, ge=1)
@@ -64,7 +68,7 @@ class Settings(BaseSettings):
 
     @field_validator("hybrid_model_revision", "central_model_revision", "model_cache_dir",
                      "corpus_path_override", "retrieval_root", "inference_config_path_override",
-                     "runtime_manifest_path", mode="before")
+                     "runtime_manifest_path", "model_adapter_path", mode="before")
     @classmethod
     def empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
@@ -82,6 +86,12 @@ class Settings(BaseSettings):
         if value != CENTRAL_MODEL_ID:
             raise ValueError(f"Central baseline requires {CENTRAL_MODEL_ID}")
         return value
+
+    @model_validator(mode="after")
+    def require_sft_adapter(self):
+        if self.model_variant == "sft" and self.model_adapter_path is None:
+            raise ValueError("MODEL_VARIANT=sft requires MODEL_ADAPTER_PATH")
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

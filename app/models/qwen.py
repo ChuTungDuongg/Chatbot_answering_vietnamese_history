@@ -6,6 +6,7 @@ import asyncio
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from app.models.base import ModelDelta, ModelDone
@@ -15,10 +16,14 @@ class QwenRuntime:
     def __init__(self, *, model_id: str, revision: str | None = None,
                  device: str = "cpu", dtype: str = "bfloat16", cache_dir: str | None = None,
                  local_files_only: bool = False, do_sample: bool = False,
-                 enable_thinking: bool = False):
+                 enable_thinking: bool = False, adapter_path: str | Path | None = None,
+                 temperature: float = 0.7, top_p: float = 1.0,
+                 allow_local_model: bool = False):
         from app.config import CENTRAL_MODEL_ID, HYBRID_MODEL_ID
 
-        if model_id not in {HYBRID_MODEL_ID, CENTRAL_MODEL_ID}:
+        if model_id not in {HYBRID_MODEL_ID, CENTRAL_MODEL_ID} and not (
+            allow_local_model and (Path(model_id) / "config.json").is_file()
+        ):
             raise ValueError(f"Unsupported baseline model: {model_id}")
         self.model_id = model_id
         self.revision = revision
@@ -28,6 +33,13 @@ class QwenRuntime:
         self.local_files_only = local_files_only
         self.do_sample = do_sample
         self.enable_thinking = enable_thinking
+        if temperature < 0 or not 0 < top_p <= 1 or do_sample and temperature == 0:
+            raise ValueError("temperature must be positive when sampling and top_p must be in (0, 1]")
+        self.temperature = temperature
+        self.top_p = top_p
+        self.adapter_path = Path(adapter_path) if adapter_path else None
+        if self.adapter_path and not (self.adapter_path / "adapter_config.json").is_file():
+            raise FileNotFoundError(f"PEFT adapter_config.json missing: {self.adapter_path}")
         self.model = None
         self.tokenizer = None
         self.resolved_revision: str | None = None
@@ -36,8 +48,10 @@ class QwenRuntime:
 
     @property
     def generation_settings(self) -> dict[str, Any]:
-        return {"do_sample": self.do_sample, "enable_thinking": self.enable_thinking,
-                "dtype": self.dtype, "quantization": None, "adapter": None}
+        return {"do_sample": self.do_sample, "temperature": self.temperature,
+                "top_p": self.top_p, "enable_thinking": self.enable_thinking,
+                "dtype": self.dtype, "quantization": None,
+                "adapter": str(self.adapter_path) if self.adapter_path else None}
 
     def load(self) -> None:
         if self.model is not None:
@@ -62,6 +76,13 @@ class QwenRuntime:
             )
             if self.device == "cpu":
                 model.to("cpu")
+            if self.adapter_path:
+                from peft import PeftConfig, PeftModel
+                adapter_config = PeftConfig.from_pretrained(str(self.adapter_path), local_files_only=True)
+                if adapter_config.base_model_name_or_path != self.model_id:
+                    raise RuntimeError("Adapter base model differs from configured Qwen model")
+                model = PeftModel.from_pretrained(model, str(self.adapter_path), is_trainable=False,
+                                                 local_files_only=True)
             model.eval()
             self.resolved_revision = getattr(model.config, "_commit_hash", None) or self.revision
             self.tokenizer, self.model = tokenizer, model
@@ -125,9 +146,12 @@ class QwenRuntime:
                         return
                     started_ns = time.perf_counter_ns()
                     with torch.inference_mode():
+                        sampling = ({"temperature": runtime.temperature, "top_p": runtime.top_p}
+                                    if runtime.do_sample else {})
                         runtime.model.generate(
                             **inputs, streamer=streamer, max_new_tokens=max_new_tokens,
                             do_sample=runtime.do_sample, use_cache=True,
+                            **sampling,
                             pad_token_id=runtime.tokenizer.pad_token_id,
                             eos_token_id=runtime.tokenizer.eos_token_id,
                             stopping_criteria=StoppingCriteriaList([clock]),

@@ -24,6 +24,7 @@ import {
 } from "./config/messages";
 import { useAttachments } from "./hooks/useAttachments";
 import { useChatMode } from "./hooks/useChatMode";
+import { useResponseMode } from "./hooks/useResponseMode";
 import { useChatSession } from "./hooks/useChatSession";
 import { useChatScroll } from "./hooks/useChatScroll";
 import { useChatStream } from "./hooks/useChatStream";
@@ -44,6 +45,7 @@ function App() {
 
   const { theme, toggleTheme } = useTheme();
   const { mode: inferenceMode, setMode: setInferenceMode } = useChatMode();
+  const { responseMode, setResponseMode } = useResponseMode();
 
   const session = useChatSession();
   const { state, dispatch, isRunning, ensureActiveConversation } = session;
@@ -69,6 +71,7 @@ function App() {
     isUploading,
     isRunning,
     mode: inferenceMode,
+    responseMode,
     showDebugTrace: SHOW_DEBUG_TRACE,
     ensureActiveConversation,
   });
@@ -197,7 +200,9 @@ function App() {
         onStop={stream.stop} onFilesSelected={(files, options) => {
           if (!isLoading && !isDeletingConversation && !conversationActionRef.current && !stream.isBusy()) uploads.upload(files, options);
         }}
-        mode={inferenceMode} onModeChange={setInferenceMode} isRunning={isRunning} isUploading={isUploading}
+        mode={inferenceMode} onModeChange={setInferenceMode}
+        responseMode={responseMode} onResponseModeChange={setResponseMode}
+        isRunning={isRunning} isUploading={isUploading}
         disabled={isLoading || isDeletingConversation} hasAttachments={readyAttachments.length > 0} />
       <p className="composer-disclaimer">Lịch sử cần được nhìn từ nhiều nguồn. Hãy đối chiếu tư liệu khi cần.</p>
     </div>

@@ -1,0 +1,7 @@
+# Install after a CUDA-compatible PyTorch build in Colab. Runtime requirements remain separate.
+transformers>=4.57,<5
+accelerate>=1.1,<2
+peft>=0.17,<1
+trl>=0.24,<1
+datasets>=3,<5
+bitsandbytes>=0.46,<1

@@ -77,7 +77,7 @@ def _app(tmp_path, *, fail=False):
     return app, store, model, retriever
 
 
-async def _stream(app, store, *, fail=False):
+async def _stream(app, store, *, fail=False, response_mode="standard"):
     owner = "baseline-test-client"
     conversation = store.create_conversation(owner)
 
@@ -85,7 +85,8 @@ async def _stream(app, store, *, fail=False):
         return False
 
     request = SimpleNamespace(app=app, is_disconnected=connected)
-    payload = ChatRequest(conversation_id=conversation["id"], question="Ý nghĩa Bạch Đằng?", mode="hybrid")
+    payload = ChatRequest(conversation_id=conversation["id"], question="Ý nghĩa Bạch Đằng?",
+                          mode="hybrid", response_mode=response_mode)
     response = await chat_stream(payload, request, owner, store)
     body = "".join([frame async for frame in response.body_iterator])
     return conversation, response, _events(body)
@@ -101,6 +102,17 @@ def _events(body: str):
         assert lines[1].startswith("data: ")
         events.append((lines[0][7:], json.loads(lines[1][6:])))
     return events
+
+
+def test_response_mode_reaches_sse_and_final_prompt(tmp_path):
+    app, store, model, retriever = _app(tmp_path)
+    _, _, events = asyncio.run(_stream(app, store, response_mode="detailed"))
+    assert next(data for event, data in events if event == "status")["response_mode"] == "detailed"
+    assert next(data for event, data in events if event == "done")["response_mode"] == "detailed"
+    prepared = asyncio.run(HybridRuntime(retriever, model).prepare(
+        "Ý nghĩa Bạch Đằng?", 6, [], response_mode="detailed"))
+    from app.rag.response_modes import MODE_INSTRUCTIONS
+    assert MODE_INSTRUCTIONS["detailed"] in prepared.messages[0]["content"]
 
 
 def test_only_two_modes_and_model_ids():

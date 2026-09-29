@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Paperclip, Square } from "lucide-react";
 import ModeSelector from "./ModeSelector";
+import ResponseDetailSlider from "./ResponseDetailSlider";
 import { clipboardImages } from "../services/attachments";
 
 const ACCEPTED_FILES = ".pdf,image/png,image/jpeg,image/webp";
@@ -13,6 +14,8 @@ function ChatInput({
   onFilesSelected,
   mode,
   onModeChange,
+  responseMode = "standard",
+  onResponseModeChange = () => {},
   isRunning,
   isUploading,
   hasAttachments = false,
@@ -98,6 +101,9 @@ function ChatInput({
         aria-label="Nội dung câu hỏi"
         rows={2}
       />
+
+      <ResponseDetailSlider value={responseMode} onChange={onResponseModeChange}
+        disabled={disabled || isRunning} />
 
       <div className="composer-toolbar">
       <div className="composer-leading-actions">

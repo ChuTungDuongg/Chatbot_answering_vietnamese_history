@@ -35,7 +35,8 @@ class CentralRuntime:
     async def prepare(self, question: str, top_k: int, history: list[dict[str, str]],
                       *, owner_id: str | None = None, conversation_id: str | None = None,
                       attachment_ids: tuple[str, ...] = (), trace: Any = None,
-                      cancel: threading.Event | None = None) -> PreparedAnswer:
+                      cancel: threading.Event | None = None,
+                      response_mode: str = "standard") -> PreparedAnswer:
         cancel = cancel or threading.Event()
         messages: list[dict[str, Any]] = [{
             "role": "system",
@@ -107,7 +108,7 @@ class CentralRuntime:
             trace.mark("retrieval_finished")
         selected = list(contexts_by_id.values())[:top_k]
         prompt_started = time.perf_counter_ns()
-        final_messages = build_messages(question, selected, history)
+        final_messages = build_messages(question, selected, history, response_mode=response_mode)
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")

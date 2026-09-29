@@ -51,11 +51,14 @@ async def lifespan(app: FastAPI):
             common = dict(device=settings.device, dtype=settings.dtype,
                           cache_dir=str(settings.model_cache_dir) if settings.model_cache_dir else None,
                           local_files_only=settings.model_local_files_only,
-                          do_sample=settings.do_sample, enable_thinking=settings.enable_thinking)
+                          do_sample=settings.do_sample, enable_thinking=settings.enable_thinking,
+                          temperature=settings.model_temperature, top_p=settings.model_top_p)
             hybrid = central = None
             if settings.enable_hybrid_mode:
                 hybrid_model = QwenRuntime(model_id=settings.hybrid_model_id,
-                                           revision=settings.hybrid_model_revision, **common)
+                                           revision=settings.hybrid_model_revision,
+                                           adapter_path=(settings.model_adapter_path if settings.model_variant == "sft" else None),
+                                           **common)
                 hybrid = HybridRuntime(app.state.retriever, hybrid_model, temporary_retriever)
                 if settings.runtime_loading_strategy == "eager":
                     hybrid_model.load()

@@ -14,14 +14,15 @@ class HybridRuntime:
         from app.config import HYBRID_MODEL_ID
 
         if model.model_id != HYBRID_MODEL_ID:
-            raise ValueError("Hybrid must use vanilla Qwen3-4B-Instruct-2507")
+            raise ValueError("Hybrid requires Qwen3-4B-Instruct-2507")
         self.retriever, self.model = retriever, model
         self.attachment_retriever = attachment_retriever
 
     async def prepare(self, question: str, top_k: int, history: list[dict[str, str]],
                       *, trace: Any = None, owner_id: str | None = None,
                       conversation_id: str | None = None,
-                      attachment_ids: tuple[str, ...] = (), **_: Any) -> PreparedAnswer:
+                      attachment_ids: tuple[str, ...] = (), response_mode: str = "standard",
+                      **_: Any) -> PreparedAnswer:
         if trace:
             trace.mark("retrieval_started")
         retrieval_started = time.perf_counter_ns()
@@ -37,7 +38,7 @@ class HybridRuntime:
         if trace:
             trace.mark("retrieval_finished")
         prompt_started = time.perf_counter_ns()
-        messages = build_messages(question, contexts, history)
+        messages = build_messages(question, contexts, history, response_mode=response_mode)
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")

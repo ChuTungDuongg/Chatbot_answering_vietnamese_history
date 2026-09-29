@@ -10,13 +10,14 @@ vi.mock("../../src/services/api.js", () => ({
 const api = await import("../../src/services/api.js");
 const { useChatStream } = await import("../../src/hooks/useChatStream.js");
 
-function setup({ isRunning = false, mode = "central" } = {}) {
+function setup({ isRunning = false, mode = "central", responseMode = "standard" } = {}) {
   const dispatch = vi.fn();
   const ensureActiveConversation = vi.fn().mockResolvedValue("c1");
   const { result } = renderHook(() => useChatStream({
     dispatch,
     isRunning,
     mode,
+    responseMode,
     showDebugTrace: false,
     ensureActiveConversation,
   }));
@@ -43,8 +44,15 @@ test("gửi đúng chế độ đang chọn tới API streaming", async () => {
     conversationId: "c1",
     question: "Chiến thắng Bạch Đằng?",
     mode: "central",
+    responseMode: "standard",
     finalK: 6,
   });
+});
+
+test.each(["concise", "standard", "detailed"])("gửi response_mode %s tới API", async (responseMode) => {
+  const { result } = setup({ responseMode });
+  await act(async () => { await result.current.submit("Nhà Trần ra đời khi nào?"); });
+  expect(api.streamChat.mock.calls[0][0].responseMode).toBe(responseMode);
 });
 
 test("bỏ qua câu hỏi rỗng và khi đang chạy", async () => {
