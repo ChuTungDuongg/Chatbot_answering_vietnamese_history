@@ -205,6 +205,8 @@ class CodexBatchStore:
         return count
 
     def next_batch(self) -> int:
+        if (self.workspace / "frozen_v1.json").exists():
+            raise RuntimeError("Codex SILVER V1 is frozen after 60 batches; no Batch 61")
         complete = self.completed()
         if complete >= MAX_BATCHES:
             raise RuntimeError(f"All {MAX_BATCHES} batches are complete")
@@ -320,12 +322,14 @@ class CodexBatchStore:
 
     def status(self) -> dict[str, Any]:
         complete = self.completed()
-        current = complete + 1 if complete < MAX_BATCHES else None
+        frozen = (self.workspace / "frozen_v1.json").exists()
+        current = complete + 1 if complete < MAX_BATCHES and not frozen else None
         rows = self.draft_rows(current) if current else []
         all_records = self.all_rows()
         source_counts = Counter(source for item in all_records for source in item["relevant_source_ids"])
         rejected = self.db.execute("SELECT count(*) FROM rejected").fetchone()[0]
-        return {"completed_batches": complete, "previous_cumulative": complete * BATCH_SIZE,
+        return {"completed_batches": complete, "frozen_v1": frozen,
+                "previous_cumulative": complete * BATCH_SIZE,
                 "next_batch": current, "current_saved": len(rows),
                 "current_next_id": f"{ID_PREFIX}{(complete * BATCH_SIZE + len(rows) + 1):04d}" if current else None,
                 "all_saved": len(all_records), "rejected_drafts": rejected,

@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from app.rag.response_modes import ResponseMode, mode_instruction
+
 
 SYSTEM_PROMPT = (
     "Bạn là trợ lý lịch sử Việt Nam. Chỉ trả lời bằng thông tin được các nguồn "
@@ -13,7 +15,8 @@ SYSTEM_PROMPT = (
 
 
 def build_messages(question: str, contexts: list[dict[str, Any]],
-                   history: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+                   history: list[dict[str, str]] | None = None,
+                   *, response_mode: ResponseMode | None = None) -> list[dict[str, str]]:
     source_sections = []
     for item in contexts:
         chunk_id = str(item.get("chunk_id") or "")
@@ -21,7 +24,8 @@ def build_messages(question: str, contexts: list[dict[str, Any]],
         text = str(item.get("text") or "")[:2000]
         source_sections.append(f"[{chunk_id}] {title}\n{text}")
     context_text = "\n\n".join(source_sections) if source_sections else "Không có nguồn phù hợp."
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system = SYSTEM_PROMPT if response_mode is None else f"{SYSTEM_PROMPT} {mode_instruction(response_mode)}"
+    messages = [{"role": "system", "content": system}]
     for item in (history or [])[-6:]:
         if item.get("role") in {"user", "assistant"}:
             messages.append({"role": item["role"], "content": str(item.get("content") or "")[:1800]})

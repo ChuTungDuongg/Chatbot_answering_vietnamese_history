@@ -202,6 +202,7 @@ node_modules/
 # Generated benchmark and evaluation reports never enter Git.
 /reports/
 /reports/annotation/
+/training/datasets/vn_history_rag_sft_v1/
 /evaluation/annotation/workspace/
 /evaluation/annotation/workspace_silver_v1/
 /evaluation/annotation/workspace_codex_*/
