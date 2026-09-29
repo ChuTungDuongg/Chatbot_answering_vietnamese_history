@@ -1,8 +1,9 @@
 """Tiny local tests; no model, network, corpus scan or Drive API."""
 import asyncio
 import json
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -136,7 +137,125 @@ def test_qlora_dry_run_still_works_with_tiny_splits(tmp_path, capsys):
         "train": ["a"], "validation": ["b"], "test": ["c"]}}), encoding="utf-8")
     assert main(["--train-file", str(train), "--validation-file", str(valid),
                  "--output-dir", str(tmp_path / "run"), "--dry-run"]) == 0
-    assert '"dry_run": true' in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert '"dry_run": true' in printed
+    assert '"final_adapter_source": "not_saved_dry_run"' in printed
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize("retain_best", [True, False])
+def test_qlora_best_checkpoint_controls_adapter_manifest_and_eval_log(tmp_path, monkeypatch, retain_best):
+    from training.train_qwen3 import run
+
+    train = tmp_path / "train_sft.jsonl"; valid = tmp_path / "validation_sft.jsonl"
+    _write(train, [_row("a", "concise")]); _write(valid, [_row("b", "standard")])
+    (tmp_path / "split_manifest.json").write_text(json.dumps({"ids": {
+        "train": ["a"], "validation": ["b"], "test": ["c"]}}), encoding="utf-8")
+    output = tmp_path / "run"
+    args = build_parser().parse_args(["--train-file", str(train), "--validation-file", str(valid),
+        "--output-dir", str(output), "--eval-steps", "1", "--save-steps", "1",
+        "--save-total-limit", "1", "--early-stopping-patience", "2",
+        "--early-stopping-threshold", "0.01"])
+    observed = {}
+
+    def module(name, **attrs):
+        stub = ModuleType(name)
+        stub.__dict__.update(attrs)
+        monkeypatch.setitem(sys.modules, name, stub)
+
+    cuda = SimpleNamespace(device_count=lambda: 1, is_available=lambda: True,
+        is_bf16_supported=lambda: True, get_device_name=lambda _: "fake GPU",
+        max_memory_allocated=lambda: 0)
+    module("torch", cuda=cuda, bfloat16="bf16", float16="fp16", __version__="fake")
+    module("bitsandbytes")
+    module("peft", LoraConfig=lambda **kwargs: kwargs, __version__="fake")
+
+    class Tokenizer:
+        pad_token = None
+        eos_token = "eos"
+        def apply_chat_template(self, *args, **kwargs):
+            return [1, 2]
+        def save_pretrained(self, path):
+            (Path(path) / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+    class Model:
+        def __init__(self):
+            self.config = SimpleNamespace(_commit_hash="resolved", use_cache=True)
+            self.marker = "last"
+
+    class EarlyStoppingCallback:
+        def __init__(self, **kwargs):
+            observed["early_stopping"] = kwargs
+
+    module("transformers", AutoTokenizer=SimpleNamespace(from_pretrained=lambda *a, **k: Tokenizer()),
+        AutoModelForCausalLM=SimpleNamespace(from_pretrained=lambda *a, **k: Model()),
+        BitsAndBytesConfig=lambda **kwargs: kwargs, TrainerCallback=type("TrainerCallback", (), {}),
+        EarlyStoppingCallback=EarlyStoppingCallback, set_seed=lambda _: None, __version__="fake")
+    module("datasets", Dataset=SimpleNamespace(from_list=lambda rows: rows))
+
+    class SFTConfig:
+        def __init__(self, **kwargs):
+            observed["config"] = kwargs
+            self.output_dir = kwargs["output_dir"]
+
+    class SFTTrainer:
+        def __init__(self, **kwargs):
+            observed["trainer"] = kwargs
+            self.model = kwargs["model"]
+            self.state = SimpleNamespace(global_step=2, max_steps=2, epoch=1.0,
+                best_metric=None, best_model_checkpoint=None)
+            self.progress = kwargs["callbacks"][0]
+        def train(self, resume_from_checkpoint):
+            assert resume_from_checkpoint is None
+            root = Path(observed["config"]["output_dir"])
+            best = root / "checkpoint-1"
+            (root / "checkpoint-2").mkdir(parents=True)
+            if retain_best:
+                best.mkdir()
+            self.state.global_step = 1
+            self.progress.on_log(self.args, self.state, None, {"learning_rate": 0.0002})
+            self.progress.on_log(self.args, self.state, None, {"eval_loss": 0.9})
+            self.state.best_metric = 0.9
+            self.state.best_model_checkpoint = str(best)
+            self.state.global_step = 2
+            self.progress.on_log(self.args, self.state, None, {"eval_loss": 1.0})
+            self.model.marker = "best"  # Trainer restores this before train() returns.
+        @property
+        def args(self):
+            return observed["trainer"]["args"]
+        def save_model(self, path):
+            assert self.model.marker == "best"
+            Path(path).mkdir()
+            (Path(path) / "adapter.txt").write_text(self.model.marker, encoding="utf-8")
+        def save_state(self):
+            observed["saved_state"] = True
+
+    module("trl", SFTConfig=SFTConfig, SFTTrainer=SFTTrainer, __version__="fake")
+    if not retain_best:
+        with pytest.raises(RuntimeError, match="Best validation checkpoint was not retained"):
+            run(args)
+        assert not (output / "adapter").exists()
+        return
+    manifest = run(args)
+    config = observed["config"]
+    assert config["load_best_model_at_end"] is True
+    assert config["metric_for_best_model"] == "eval_loss"
+    assert config["greater_is_better"] is False
+    assert config["eval_strategy"] == config["save_strategy"] == "steps"
+    assert config["eval_steps"] == config["save_steps"] == 1
+    assert config["save_total_limit"] == 1 and config["logging_first_step"] is True
+    assert observed["early_stopping"] == {"early_stopping_patience": 2,
+        "early_stopping_threshold": 0.01}
+    assert (output / "adapter" / "adapter.txt").read_text(encoding="utf-8") == "best"
+    assert (output / "adapter" / "tokenizer.json").exists()
+    assert manifest["best_model_checkpoint"] == str(output / "checkpoints" / "checkpoint-1")
+    assert manifest["best_metric"] == 0.9
+    assert manifest["final_adapter_source"] == "best_validation_checkpoint"
+    assert json.loads((output / "manifest.json").read_text(encoding="utf-8")) == manifest
+    events = [json.loads(line) for line in (output / "training_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [event["best_metric_so_far"] for event in events if event.get("event") == "evaluation"] == [0.9, 0.9]
+    assert all("learning_rate" in event and "elapsed_s" in event and "best_model_checkpoint" in event
+               for event in events if event.get("event") == "evaluation")
 
 
 def test_training_resume_requires_matching_config(tmp_path):
@@ -156,6 +275,40 @@ def test_training_resume_requires_matching_config(tmp_path):
     assert prepare(args)[3] == checkpoint
     args.learning_rate = 1e-4
     with pytest.raises(ValueError, match="mismatch"):
+        prepare(args)
+    args.learning_rate = 2e-4
+    for name, changed in (("early_stopping_patience", 4), ("early_stopping_threshold", 0.01),
+                          ("per_device_train_batch_size", 4), ("max_seq_length", 1024),
+                          ("lora_r", 8), ("eval_steps", 25)):
+        original = getattr(args, name)
+        setattr(args, name, changed)
+        if name == "eval_steps":
+            args.save_steps = changed
+        with pytest.raises(ValueError, match="mismatch"):
+            prepare(args)
+        setattr(args, name, original)
+        args.save_steps = 50
+    old = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    old["metric_for_best_model"] = "eval_accuracy"
+    (output / "manifest.json").write_text(json.dumps(old), encoding="utf-8")
+    with pytest.raises(ValueError, match="metric_for_best_model"):
+        prepare(args)
+
+
+def test_qlora_requires_matching_eval_save_cadence_and_positive_early_stopping(tmp_path):
+    train = tmp_path / "train_sft.jsonl"; valid = tmp_path / "validation_sft.jsonl"
+    _write(train, [_row("a", "concise")]); _write(valid, [_row("b", "standard")])
+    (tmp_path / "split_manifest.json").write_text(json.dumps({"ids": {
+        "train": ["a"], "validation": ["b"], "test": []}}), encoding="utf-8")
+    args = build_parser().parse_args(["--train-file", str(train), "--validation-file", str(valid),
+        "--output-dir", str(tmp_path / "run")])
+    assert (args.early_stopping_patience, args.early_stopping_threshold) == (3, 0.0)
+    args.save_steps = 100
+    with pytest.raises(ValueError, match="save_steps must equal eval_steps"):
+        prepare(args)
+    args.save_steps = 50
+    args.early_stopping_patience = 0
+    with pytest.raises(ValueError, match="early_stopping_patience"):
         prepare(args)
 
 

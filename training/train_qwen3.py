@@ -22,6 +22,7 @@ from app.rag.response_modes import MODE_INSTRUCTIONS
 LOG = logging.getLogger(__name__)
 LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
 SFT_LOSS_OPTIONS = {"assistant_only_loss": False, "completion_only_loss": True}
+MODEL_SELECTION = {"metric_for_best_model": "eval_loss", "greater_is_better": False}
 
 
 def sha256(path: Path) -> str:
@@ -128,6 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-steps", type=int, default=50)
     parser.add_argument("--save-steps", type=int, default=50)
     parser.add_argument("--save-total-limit", type=int, default=3)
+    parser.add_argument("--early-stopping-patience", type=int, default=3)
+    parser.add_argument("--early-stopping-threshold", type=float, default=0.0)
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--packing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--dataloader-num-workers", type=int, default=0)
@@ -170,9 +173,14 @@ def prepare(args: argparse.Namespace) -> tuple[list[dict], list[dict], dict, Pat
         args.max_eval_samples = min(args.max_eval_samples or 8, 8)
     if any(value is not None and value < 1 for value in (args.max_train_samples, args.max_eval_samples)):
         raise ValueError("Sample caps must be positive")
-    for name in ("epochs", "learning_rate", "max_seq_length", "lora_r", "eval_steps", "save_steps", "logging_steps"):
+    for name in ("epochs", "learning_rate", "max_seq_length", "lora_r", "eval_steps", "save_steps", "logging_steps",
+                 "save_total_limit", "early_stopping_patience"):
         if getattr(args, name) <= 0:
             raise ValueError(f"{name} must be positive")
+    if args.early_stopping_threshold < 0:
+        raise ValueError("early_stopping_threshold must be nonnegative")
+    if args.eval_steps != args.save_steps:
+        raise ValueError("save_steps must equal eval_steps for best-checkpoint selection and prompt early stopping")
     train = read_sft(args.train_file, args.max_train_samples)
     validation = read_sft(args.validation_file, args.max_eval_samples)
     sft_manifest_path = args.train_file.parent / "manifest.json"
@@ -192,13 +200,17 @@ def prepare(args: argparse.Namespace) -> tuple[list[dict], list[dict], dict, Pat
     assert_split_isolation(train, validation, split)
     config = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
               if key not in {"dry_run", "resume_from_checkpoint"}}
-    manifest = {"schema_version": 1, "status": "running", "created_at": datetime.now(timezone.utc).isoformat(),
+    manifest = {"schema_version": 2, "status": "running", "created_at": datetime.now(timezone.utc).isoformat(),
                 "model_id": args.model_id, "model_revision": args.model_revision,
                 "train_sha256": sha256(args.train_file), "validation_sha256": sha256(args.validation_file),
                 "sft_manifest_sha256": sha256(sft_manifest_path) if sft_manifest else None,
                 "split_manifest_sha256": sha256(split_path) if split else (sft_manifest or {}).get("split_manifest_sha256"),
                 "corpus_sha256": (sft_manifest or {}).get("corpus_sha256"),
                 "seed": args.seed, "lora": lora_kwargs(args), "config": config,
+                **MODEL_SELECTION, "best_model_checkpoint": None, "best_metric": None,
+                "early_stopping_patience": args.early_stopping_patience,
+                "early_stopping_threshold": args.early_stopping_threshold,
+                "final_adapter_source": "not_saved_dry_run" if args.dry_run else "pending_training",
                 "train_rows": len(train), "validation_rows": len(validation),
                 "platform": platform.platform()}
     manifest_path = args.output_dir / "manifest.json"
@@ -209,7 +221,9 @@ def prepare(args: argparse.Namespace) -> tuple[list[dict], list[dict], dict, Pat
             raise FileExistsError(f"Completed training run exists: {args.output_dir}")
         if not args.resume_from_checkpoint:
             raise FileExistsError(f"Run exists; use --resume-from-checkpoint latest: {args.output_dir}")
-        for key in ("model_id", "model_revision", "train_sha256", "validation_sha256", "sft_manifest_sha256", "config"):
+        for key in ("model_id", "model_revision", "train_sha256", "validation_sha256", "sft_manifest_sha256",
+                    "split_manifest_sha256", "config", "metric_for_best_model", "greater_is_better",
+                    "early_stopping_patience", "early_stopping_threshold"):
             if old.get(key) != manifest.get(key):
                 raise ValueError(f"Resume provenance mismatch: {key}")
         manifest = old
@@ -246,7 +260,7 @@ def run(args: argparse.Namespace) -> dict:
         from datasets import Dataset
         from peft import LoraConfig
         from transformers import (AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
-                                  TrainerCallback, set_seed)
+                                  EarlyStoppingCallback, TrainerCallback, set_seed)
         from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
         raise RuntimeError("Install requirements-training.txt in a CUDA environment") from exc
@@ -278,6 +292,7 @@ def run(args: argparse.Namespace) -> dict:
     if args.gradient_checkpointing:
         model.config.use_cache = False
     _atomic_json(args.output_dir / "manifest.json", manifest)
+    cadence = 1 if args.fast_dev_run else args.eval_steps
     config = SFTConfig(
         output_dir=str(args.output_dir / "checkpoints"), num_train_epochs=args.epochs,
         max_steps=1 if args.fast_dev_run else -1, learning_rate=args.learning_rate,
@@ -288,24 +303,37 @@ def run(args: argparse.Namespace) -> dict:
         max_length=args.max_seq_length, packing=args.packing, **SFT_LOSS_OPTIONS,
         gradient_checkpointing=args.gradient_checkpointing, bf16=dtype == torch.bfloat16,
         fp16=dtype == torch.float16, seed=args.seed, logging_steps=args.logging_steps,
-        eval_strategy="steps", eval_steps=args.eval_steps, save_strategy="steps",
-        save_steps=args.save_steps, save_total_limit=args.save_total_limit,
+        eval_strategy="steps", eval_steps=cadence, save_strategy="steps",
+        save_steps=cadence, save_total_limit=args.save_total_limit,
+        load_best_model_at_end=True, **MODEL_SELECTION, logging_first_step=True,
         dataloader_num_workers=args.dataloader_num_workers, report_to="none")
     class Progress(TrainerCallback):
         start = time.monotonic()
         last_step = 0
         last_time = start
+        learning_rate = None
         def on_log(self, tr_args, state, control, logs=None, **kwargs):
             now = time.monotonic()
             elapsed = now - self.start
             step = int(state.global_step)
             rate = step / elapsed if elapsed else 0.0
+            logs = logs or {}
+            if "learning_rate" in logs:
+                self.learning_rate = logs["learning_rate"]
             info = {"time": datetime.now(timezone.utc).isoformat(), "step": step,
                     "epoch": state.epoch, "elapsed_s": round(elapsed, 1),
                     "step_time_s": round((now - self.last_time) / max(step - self.last_step, 1), 2),
                     "eta_s": round((state.max_steps - step) / rate) if rate else None,
                     "examples_per_s": round(rate * batch, 2),
-                    "gpu_peak_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2), **(logs or {})}
+                    "gpu_peak_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2), **logs}
+            if "eval_loss" in logs:
+                best = state.best_metric
+                improved = best is None or logs["eval_loss"] < best
+                info.update(event="evaluation", eval_loss=logs["eval_loss"],
+                            best_metric_so_far=logs["eval_loss"] if improved else best,
+                            best_model_checkpoint=(str(Path(tr_args.output_dir) / f"checkpoint-{step}")
+                                                   if improved else state.best_model_checkpoint),
+                            learning_rate=self.learning_rate)
             with (args.output_dir / "training_log.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(info, ensure_ascii=False, default=str) + "\n")
                 stream.flush()
@@ -319,10 +347,21 @@ def run(args: argparse.Namespace) -> dict:
         model=model, args=config, processing_class=tokenizer,
         train_dataset=Dataset.from_list(to_prompt_completion(train)),
         eval_dataset=Dataset.from_list(to_prompt_completion(validation)),
-        peft_config=LoraConfig(**lora_kwargs(args)), callbacks=[Progress()])
+        peft_config=LoraConfig(**lora_kwargs(args)),
+        callbacks=[Progress(), EarlyStoppingCallback(
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_threshold=args.early_stopping_threshold)])
     trainer.train(resume_from_checkpoint=str(resume) if resume else None)
-    if args.fast_dev_run:
-        LOG.info("fast-dev validation: %s", trainer.evaluate())
+    best_checkpoint = trainer.state.best_model_checkpoint
+    if best_checkpoint and not Path(best_checkpoint).is_dir():
+        raise RuntimeError(f"Best validation checkpoint was not retained: {best_checkpoint}")
+    if bool(best_checkpoint) != (trainer.state.best_metric is not None):
+        raise RuntimeError("Trainer best-checkpoint and best-metric state disagree")
+    manifest["best_model_checkpoint"] = best_checkpoint
+    manifest["best_metric"] = trainer.state.best_metric
+    manifest["final_adapter_source"] = ("best_validation_checkpoint" if best_checkpoint
+                                        else "final_training_state_no_validation_checkpoint")
+    # Trainer.train reloads the best checkpoint before returning when load_best_model_at_end=True.
     trainer.save_model(str(args.output_dir / "adapter"))
     tokenizer.save_pretrained(str(args.output_dir / "adapter"))
     trainer.save_state()
