@@ -23,6 +23,32 @@ To validate local frozen artifacts:
 python -m evaluation.silver_v1 validate
 ```
 
+### Citation-aware SFT V2 (separate derived experiment)
+
+SILVER V1 remains frozen. V2 reads the existing V1 SFT rows, the same 3,000 canonical records, the frozen split, the actual Corpus V1 chunks, and the original paired batch audits. It uses no LLM or API. Citations are actual `[chunk_id]` tokens supported by an audit `supports_fact_indices` mapping and a corpus/source check. Exact required-fact spans receive a citation immediately after the fact. A one-paragraph free-form answer can receive a paragraph-end citation only when its *single* relevant audited chunk supports every required fact. Other uncertain cases keep the V1 answer unchanged and are listed as unresolved in `stats.json`. These labels remain automatically annotated **SILVER**, not human GOLD.
+
+V2 keeps every V1 row ID, mode, split, user/context message, and uncited answer text. Its system message reuses the runtime RAG `SYSTEM_PROMPT` plus the same response-mode instruction. It writes to a new directory and refuses an existing output directory. The five outputs are `train_sft.jsonl`, `validation_sft.jsonl`, `manifest.json`, `stats.json`, and an unchanged `split_manifest.json` copy needed by the training loader. `validate` reconstructs V2 from the original evidence and checks those files and their hashes. The dry run writes none of them.
+
+From the repository root in bash/Colab, after mounting the documented Drive root and making the **60 paired** `batch_XX.jsonl` and `batch_XX.audit.jsonl` files available under the checkout path below:
+
+```bash
+ROOT=/content/drive/MyDrive/VN_History_LLM
+AUDITS=evaluation/annotation/workspace_codex_5000/batches
+V2="$ROOT/datasets/sft_citation_v2"
+COMMON=(--train-sft-v1 "$ROOT/datasets/sft/train_sft.jsonl" --validation-sft-v1 "$ROOT/datasets/sft/validation_sft.jsonl" --canonical "$ROOT/datasets/canonical/questions_3000.jsonl" --train-split "$ROOT/datasets/splits/v1_seed42/train.jsonl" --validation-split "$ROOT/datasets/splits/v1_seed42/validation.jsonl" --corpus "$ROOT/corpus_v1/chunks.jsonl" --audit-dir "$AUDITS" --output-dir "$V2")
+python -m evaluation.silver_citation_v2 derive "${COMMON[@]}" --dry-run
+python -m evaluation.silver_citation_v2 derive "${COMMON[@]}"
+python -m evaluation.silver_citation_v2 validate "${COMMON[@]}"
+```
+
+The existing Drive dataset transfer copies V1 SFT and split files but does not copy annotation audits or Corpus V1; provision those read-only artifacts separately before running this command. On a local machine, replace `ROOT`, `AUDITS`, and `V2` with their actual paths. Do not use the V1 output directory for V2. When ready for a separate V2 training experiment, use a *new* model output directory, for example:
+
+```bash
+python -m training.train_qwen3 --train-file "$V2/train_sft.jsonl" --validation-file "$V2/validation_sft.jsonl" --output-dir "$ROOT/models/qwen3_4b_sft_citation_v2/run_b4_ga4_e2" --per-device-train-batch-size 4 --per-device-eval-batch-size 4 --gradient-accumulation-steps 4 --epochs 2 --learning-rate 2e-4 --max-seq-length 3072 --gradient-checkpointing --no-packing --logging-steps 5 --eval-steps 25 --save-steps 25
+```
+
+This is a command for later use; the migration itself performs no training.
+
 ## 2. Mounted Google Drive layout
 
 On **Google Colab**, mount Drive in a Python cell first:
