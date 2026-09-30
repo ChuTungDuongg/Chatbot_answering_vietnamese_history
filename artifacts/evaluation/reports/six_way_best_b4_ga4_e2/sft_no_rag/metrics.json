@@ -1,0 +1,7632 @@
+{
+  "breakdown": {
+    "answerable": {
+      "False": {
+        "answer": {
+          "exact_match": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "insufficient_answer_behavior": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 1,
+            "value": 0.3529411764705882
+          },
+          "token_f1": {
+            "observed": 1,
+            "value": 0.5490196078431373
+          },
+          "token_precision": {
+            "observed": 1,
+            "value": 0.6666666666666666
+          },
+          "token_recall": {
+            "observed": 1,
+            "value": 0.4666666666666667
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 1,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 1,
+        "success_rate": 1.0
+      },
+      "True": {
+        "answer": {
+          "exact_match": {
+            "observed": 299,
+            "value": 0.03678929765886288
+          },
+          "false_premise_correction_behavior": {
+            "observed": 5,
+            "value": 1.0
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 299,
+            "value": 0.010033444816053512
+          },
+          "rouge_l_f1": {
+            "observed": 299,
+            "value": 0.2571175889038036
+          },
+          "token_f1": {
+            "observed": 299,
+            "value": 0.30785776731543457
+          },
+          "token_precision": {
+            "observed": 299,
+            "value": 0.31090423014996504
+          },
+          "token_recall": {
+            "observed": 299,
+            "value": 0.35865646164157855
+          },
+          "unnecessary_refusal": {
+            "observed": 299,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 299,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 299,
+        "success_rate": 1.0
+      }
+    },
+    "category": {
+      "archaeology_heritage": {
+        "answer": {
+          "exact_match": {
+            "observed": 19,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 19,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 19,
+            "value": 0.23562968627920539
+          },
+          "token_f1": {
+            "observed": 19,
+            "value": 0.31002025114630505
+          },
+          "token_precision": {
+            "observed": 19,
+            "value": 0.2719868967272229
+          },
+          "token_recall": {
+            "observed": 19,
+            "value": 0.4362520779887041
+          },
+          "unnecessary_refusal": {
+            "observed": 19,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 19,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 19,
+        "success_rate": 1.0
+      },
+      "battles": {
+        "answer": {
+          "exact_match": {
+            "observed": 8,
+            "value": 0.125
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 8,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 8,
+            "value": 0.2734278527211785
+          },
+          "token_f1": {
+            "observed": 8,
+            "value": 0.30701041110298105
+          },
+          "token_precision": {
+            "observed": 8,
+            "value": 0.28506028022157054
+          },
+          "token_recall": {
+            "observed": 8,
+            "value": 0.43365384615384617
+          },
+          "unnecessary_refusal": {
+            "observed": 8,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 8,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 8,
+        "success_rate": 1.0
+      },
+      "cause_consequence": {
+        "answer": {
+          "exact_match": {
+            "observed": 10,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 10,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 10,
+            "value": 0.15927928977656744
+          },
+          "token_f1": {
+            "observed": 10,
+            "value": 0.22658771033362685
+          },
+          "token_precision": {
+            "observed": 10,
+            "value": 0.22441730607973803
+          },
+          "token_recall": {
+            "observed": 10,
+            "value": 0.2391614299678816
+          },
+          "unnecessary_refusal": {
+            "observed": 10,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 10,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 10,
+        "success_rate": 1.0
+      },
+      "chronology": {
+        "answer": {
+          "exact_match": {
+            "observed": 31,
+            "value": 0.1935483870967742
+          },
+          "false_premise_correction_behavior": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "insufficient_answer_behavior": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 31,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 31,
+            "value": 0.4548322046090082
+          },
+          "token_f1": {
+            "observed": 31,
+            "value": 0.5031218656444155
+          },
+          "token_precision": {
+            "observed": 31,
+            "value": 0.515963402826526
+          },
+          "token_recall": {
+            "observed": 31,
+            "value": 0.5113321662541226
+          },
+          "unnecessary_refusal": {
+            "observed": 30,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 31,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 31,
+        "success_rate": 1.0
+      },
+      "colonial_period": {
+        "answer": {
+          "exact_match": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 4,
+            "value": 0.14115051615051613
+          },
+          "token_f1": {
+            "observed": 4,
+            "value": 0.21545121545121543
+          },
+          "token_precision": {
+            "observed": 4,
+            "value": 0.2074074074074074
+          },
+          "token_recall": {
+            "observed": 4,
+            "value": 0.24666666666666665
+          },
+          "unnecessary_refusal": {
+            "observed": 4,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 4,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 4,
+        "success_rate": 1.0
+      },
+      "comparison": {
+        "answer": {
+          "exact_match": {
+            "observed": 39,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 39,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 39,
+            "value": 0.23171788531456905
+          },
+          "token_f1": {
+            "observed": 39,
+            "value": 0.3171611506788008
+          },
+          "token_precision": {
+            "observed": 39,
+            "value": 0.34948621011748493
+          },
+          "token_recall": {
+            "observed": 39,
+            "value": 0.3031771300513989
+          },
+          "unnecessary_refusal": {
+            "observed": 39,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 39,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 39,
+        "success_rate": 1.0
+      },
+      "cultural_history": {
+        "answer": {
+          "exact_match": {
+            "observed": 25,
+            "value": 0.04
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 25,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 25,
+            "value": 0.26917335065909304
+          },
+          "token_f1": {
+            "observed": 25,
+            "value": 0.3031871639253251
+          },
+          "token_precision": {
+            "observed": 25,
+            "value": 0.27995427768125314
+          },
+          "token_recall": {
+            "observed": 25,
+            "value": 0.3599019891093387
+          },
+          "unnecessary_refusal": {
+            "observed": 25,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 25,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 25,
+        "success_rate": 1.0
+      },
+      "dynasties": {
+        "answer": {
+          "exact_match": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 4,
+            "value": 0.30998931623931625
+          },
+          "token_f1": {
+            "observed": 4,
+            "value": 0.3419337606837607
+          },
+          "token_precision": {
+            "observed": 4,
+            "value": 0.3873106060606061
+          },
+          "token_recall": {
+            "observed": 4,
+            "value": 0.4042544699872286
+          },
+          "unnecessary_refusal": {
+            "observed": 4,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 4,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 4,
+        "success_rate": 1.0
+      },
+      "economic_history": {
+        "answer": {
+          "exact_match": {
+            "observed": 16,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 16,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 16,
+            "value": 0.21507058346499194
+          },
+          "token_f1": {
+            "observed": 16,
+            "value": 0.2711706768719849
+          },
+          "token_precision": {
+            "observed": 16,
+            "value": 0.27500237152628787
+          },
+          "token_recall": {
+            "observed": 16,
+            "value": 0.31940080511630226
+          },
+          "unnecessary_refusal": {
+            "observed": 16,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 16,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 16,
+        "success_rate": 1.0
+      },
+      "false_premise": {
+        "answer": {
+          "exact_match": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 5,
+            "value": 1.0
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 5,
+            "value": 0.29296917476913914
+          },
+          "token_f1": {
+            "observed": 5,
+            "value": 0.4142092995047578
+          },
+          "token_precision": {
+            "observed": 5,
+            "value": 0.5203409090909091
+          },
+          "token_recall": {
+            "observed": 5,
+            "value": 0.36620484778379514
+          },
+          "unnecessary_refusal": {
+            "observed": 5,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 5,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 5,
+        "success_rate": 1.0
+      },
+      "historical_figures": {
+        "answer": {
+          "exact_match": {
+            "observed": 20,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 20,
+            "value": 0.05
+          },
+          "rouge_l_f1": {
+            "observed": 20,
+            "value": 0.13401395817804487
+          },
+          "token_f1": {
+            "observed": 20,
+            "value": 0.15026395817804486
+          },
+          "token_precision": {
+            "observed": 20,
+            "value": 0.1236721287691565
+          },
+          "token_recall": {
+            "observed": 20,
+            "value": 0.2519858113024497
+          },
+          "unnecessary_refusal": {
+            "observed": 20,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 20,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 20,
+        "success_rate": 1.0
+      },
+      "historical_geography": {
+        "answer": {
+          "exact_match": {
+            "observed": 19,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 19,
+            "value": 0.05263157894736842
+          },
+          "rouge_l_f1": {
+            "observed": 19,
+            "value": 0.2716663496036027
+          },
+          "token_f1": {
+            "observed": 19,
+            "value": 0.3033453048157762
+          },
+          "token_precision": {
+            "observed": 19,
+            "value": 0.26469431957684225
+          },
+          "token_recall": {
+            "observed": 19,
+            "value": 0.48304069015275913
+          },
+          "unnecessary_refusal": {
+            "observed": 19,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 19,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 19,
+        "success_rate": 1.0
+      },
+      "independence": {
+        "answer": {
+          "exact_match": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 4,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 4,
+            "value": 0.2681066618566619
+          },
+          "token_f1": {
+            "observed": 4,
+            "value": 0.28239237614237617
+          },
+          "token_precision": {
+            "observed": 4,
+            "value": 0.35560428849902537
+          },
+          "token_recall": {
+            "observed": 4,
+            "value": 0.27544300766283525
+          },
+          "unnecessary_refusal": {
+            "observed": 4,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 4,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 4,
+        "success_rate": 1.0
+      },
+      "multi_hop": {
+        "answer": {
+          "exact_match": {
+            "observed": 14,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 14,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 14,
+            "value": 0.22178908763243774
+          },
+          "token_f1": {
+            "observed": 14,
+            "value": 0.3145187361675703
+          },
+          "token_precision": {
+            "observed": 14,
+            "value": 0.3521165915703356
+          },
+          "token_recall": {
+            "observed": 14,
+            "value": 0.28946915271813095
+          },
+          "unnecessary_refusal": {
+            "observed": 14,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 14,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 14,
+        "success_rate": 1.0
+      },
+      "political_events": {
+        "answer": {
+          "exact_match": {
+            "observed": 24,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 24,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 24,
+            "value": 0.22247609584647587
+          },
+          "token_f1": {
+            "observed": 24,
+            "value": 0.2692100042634145
+          },
+          "token_precision": {
+            "observed": 24,
+            "value": 0.25824027572326835
+          },
+          "token_recall": {
+            "observed": 24,
+            "value": 0.3170511032070294
+          },
+          "unnecessary_refusal": {
+            "observed": 24,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 24,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 24,
+        "success_rate": 1.0
+      },
+      "religious_history": {
+        "answer": {
+          "exact_match": {
+            "observed": 12,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 12,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 12,
+            "value": 0.19441844613145506
+          },
+          "token_f1": {
+            "observed": 12,
+            "value": 0.23343483082807812
+          },
+          "token_precision": {
+            "observed": 12,
+            "value": 0.3008888729796658
+          },
+          "token_recall": {
+            "observed": 12,
+            "value": 0.24413528514241192
+          },
+          "unnecessary_refusal": {
+            "observed": 12,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 12,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 12,
+        "success_rate": 1.0
+      },
+      "revolutions": {
+        "answer": {
+          "exact_match": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 5,
+            "value": 0.19511050353155618
+          },
+          "token_f1": {
+            "observed": 5,
+            "value": 0.2817133743449533
+          },
+          "token_precision": {
+            "observed": 5,
+            "value": 0.3467263129027835
+          },
+          "token_recall": {
+            "observed": 5,
+            "value": 0.27693578193578194
+          },
+          "unnecessary_refusal": {
+            "observed": 5,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 5,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 5,
+        "success_rate": 1.0
+      },
+      "rulers": {
+        "answer": {
+          "exact_match": {
+            "observed": 9,
+            "value": 0.3333333333333333
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 9,
+            "value": 0.1111111111111111
+          },
+          "rouge_l_f1": {
+            "observed": 9,
+            "value": 0.5971861471861472
+          },
+          "token_f1": {
+            "observed": 9,
+            "value": 0.5971861471861472
+          },
+          "token_precision": {
+            "observed": 9,
+            "value": 0.5458754208754208
+          },
+          "token_recall": {
+            "observed": 9,
+            "value": 0.7462962962962963
+          },
+          "unnecessary_refusal": {
+            "observed": 9,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 9,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 9,
+        "success_rate": 1.0
+      },
+      "social_history": {
+        "answer": {
+          "exact_match": {
+            "observed": 13,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 13,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 13,
+            "value": 0.234852453417134
+          },
+          "token_f1": {
+            "observed": 13,
+            "value": 0.27826906530671264
+          },
+          "token_precision": {
+            "observed": 13,
+            "value": 0.2944774496521724
+          },
+          "token_recall": {
+            "observed": 13,
+            "value": 0.3086044038700585
+          },
+          "unnecessary_refusal": {
+            "observed": 13,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 13,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 13,
+        "success_rate": 1.0
+      },
+      "treaties": {
+        "answer": {
+          "exact_match": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 5,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 5,
+            "value": 0.18310708898944192
+          },
+          "token_f1": {
+            "observed": 5,
+            "value": 0.22211269123033828
+          },
+          "token_precision": {
+            "observed": 5,
+            "value": 0.1952536231884058
+          },
+          "token_recall": {
+            "observed": 5,
+            "value": 0.31259649122807015
+          },
+          "unnecessary_refusal": {
+            "observed": 5,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 5,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 5,
+        "success_rate": 1.0
+      },
+      "wars": {
+        "answer": {
+          "exact_match": {
+            "observed": 14,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 14,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 14,
+            "value": 0.17046784346372357
+          },
+          "token_f1": {
+            "observed": 14,
+            "value": 0.19470389213181394
+          },
+          "token_precision": {
+            "observed": 14,
+            "value": 0.2011588202060677
+          },
+          "token_recall": {
+            "observed": 14,
+            "value": 0.267898059761539
+          },
+          "unnecessary_refusal": {
+            "observed": 14,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 14,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 14,
+        "success_rate": 1.0
+      }
+    },
+    "difficulty": {
+      "easy": {
+        "answer": {
+          "exact_match": {
+            "observed": 107,
+            "value": 0.102803738317757
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 107,
+            "value": 0.028037383177570093
+          },
+          "rouge_l_f1": {
+            "observed": 107,
+            "value": 0.31529452910835293
+          },
+          "token_f1": {
+            "observed": 107,
+            "value": 0.32066836088405387
+          },
+          "token_precision": {
+            "observed": 107,
+            "value": 0.29123796314205025
+          },
+          "token_recall": {
+            "observed": 107,
+            "value": 0.469209238048392
+          },
+          "unnecessary_refusal": {
+            "observed": 107,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 107,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 107,
+        "success_rate": 1.0
+      },
+      "hard": {
+        "answer": {
+          "exact_match": {
+            "observed": 59,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 6,
+            "value": 0.8333333333333334
+          },
+          "insufficient_answer_behavior": {
+            "observed": 1,
+            "value": 0.0
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 59,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 59,
+            "value": 0.23619039509012657
+          },
+          "token_f1": {
+            "observed": 59,
+            "value": 0.33130260461770994
+          },
+          "token_precision": {
+            "observed": 59,
+            "value": 0.37402463227956295
+          },
+          "token_recall": {
+            "observed": 59,
+            "value": 0.30937568255974857
+          },
+          "unnecessary_refusal": {
+            "observed": 58,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 59,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 59,
+        "success_rate": 1.0
+      },
+      "medium": {
+        "answer": {
+          "exact_match": {
+            "observed": 134,
+            "value": 0.0
+          },
+          "false_premise_correction_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 134,
+            "value": 0.0
+          },
+          "rouge_l_f1": {
+            "observed": 134,
+            "value": 0.2205921815954973
+          },
+          "token_f1": {
+            "observed": 134,
+            "value": 0.28910540110536875
+          },
+          "token_precision": {
+            "observed": 134,
+            "value": 0.3014710158269599
+          },
+          "token_recall": {
+            "observed": 134,
+            "value": 0.29288354444250403
+          },
+          "unnecessary_refusal": {
+            "observed": 134,
+            "value": 0.0
+          }
+        },
+        "citations": {
+          "answer_citation_coverage": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_precision": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "citation_validity_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_aliases": {
+            "observed": 0,
+            "value": null
+          },
+          "cited_retrieved_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "invalid_citation_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "resolved_source_ids": {
+            "observed": 0,
+            "value": null
+          },
+          "source_id_existence_rate": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "grounding": {
+          "answer_years": {
+            "observed": 0,
+            "value": null
+          },
+          "insufficient_answer_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "ood_refusal_behavior": {
+            "observed": 0,
+            "value": null
+          },
+          "required_fact_phrase_recall": {
+            "observed": 0,
+            "value": null
+          },
+          "unnecessary_refusal": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_year_rate": {
+            "observed": 0,
+            "value": null
+          },
+          "unverified_years": {
+            "observed": 0,
+            "value": null
+          }
+        },
+        "prediction_count": 134,
+        "retrieval": {
+          "chunk": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          },
+          "source": {
+            "hit_rate@1": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@10": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@3": {
+              "observed": 0,
+              "value": null
+            },
+            "hit_rate@5": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@1": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@10": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@3": {
+              "observed": 0,
+              "value": null
+            },
+            "mrr@5": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@1": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@10": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@3": {
+              "observed": 0,
+              "value": null
+            },
+            "ndcg@5": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@1": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@10": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@3": {
+              "observed": 0,
+              "value": null
+            },
+            "precision@5": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@1": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@10": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@3": {
+              "observed": 0,
+              "value": null
+            },
+            "recall@5": {
+              "observed": 0,
+              "value": null
+            }
+          }
+        },
+        "schema_version": 1,
+        "success_count": 134,
+        "success_rate": 1.0
+      }
+    }
+  },
+  "dense_backend": null,
+  "failure_count": 0,
+  "latency_ms_mean": 4186.118720116769,
+  "model_type": "sft",
+  "overall": {
+    "answer": {
+      "exact_match": {
+        "observed": 300,
+        "value": 0.03666666666666667
+      },
+      "false_premise_correction_behavior": {
+        "observed": 6,
+        "value": 0.8333333333333334
+      },
+      "insufficient_answer_behavior": {
+        "observed": 1,
+        "value": 0.0
+      },
+      "ood_refusal_behavior": {
+        "observed": 0,
+        "value": null
+      },
+      "required_fact_phrase_recall": {
+        "observed": 300,
+        "value": 0.01
+      },
+      "rouge_l_f1": {
+        "observed": 300,
+        "value": 0.25743700086235954
+      },
+      "token_f1": {
+        "observed": 300,
+        "value": 0.30866164011719355
+      },
+      "token_precision": {
+        "observed": 300,
+        "value": 0.31209010493835404
+      },
+      "token_recall": {
+        "observed": 300,
+        "value": 0.3590164956583288
+      },
+      "unnecessary_refusal": {
+        "observed": 299,
+        "value": 0.0
+      }
+    },
+    "citations": {
+      "answer_citation_coverage": {
+        "observed": 0,
+        "value": null
+      },
+      "citation_precision": {
+        "observed": 0,
+        "value": null
+      },
+      "citation_recall": {
+        "observed": 0,
+        "value": null
+      },
+      "citation_validity_rate": {
+        "observed": 0,
+        "value": null
+      },
+      "cited_aliases": {
+        "observed": 0,
+        "value": null
+      },
+      "cited_retrieved_rate": {
+        "observed": 0,
+        "value": null
+      },
+      "invalid_citation_ids": {
+        "observed": 0,
+        "value": null
+      },
+      "resolved_source_ids": {
+        "observed": 0,
+        "value": null
+      },
+      "source_id_existence_rate": {
+        "observed": 0,
+        "value": null
+      }
+    },
+    "grounding": {
+      "answer_years": {
+        "observed": 0,
+        "value": null
+      },
+      "insufficient_answer_behavior": {
+        "observed": 0,
+        "value": null
+      },
+      "ood_refusal_behavior": {
+        "observed": 0,
+        "value": null
+      },
+      "required_fact_phrase_recall": {
+        "observed": 0,
+        "value": null
+      },
+      "unnecessary_refusal": {
+        "observed": 0,
+        "value": null
+      },
+      "unverified_year_rate": {
+        "observed": 0,
+        "value": null
+      },
+      "unverified_years": {
+        "observed": 0,
+        "value": null
+      }
+    },
+    "prediction_count": 300,
+    "retrieval": {
+      "chunk": {
+        "hit_rate@1": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@10": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@3": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@5": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@1": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@10": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@3": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@5": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@1": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@10": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@3": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@5": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@1": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@10": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@3": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@5": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@1": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@10": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@3": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@5": {
+          "observed": 0,
+          "value": null
+        }
+      },
+      "source": {
+        "hit_rate@1": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@10": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@3": {
+          "observed": 0,
+          "value": null
+        },
+        "hit_rate@5": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@1": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@10": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@3": {
+          "observed": 0,
+          "value": null
+        },
+        "mrr@5": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@1": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@10": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@3": {
+          "observed": 0,
+          "value": null
+        },
+        "ndcg@5": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@1": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@10": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@3": {
+          "observed": 0,
+          "value": null
+        },
+        "precision@5": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@1": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@10": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@3": {
+          "observed": 0,
+          "value": null
+        },
+        "recall@5": {
+          "observed": 0,
+          "value": null
+        }
+      }
+    },
+    "schema_version": 1,
+    "success_count": 300,
+    "success_rate": 1.0
+  },
+  "question_count": 300,
+  "rag": false,
+  "system": "sft_no_rag",
+  "warning": "SILVER labels are automatically annotated; lexical answer metrics do not prove historical correctness."
+}

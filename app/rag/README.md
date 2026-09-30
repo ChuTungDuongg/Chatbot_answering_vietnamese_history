@@ -1,6 +1,6 @@
 # Hybrid retrieval baseline
 
-The `hybrid` mode retrieves history evidence from the preserved corpus, builds a cited prompt, and streams a grounded answer from vanilla `Qwen/Qwen3-4B-Instruct-2507`.
+The `hybrid` mode retrieves history evidence from the preserved corpus, builds a cited prompt, and streams a grounded answer from `Qwen/Qwen3-4B-Instruct-2507` with the optional PEFT adapter selected by `MODEL_VARIANT`.
 
 ```text
 question

@@ -7,11 +7,11 @@ FastAPI exposes two inference modes: `hybrid` and `central`. The mode router sel
 | `api/` | Chat, SSE, conversation, and attachment endpoints. |
 | `rag/` | Retrieval interface, existing hybrid search implementation, prompt assembly, and Hybrid runtime. |
 | `central/` | Central tool use, local history grounding, and final answer runtime. |
-| `models/` | Vanilla Qwen model loading and incremental text generation. |
+| `models/` | Qwen model loading, optional PEFT adapter, and incremental text generation. |
 | `chat/` | SQLite conversation storage and uploaded-document handling. |
 | `telemetry.py` | Request trace and timing fields. |
 
-`app_mode` controls startup: `api-only` serves lightweight API features, `retrieval-only` loads corpus/index dependencies, and `full` enables model generation. Model loading is lazy by default. `HYBRID_MODEL_ID` is `Qwen/Qwen3-4B-Instruct-2507`; `CENTRAL_MODEL_ID` is `Qwen/Qwen3-8B`. The baseline uses no adapters and defaults to deterministic decoding with thinking disabled.
+`app_mode` controls startup: `api-only` serves lightweight API features, `retrieval-only` loads corpus/index dependencies, and `full` enables model generation. In full mode the hybrid model loads at startup, so an invalid SFT adapter fails startup. `MODEL_VARIANT=vanilla` uses the unmodified `Qwen/Qwen3-4B-Instruct-2507`; `MODEL_VARIANT=sft` attaches the local adapter specified by `MODEL_ADAPTER_PATH` to the same base model. The tokenizer always comes from the base model. The Central Agent remains vanilla `Qwen/Qwen3-8B` and follows `RUNTIME_LOADING_STRATEGY`. Decoding defaults to deterministic with thinking disabled.
 
 The retrieval implementation reads the preserved historical corpus and its FAISS and BM25S indexes. Startup does not build or modify them. Missing required artifacts or model files produce an explicit error.
 

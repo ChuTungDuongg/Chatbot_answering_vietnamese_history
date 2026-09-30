@@ -1,5 +1,6 @@
-"""FastAPI assembly for the two baseline inference modes."""
+"""FastAPI assembly for the configured inference modes."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -22,6 +23,9 @@ from app.tools.page_fetcher import FetchPageTool
 from app.tools.registry import ToolRegistry
 from app.tools.web_search import SearchWebTool, build_web_search_provider
 from app.tools.wikipedia import FetchWikipediaPageTool, SearchWikipediaTool
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -60,8 +64,11 @@ async def lifespan(app: FastAPI):
                                            adapter_path=(settings.model_adapter_path if settings.model_variant == "sft" else None),
                                            **common)
                 hybrid = HybridRuntime(app.state.retriever, hybrid_model, temporary_retriever)
-                if settings.runtime_loading_strategy == "eager":
-                    hybrid_model.load()
+                hybrid_model.load()
+                logger.info("Hybrid model ready: base=%s variant=%s adapter=%s peft_attached=%s",
+                            hybrid_model.model_id, settings.model_variant.upper(),
+                            hybrid_model.adapter_path,
+                            bool(getattr(hybrid_model.model, "peft_config", None)))
             if settings.enable_central_mode:
                 central_model = QwenRuntime(model_id=settings.central_model_id,
                                             revision=settings.central_model_revision, **common)
@@ -90,7 +97,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version,
-              description="Vietnamese history: Hybrid RAG (vanilla Qwen3-4B) and Central Agent (vanilla Qwen3-8B).",
+              description="Vietnamese history: Hybrid RAG (configured Qwen3-4B variant) and Central Agent (vanilla Qwen3-8B).",
               lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],

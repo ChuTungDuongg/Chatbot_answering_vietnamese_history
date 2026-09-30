@@ -1,0 +1,75 @@
+{
+  "completed_at": "2026-09-29T20:57:01.061970+00:00",
+  "created_at": "2026-09-29T11:14:14.324926+00:00",
+  "git_commit": "472ffe7d1d65b63fd6c58889f9bcea1b69907437",
+  "hardware": {
+    "gpus": [
+      "NVIDIA A100-SXM4-80GB"
+    ],
+    "platform": "Linux-6.6.122+-x86_64-with-glibc2.39"
+  },
+  "identity": {
+    "adapter_fingerprint": "ab11d1371a3045c4be75bbb1612df6785ab13ad6c3b508ca5c56cc30a9f91ebc",
+    "bm25_manifest_sha256": "82473291c17c7aa63e7f36767fe975874285199d6b634a68564e1ef025ef0d5a",
+    "canonical_sha256": "97acf491e7409e54ed27f38f1e28a16b9e85107c9c2ed296bffaf48814d539d8",
+    "concurrency": 1,
+    "corpus_count": 624288,
+    "corpus_path": "/content/vn_history_corpus_v1/chunks.jsonl",
+    "corpus_sha256": "4d1700c20c25e8f2c77b801e6ef6242224a8f59a37469ab13fdbe1dc62266255",
+    "dense_manifest_sha256": {
+      "faiss": "34539bd08fe7574c4b05043114c286a8c7e064a2cd529962a88dd25d95d0ff4e",
+      "qdrant": "ad2b4cc4f3f018f0931e11876055ad47c33e5b44f04e48e3f8632a7eff213d2c"
+    },
+    "embedding_model_id": "intfloat/multilingual-e5-base",
+    "embedding_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+    "final_k": 10,
+    "generation_batch_size": 1,
+    "max_new_tokens": 768,
+    "max_questions": null,
+    "merged_model_fingerprint": null,
+    "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+    "model_revision": null,
+    "ordered_chunk_id_sha256": "b42f792bc8b59795861a5329df5fc0835abdfd3449028dcf2eef8e86f3b55d8f",
+    "qdrant_collection": "vn_history_v1_e5",
+    "qdrant_hnsw_ef": null,
+    "reranker_model_id": "BAAI/bge-reranker-v2-m3",
+    "reranker_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "response_mode": "standard",
+    "retrieval_batch_size": 1,
+    "retrieval_settings": {
+      "bm25_fetch_k": 80,
+      "dense_fetch_k": 80,
+      "enable_context_diversity": true,
+      "final_context_k": 6,
+      "intent_facet_bonus": 0.025,
+      "max_chunks_per_title": 2,
+      "max_query_variants": 3,
+      "metadata_max_bonus": 0.18,
+      "query_expansion_weight": 0.82,
+      "rerank_batch_size": 32,
+      "rrf_k": 60,
+      "rrf_top_k": 20
+    },
+    "runtime_manifest_sha256": "8f1f698f60e9891fd690978247cdb3ee18849ed415569b7d0824fabb03221877",
+    "schema_version": 1,
+    "seed": 42,
+    "split_seed": 42,
+    "start_after": null,
+    "systems": [
+      "vanilla_no_rag",
+      "vanilla_faiss",
+      "vanilla_qdrant",
+      "sft_no_rag",
+      "sft_faiss",
+      "sft_qdrant"
+    ],
+    "temperature": 0.0,
+    "test_sha256": "f0a32500ef83e42f7d8748e02e41752c61fc4491afdb248dbe65c3198ec0b2a5",
+    "top_p": 1.0
+  },
+  "resolved_model_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "resume_git_commits": [
+    "533aa8c60870ac72f2b15d9ebb006eddb028da4b"
+  ],
+  "status": "complete"
+}

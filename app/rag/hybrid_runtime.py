@@ -1,4 +1,4 @@
-"""Hybrid baseline: preserved retrieval followed by one vanilla 4B call."""
+"""Hybrid runtime: preserved retrieval followed by the configured 4B model."""
 
 import asyncio
 import time

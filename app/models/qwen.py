@@ -1,4 +1,4 @@
-"""Lazy, unadapted Qwen runtime with genuine Transformers token streaming."""
+"""Qwen runtime with optional PEFT adapter and genuine token streaming."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ class QwenRuntime:
         self.adapter_path = Path(adapter_path) if adapter_path else None
         if self.adapter_path and not (self.adapter_path / "adapter_config.json").is_file():
             raise FileNotFoundError(f"PEFT adapter_config.json missing: {self.adapter_path}")
+        if self.adapter_path and not (self.adapter_path / "adapter_model.safetensors").is_file():
+            raise FileNotFoundError(f"PEFT adapter_model.safetensors missing: {self.adapter_path}")
         self.model = None
         self.tokenizer = None
         self.resolved_revision: str | None = None
@@ -64,6 +66,11 @@ class QwenRuntime:
 
             if self.device == "cuda" and not torch.cuda.is_available():
                 raise RuntimeError("CUDA requested but unavailable")
+            if self.adapter_path:
+                from peft import PeftConfig, PeftModel
+                adapter_config = PeftConfig.from_pretrained(str(self.adapter_path), local_files_only=True)
+                if adapter_config.base_model_name_or_path != self.model_id:
+                    raise RuntimeError("Adapter base model differs from configured Qwen model")
             kwargs = {"revision": self.revision, "cache_dir": self.cache_dir,
                       "local_files_only": self.local_files_only, "trust_remote_code": True}
             tokenizer = AutoTokenizer.from_pretrained(self.model_id, **kwargs)
@@ -77,12 +84,10 @@ class QwenRuntime:
             if self.device == "cpu":
                 model.to("cpu")
             if self.adapter_path:
-                from peft import PeftConfig, PeftModel
-                adapter_config = PeftConfig.from_pretrained(str(self.adapter_path), local_files_only=True)
-                if adapter_config.base_model_name_or_path != self.model_id:
-                    raise RuntimeError("Adapter base model differs from configured Qwen model")
                 model = PeftModel.from_pretrained(model, str(self.adapter_path), is_trainable=False,
                                                  local_files_only=True)
+                if not getattr(model, "peft_config", None):
+                    raise RuntimeError("PEFT adapter did not attach to the Qwen model")
             model.eval()
             self.resolved_revision = getattr(model.config, "_commit_hash", None) or self.revision
             self.tokenizer, self.model = tokenizer, model

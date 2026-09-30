@@ -112,6 +112,19 @@ artifacts/**/*.pth
 artifacts/**/*.ckpt
 artifacts/**/*.onnx
 
+# Explicit PEFT export and intermediate training artifacts.
+artifacts/models/**/*.safetensors
+artifacts/models/**/*.bin
+artifacts/models/**/checkpoints/
+artifacts/models/**/checkpoint-*/
+
+# Local evaluation acceleration, telemetry, and resume state.
+artifacts/evaluation/**/retrieval_cache_*.jsonl
+artifacts/evaluation/**/retrieval_cache_*.manifest.json
+artifacts/evaluation/**/gpu_memory*.jsonl
+artifacts/evaluation/**/repair_backups/
+artifacts/evaluation/**/progress.json
+
 # =========================
 # Vector DB / retrieval artifacts
 # =========================
