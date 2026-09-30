@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import csv
 import gc
-import hashlib
 import json
 import os
 import platform
@@ -25,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import HYBRID_MODEL_ID, settings
+from app.models.identity import file_tree_sha
 from app.rag.prompting import build_messages, build_no_rag_messages
 from evaluation.gpu_memory import CudaMemory, append_sample
 from evaluation.metrics.grounding import score_grounding
@@ -36,6 +36,12 @@ from evaluation.schema import Question, load_questions
 
 SYSTEM_NAMES = ("vanilla_no_rag", "vanilla_faiss", "vanilla_qdrant",
                 "sft_no_rag", "sft_faiss", "sft_qdrant")
+SUMMARY_BASE_FIELDS = ("system", "model_type", "rag", "dense_backend", "question_count",
+                       "failure_count", "latency_ms_mean")
+SUMMARY_FIELDS = SUMMARY_BASE_FIELDS + (
+    "exact_match", "token_f1", "rouge_l_f1", "chunk_hit_rate@10", "source_hit_rate@10",
+    "source_mrr@10", "answer_citation_coverage", "citation_precision", "citation_recall",
+    "citation_validity_rate", "unverified_year_rate", "insufficient_answer_behavior")
 DEFAULT_TEST = Path("evaluation/datasets/v1_silver/splits/v1_seed42/test.jsonl")
 FROZEN_CANONICAL_SHA = "97acf491e7409e54ed27f38f1e28a16b9e85107c9c2ed296bffaf48814d539d8"
 FROZEN_TEST_SHA = "f0a32500ef83e42f7d8748e02e41752c61fc4491afdb248dbe65c3198ec0b2a5"
@@ -84,17 +90,6 @@ def validate_test(path: Path) -> tuple[list[Question], dict]:
     if [item.id for item in questions] != manifest.get("ids", {}).get("test"):
         raise ValueError("TEST row order/IDs differ from frozen split manifest")
     return questions, manifest
-
-
-def file_tree_sha(path: Path) -> str:
-    if not path.is_dir():
-        raise FileNotFoundError(f"Adapter directory missing: {path}")
-    digest = hashlib.sha256()
-    for file in sorted(path.rglob("*")):
-        if file.is_file():
-            digest.update(file.relative_to(path).as_posix().encode())
-            digest.update(file_sha(file).encode())
-    return digest.hexdigest()
 
 
 def _git_commit() -> str | None:
@@ -288,6 +283,38 @@ def _load_cache(path: Path, fingerprint: dict, *, resume: bool) -> dict[str, dic
         raise ValueError(f"Retrieval cache has no manifest: {path}")
     _atomic_json(meta, fingerprint)
     return {}
+
+
+def summary_csv_row(summary: dict) -> dict:
+    overall = summary["overall"]
+
+    def value(*keys: str):
+        metric = overall
+        for key in keys:
+            metric = metric.get(key, {})
+        return metric.get("value") if isinstance(metric, dict) else None
+
+    return {**{key: summary.get(key) for key in SUMMARY_BASE_FIELDS},
+            "exact_match": value("answer", "exact_match"),
+            "token_f1": value("answer", "token_f1"),
+            "rouge_l_f1": value("answer", "rouge_l_f1"),
+            "chunk_hit_rate@10": value("retrieval", "chunk", "hit_rate@10"),
+            "source_hit_rate@10": value("retrieval", "source", "hit_rate@10"),
+            "source_mrr@10": value("retrieval", "source", "mrr@10"),
+            "answer_citation_coverage": value("citations", "answer_citation_coverage"),
+            "citation_precision": value("citations", "citation_precision"),
+            "citation_recall": value("citations", "citation_recall"),
+            "citation_validity_rate": value("citations", "citation_validity_rate"),
+            "unverified_year_rate": value("grounding", "unverified_year_rate"),
+            "insufficient_answer_behavior": value("grounding", "insufficient_answer_behavior")}
+
+
+def write_summary_csv(path: Path, summaries: dict[str, dict]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=SUMMARY_FIELDS)
+        writer.writeheader()
+        for summary in summaries.values():
+            writer.writerow(summary_csv_row(summary))
 
 
 async def run(args: argparse.Namespace) -> dict:
@@ -514,14 +541,7 @@ async def run(args: argparse.Namespace) -> dict:
     result = {"identity": identity, "systems": summaries,
               "completed_at": datetime.now(timezone.utc).isoformat()}
     _atomic_json(args.output_dir / "summary.json", result)
-    with (args.output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=("system", "model_type", "rag", "dense_backend", "question_count",
-                                                     "failure_count", "latency_ms_mean", "exact_match", "token_f1", "rouge_l_f1"))
-        writer.writeheader()
-        for summary in summaries.values():
-            answer = summary["overall"]["answer"]
-            writer.writerow({key: summary.get(key) for key in writer.fieldnames if key not in ("exact_match", "token_f1", "rouge_l_f1")} |
-                            {key: answer.get(key, {}).get("value") for key in ("exact_match", "token_f1", "rouge_l_f1")})
+    write_summary_csv(args.output_dir / "summary.csv", summaries)
     saved = json.loads(manifest_path.read_text(encoding="utf-8"))
     saved["status"] = ("complete_with_failures" if any(item["failure_count"] for item in summaries.values())
                        else "complete")

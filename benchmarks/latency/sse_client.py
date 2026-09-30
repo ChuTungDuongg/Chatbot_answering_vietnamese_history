@@ -101,6 +101,7 @@ def measure_request(
         "question_id": question["id"], "mode": mode, "phase": phase,
         "run_index": run_index, "cold_start": phase == "cold", "success": False,
         "http_status": None, "model_id": None, "model_revision": None,
+        "model_variant": None, "adapter_attached": None, "adapter_fingerprint": None,
         "ttfb_ms": None, "first_status_event_ms": None, "answer_ttft_ms": None,
         "e2e_ms": None, "itl_p50_ms": None, "itl_p95_ms": None,
         "itl_p99_ms": None, "inter_token_latency_ms": [],
@@ -168,6 +169,9 @@ def measure_request(
                 record["server_request_id"] = done.get("request_id") or record["server_request_id"]
                 record["model_id"] = done.get("model_id")
                 record["model_revision"] = done.get("model_revision")
+                record["model_variant"] = done.get("model_variant")
+                record["adapter_attached"] = done.get("adapter_attached")
+                record["adapter_fingerprint"] = done.get("adapter_fingerprint")
                 record["generation_settings"] = done.get("generation_settings")
                 record["retrieval_settings"] = done.get("retrieval_settings")
                 metrics = done.get("metrics") or {}

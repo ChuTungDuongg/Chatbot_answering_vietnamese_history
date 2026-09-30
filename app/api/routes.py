@@ -260,6 +260,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                 "response_mode": payload.response_mode,
                 "latency_ms": metrics["e2e_ms"], "model_id": runtime.model.model_id,
                 "model_revision": completed.model_revision,
+                "model_variant": getattr(runtime.model, "model_variant", None),
+                "adapter_attached": getattr(runtime.model, "adapter_attached", None),
+                "adapter_fingerprint": getattr(runtime.model, "adapter_fingerprint", None),
                 "generation_settings": {**runtime.model.generation_settings, "max_new_tokens": max_tokens},
                 "retrieval_settings": getattr(request.app.state.retriever, "retrieval_config", {}),
                 "metrics": metrics}

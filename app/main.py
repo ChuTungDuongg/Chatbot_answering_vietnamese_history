@@ -65,10 +65,10 @@ async def lifespan(app: FastAPI):
                                            **common)
                 hybrid = HybridRuntime(app.state.retriever, hybrid_model, temporary_retriever)
                 hybrid_model.load()
-                logger.info("Hybrid model ready: base=%s variant=%s adapter=%s peft_attached=%s",
+                logger.info("Hybrid model ready: base=%s variant=%s adapter=%s peft_attached=%s adapter_fingerprint=%s",
                             hybrid_model.model_id, settings.model_variant.upper(),
                             hybrid_model.adapter_path,
-                            bool(getattr(hybrid_model.model, "peft_config", None)))
+                            hybrid_model.adapter_attached, hybrid_model.adapter_fingerprint)
             if settings.enable_central_mode:
                 central_model = QwenRuntime(model_id=settings.central_model_id,
                                             revision=settings.central_model_revision, **common)
@@ -127,4 +127,15 @@ async def ready():
     service = getattr(app.state, "rag_service", None)
     if service is None:
         return {"ready": False}
-    return service.readiness()
+    state = service.readiness()
+    if settings.is_full:
+        hybrid = getattr(app.state, "hybrid_runtime", None)
+        central = getattr(app.state, "central_runtime", None)
+        hybrid_model = hybrid.model if hybrid is not None else None
+        central_model = central.model if central is not None else None
+        state = {**state,
+                 "hybrid_loaded": bool(hybrid_model and hybrid_model.model is not None),
+                 "hybrid_model_variant": getattr(hybrid_model, "model_variant", None),
+                 "hybrid_adapter_attached": getattr(hybrid_model, "adapter_attached", None),
+                 "central_loaded": bool(central_model and central_model.model is not None)}
+    return state

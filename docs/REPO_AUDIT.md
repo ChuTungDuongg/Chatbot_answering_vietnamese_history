@@ -10,11 +10,11 @@
 | FUTURE CLEANUP | Current retrieval domain anchors and query patterns emphasize Vietnamese history | Test world-history recall with reviewed questions before considering V1 for serving; do not tune V0 thresholds in this cleanup. |
 | FUTURE EXPERIMENT | vLLM serving and Qdrant retrieval | Evaluate V1 against V0 with human labels first; experiment separately later. |
 
-The active app contains no Research Agent, Evidence Agent, History Answerer, PEFT, role switching, or hidden model fallback. Old strings in the preservation snapshot are historical inventory paths. The only active modes are `hybrid` and `central`.
+The active app contains no Research Agent, Evidence Agent, History Answerer, role switching, or hidden model fallback. Old strings in the preservation snapshot are historical inventory paths. The active chat modes are `hybrid` and `central`; Hybrid additionally selects vanilla or SFT PEFT at startup through `MODEL_VARIANT`.
 
 The retriever uses E5 query/passage prefixes, FAISS dense search, normalized BM25S, weighted RRF, cross-encoder reranking, metadata bonuses, deduplication, and context diversity. The index row order is a correctness boundary: the new builder records an ordered chunk-ID SHA-256 in both sidecars, and runtime validates it when present. Old V0 sidecars contain only a corpus signature and count, so V0 row alignment cannot be proven from those sidecars alone. V0 bytes and ranking weights remain unchanged.
 
-Central's `search_history` tool receives the same `HybridRetriever` object instantiated for Hybrid. Planning has a configured bounded number of rounds and up to four calls per round; tool and parse failures terminate or proceed within those bounds. Only final generation goes to SSE `answer_delta`. Hybrid makes one generation call after retrieval. Qwen loads explicit model IDs and optional revisions, with no adapter or fallback; `TextIteratorStreamer` emits genuine generated text from a worker thread.
+Central's `search_history` tool receives the same `HybridRetriever` object instantiated for Hybrid. Planning has a configured bounded number of rounds and up to four calls per round; tool and parse failures terminate or proceed within those bounds. Only final generation goes to SSE `answer_delta`. Hybrid makes one generation call after retrieval. Qwen loads explicit model IDs and optional revisions; Hybrid SFT attaches its configured PEFT adapter at startup and never falls back to vanilla. `TextIteratorStreamer` emits genuine generated text from a worker thread.
 
 ## Corpus V1 source hardening
 

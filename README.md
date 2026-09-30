@@ -4,10 +4,10 @@ A reproducible baseline for answering Vietnamese history questions with grounded
 
 | Mode | Path | Model |
 |---|---|---|
-| `hybrid` | Existing hybrid retrieval → cited prompt → answer | Vanilla `Qwen/Qwen3-4B-Instruct-2507` |
+| `hybrid` | Existing hybrid retrieval → cited prompt → answer | `Qwen/Qwen3-4B-Instruct-2507`, vanilla or SFT PEFT via `MODEL_VARIANT` |
 | `central` | Tool-using agent → history retrieval and other configured tools → final answer | Vanilla `Qwen/Qwen3-8B` |
 
-Both modes use the same preserved historical corpus and shared retriever. The baseline keeps multilingual E5, FAISS, BM25S, weighted RRF, cross-encoder reranking, and context selection. Neither mode requires a LoRA adapter. Generation defaults to `do_sample=false` and `enable_thinking=false`.
+Both modes use the same preserved historical corpus and shared retriever. The baseline keeps multilingual E5, FAISS, BM25S, weighted RRF, cross-encoder reranking, and context selection. Hybrid SFT attaches a local PEFT adapter to the same 4B base model; its tokenizer comes from the base model. Hybrid vanilla and Central use no adapter. Generation defaults to `do_sample=false` and `enable_thinking=false`.
 
 The project includes real model-token SSE streaming, an HTTP latency benchmark, retrieval and answer evaluation, and a read-only corpus audit. See [the architecture](docs/ARCHITECTURE.md) for the execution paths.
 
@@ -60,6 +60,7 @@ Set `APP_MODE` in `.env`:
 
 The deployment artifact root defaults to `artifacts/vn_history_deployment`. Large corpus, index, and model files are not supplied by Git; use an existing project artifact copy. Keep `HYBRID_MODEL_ID=Qwen/Qwen3-4B-Instruct-2507` and `CENTRAL_MODEL_ID=Qwen/Qwen3-8B` for comparable baseline measurements. The app reports missing required artifacts instead of silently rebuilding indexes or switching models.
 Set `DEVICE=cuda` in `.env` when running full inference on a CUDA host.
+For Hybrid, set `MODEL_VARIANT=vanilla` with an empty `MODEL_ADAPTER_PATH`, or set `MODEL_VARIANT=sft` with `MODEL_ADAPTER_PATH=./artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter`. Restart the app after changing either value. SFT requires both `adapter_config.json` and a local `adapter_model.safetensors`; the weight file is ignored by Git. Central remains vanilla Qwen3-8B.
 
 Start the local API and frontend in separate terminals:
 
@@ -69,6 +70,8 @@ npm run frontend
 ```
 
 Set `VITE_API_BASE_URL=http://127.0.0.1:8000` in `frontend/.env` before starting Vite. For the Modal development backend, `npm run dev` starts the frontend and `modal serve modal_app.py` together. The stream endpoint is `POST /api/v1/chat/stream`; `answer_delta` carries actual generated text, while status events may arrive earlier.
+
+For Modal, export `MODEL_VARIANT=vanilla` (the default), or export `MODEL_VARIANT=sft` and `MODEL_ADAPTER_PATH=/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter` before `modal serve modal_app.py` or `modal deploy modal_app.py`. The `/artifacts` Modal Volume must contain that directory and `adapter_model.safetensors` for SFT. No adapter weights are stored in Git.
 
 ## Preserve and audit the corpus
 

@@ -121,6 +121,9 @@ def run(args: argparse.Namespace) -> Path:
         "server_hardware": observed_metadata.get("server_hardware", observed_metadata.get("hardware")),
         "model_id": model_ids.get(args.mode) if isinstance(model_ids, dict) else observed_metadata.get("model_id"),
         "model_revision": model_revisions.get(args.mode) if isinstance(model_revisions, dict) else observed_metadata.get("model_revision"),
+        "model_variant": observed_metadata.get("model_variant"),
+        "adapter_attached": observed_metadata.get("adapter_attached"),
+        "adapter_fingerprint": observed_metadata.get("adapter_fingerprint"),
         "corpus_hash": observed_metadata.get("corpus_hash"),
         "retrieval_index_hash": observed_metadata.get("retrieval_index_hash"),
         "generation_settings": _for_mode(observed_metadata.get("generation_settings"), args.mode),
@@ -146,6 +149,9 @@ def run(args: argparse.Namespace) -> Path:
         "server_hardware": selected_metadata["server_hardware"],
         "model_id": selected_metadata["model_id"],
         "model_revision": selected_metadata["model_revision"],
+        "model_variant": selected_metadata["model_variant"],
+        "adapter_attached": selected_metadata["adapter_attached"],
+        "adapter_fingerprint": selected_metadata["adapter_fingerprint"],
         "corpus_hash": selected_metadata["corpus_hash"],
         "retrieval_index_hash": selected_metadata["retrieval_index_hash"],
         "generation_settings": selected_metadata["generation_settings"],
@@ -190,6 +196,14 @@ def run(args: argparse.Namespace) -> Path:
         if metadata["model_revision"] and metadata["model_revision"] != observed:
             raise ValueError("declared model_revision differs from server telemetry")
         metadata["model_revision"] = observed
+    for field in ("model_variant", "adapter_attached", "adapter_fingerprint"):
+        observed = [row[field] for row in rows if row.get(field) is not None]
+        if observed:
+            if any(value != observed[0] for value in observed[1:]):
+                raise ValueError(f"server changed {field} during the benchmark")
+            if metadata[field] is not None and metadata[field] != observed[0]:
+                raise ValueError(f"declared {field} differs from server telemetry")
+            metadata[field] = observed[0]
     for setting in ("generation_settings", "retrieval_settings"):
         observed = [row[setting] for row in rows if row.get(setting) is not None]
         if observed:

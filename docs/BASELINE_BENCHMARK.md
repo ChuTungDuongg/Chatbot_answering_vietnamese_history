@@ -16,7 +16,7 @@ Measure Central separately:
 python -m benchmarks.latency.runner --mode central --dataset evaluation/datasets/fixtures/questions.jsonl --output reports/baseline/central-c1 --cold-start --warmup 2 --runs 5 --concurrency 1
 ```
 
-Repeat warm experiments at `--concurrency 1`, `2`, and `4`, each with a new `--output` directory. A single process has at most one first cold request; the client requires concurrency 1 when `--cold-start` is set. Restart the server between **independent cold-start trials** and do not claim a cold trial if weights or indexes were already loaded. `--base-url` defaults to `http://127.0.0.1:8000`; `--timeout` defaults to 300 seconds.
+Repeat warm experiments at `--concurrency 1`, `2`, and `4`, each with a new `--output` directory. A single process has at most one first request labeled cold; the client requires concurrency 1 when `--cold-start` is set. Hybrid weights load during FastAPI startup, so this label measures the first HTTP request after startup, not model weight loading. Restart the server between independent first-request trials. `--base-url` defaults to `http://127.0.0.1:8000`; `--timeout` defaults to 300 seconds.
 
 Before requests, the client fetches `GET /api/v1/baseline/metadata?mode=hybrid` (or `mode=central`) to capture server Git SHA, model/config IDs, artifact hashes, hardware, and software versions where the server can observe them. The optional `--metadata-file path.json` fills any server-null facts from independently verified records. A conflicting non-null value fails the run. For example:
 
@@ -27,12 +27,15 @@ Before requests, the client fetches `GET /api/v1/baseline/metadata?mode=hybrid` 
   "retrieval_index_hash": null,
   "model_id": "Qwen/Qwen3-4B-Instruct-2507",
   "model_revision": null,
+  "model_variant": "vanilla",
+  "adapter_attached": false,
+  "adapter_fingerprint": null,
   "generation_settings": {"do_sample": false, "enable_thinking": false},
   "retrieval_settings": {}
 }
 ```
 
-The stream's `done` event supplies model ID/revision/settings and server metrics when available. The runner checks these against the pre-run metadata. Unknown values remain JSON `null`; it does not treat client hardware as server hardware. `run_metadata.json` also records UTC timestamp, **server** Git commit, separate client Git commit, dataset hash, client OS/CPU/RAM/Python and installed Torch/Transformers versions, mode, concurrency, and run parameters. Use a corpus audit manifest or deployment record to fill hashes the server cannot calculate. Never put credentials in the metadata file.
+The stream's `done` event supplies model ID/revision/settings, `model_variant`, `adapter_attached`, `adapter_fingerprint`, and server metrics when available. The runner checks these against the pre-run metadata and records them in `run_metadata.json`. The adapter fingerprint is computed once when the server loads the model, not per request. Unknown values remain JSON `null`; it does not treat client hardware as server hardware. `run_metadata.json` also records UTC timestamp, **server** Git commit, separate client Git commit, dataset hash, client OS/CPU/RAM/Python and installed Torch/Transformers versions, mode, concurrency, and run parameters. Use a corpus audit manifest or deployment record to fill hashes the server cannot calculate. Never put credentials in the metadata file.
 
 Outputs in the chosen directory are `run_metadata.json`, `latency_records.jsonl`, `latency_summary.json`, and `latency_summary.md`. The summary groups **cold**, **warm**, and **warmup** independently, reporting request count, success/error rates, and observed count, mean, population standard deviation, p50, p95, p99 for each timing or throughput metric. Failed requests remain in the error rate; incomplete metrics do not enter numeric aggregates.
 

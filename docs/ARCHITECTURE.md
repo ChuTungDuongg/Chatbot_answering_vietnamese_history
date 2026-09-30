@@ -12,7 +12,7 @@ flowchart TD
     T --> R
     R --> I[Existing FAISS + BM25S indexes]
     I --> D[Preserved historical corpus]
-    H --> Q4[Vanilla Qwen3-4B]
+    H --> Q4[Qwen3-4B: vanilla or SFT PEFT]
     C --> Q8[Vanilla Qwen3-8B]
 ```
 
@@ -20,10 +20,10 @@ flowchart TD
 
 | Mode | Execution | Model |
 |---|---|---|
-| `hybrid` | Retrieve history chunks, assemble a cited context prompt, stream the generated answer. | `Qwen/Qwen3-4B-Instruct-2507` |
+| `hybrid` | Retrieve history chunks, assemble a cited context prompt, stream the generated answer. | `Qwen/Qwen3-4B-Instruct-2507`, optionally with PEFT adapter |
 | `central` | Gather local history evidence, run bounded tool calls when useful, then stream the final answer. | `Qwen/Qwen3-8B` |
 
-Neither path needs a role adapter. The baseline defaults to `do_sample=false` and `enable_thinking=false`. Model IDs and optional revisions are explicit settings; benchmark metadata records the observed model and generation settings. A missing required model or retrieval artifact is an error rather than an implicit model change.
+`MODEL_VARIANT=vanilla` runs Hybrid on the base 4B model; `MODEL_VARIANT=sft` attaches the adapter in `MODEL_ADAPTER_PATH` to that same base model. Both use the base tokenizer. Central always uses vanilla Qwen3-8B. The baseline defaults to `do_sample=false` and `enable_thinking=false`. Model IDs and optional revisions are explicit settings; benchmark metadata records the variant, adapter attachment, adapter fingerprint, and generation settings. A missing required model, adapter, or retrieval artifact is an error rather than an implicit model change.
 
 ## Code boundaries
 
@@ -34,7 +34,7 @@ Neither path needs a role adapter. The baseline defaults to `do_sample=false` an
 | `app/central/runtime.py` | Central tool loop and final prompt construction. |
 | `app/rag/retriever.py` | Retrieval interface shared by both modes. |
 | `app/rag/retrieval.py` | Baseline FAISS + BM25S retrieval implementation. |
-| `app/models/qwen.py` | Vanilla Qwen model loading and token streaming. |
+| `app/models/qwen.py` | Base Qwen loading, optional PEFT attachment, and token streaming. |
 | `app/chat/` | Conversation persistence and uploaded document handling. |
 | `app/telemetry.py` | Per-request timestamps and structured tracing. |
 | `benchmarks/` and `evaluation/` | External measurements; production does not import them. |

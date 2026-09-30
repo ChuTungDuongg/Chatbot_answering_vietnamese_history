@@ -39,6 +39,8 @@ image = modal.Image.from_dockerfile(
         "ARTIFACT_ROOT": "/artifacts",
         "HYBRID_MODEL_ID": "Qwen/Qwen3-4B-Instruct-2507",
         "CENTRAL_MODEL_ID": "Qwen/Qwen3-8B",
+        "MODEL_VARIANT": os.getenv("MODEL_VARIANT", "vanilla"),
+        "MODEL_ADAPTER_PATH": os.getenv("MODEL_ADAPTER_PATH", ""),
         "DO_SAMPLE": "false",
         "ENABLE_THINKING": "false",
         "CENTRAL_MAX_ACTION_ROUNDS": "2",

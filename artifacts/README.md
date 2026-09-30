@@ -20,9 +20,9 @@ The FAISS and BM25S directories include additional index data files in the prese
 |---|---|
 | `api-only` | None. |
 | `retrieval-only` | Corpus, retrieval indexes, and retrieval configuration. |
-| `full` | The same retrieval files plus the configured vanilla Qwen model files/cache. |
+| `full` | The same retrieval files plus the Qwen model files/cache and, for Hybrid SFT, a PEFT adapter. |
 
-Hybrid uses `Qwen/Qwen3-4B-Instruct-2507`; Central uses `Qwen/Qwen3-8B`. Qwen weights may live in an external Hugging Face cache rather than this directory. Adapter directories found in an older artifact copy are historical files and are not loaded by either baseline mode.
+Hybrid uses `Qwen/Qwen3-4B-Instruct-2507` with `MODEL_VARIANT=vanilla` or `MODEL_VARIANT=sft`; SFT loads the base tokenizer and attaches the adapter configured by `MODEL_ADAPTER_PATH`. Central uses vanilla `Qwen/Qwen3-8B`. Qwen weights may live in an external Hugging Face cache. The current PEFT adapter's `adapter_config.json` is tracked under `artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter`; its `adapter_model.safetensors` must be supplied locally or in the mounted Modal artifact Volume and is ignored by Git. Older role adapter directories in preserved artifact copies are historical.
 
 [`../docs/corpus_preservation_manifest.json`](../docs/corpus_preservation_manifest.json) records the original file inventory and hashes, including data held at legacy paths. Run `python -m scripts.corpus.audit_corpus` to verify unchanged bytes or pass `--corpus` and `--output` for a descriptive read-only audit. See [`../docs/CORPUS_PRESERVATION.md`](../docs/CORPUS_PRESERVATION.md).
 

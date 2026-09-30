@@ -141,7 +141,7 @@ For a trained Hybrid 4B answer (with local Corpus V1 retrieval metadata prepared
 APP_MODE=full CORPUS_PATH=/content/drive/MyDrive/VN_History_LLM/corpus_v1/chunks.jsonl RETRIEVAL_ROOT=/content/drive/MyDrive/VN_History_LLM/corpus_v1/retrieval RETRIEVAL_DENSE_BACKEND=faiss MODEL_VARIANT=sft MODEL_ADAPTER_PATH=/content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/run_01/adapter DEVICE=cuda uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Set `MODEL_VARIANT=vanilla` and omit `MODEL_ADAPTER_PATH` for vanilla Hybrid 4B. Central Agent remains its existing 8B model. Use platform-specific environment assignment syntax on Windows. Adapter loading requires a matching base model and `adapter_config.json`.
+Set `MODEL_VARIANT=vanilla` and omit `MODEL_ADAPTER_PATH` for vanilla Hybrid 4B. Central Agent remains its existing 8B model. Use platform-specific environment assignment syntax on Windows. Adapter loading requires a matching base model, `adapter_config.json`, and local `adapter_model.safetensors`.
 
 ## 6. Fixed six-system quality benchmark
 
@@ -194,7 +194,7 @@ The runner reads existing `predictions.jsonl` rows and generates only missing qu
 
 If you explicitly created a merged model, replace `--adapter-path ...` with `--sft-model-path /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/merged_01`. Vanilla systems continue to load the unmodified base ID. The merged model files are fingerprinted in the run identity.
 
-Outputs: `run_manifest.json`, `retrieval_cache_{faiss,qdrant}.jsonl` with identity manifests, each system's `predictions.jsonl`, `progress.json`, `progress.log`, `metrics.json`, and aggregate `summary.json`/`summary.csv`. Metrics include Exact Match, token F1, ROUGE-L, lexical required-fact phrase coverage, abstention behavior, retrieval HitRate/Recall/Precision/MRR/nDCG at 1/3/5/10, grounding and citations where applicable. Breakdown is by difficulty, answerability, and category; small groups should not be overinterpreted. The runner never declares a “best” model automatically.
+Outputs: `run_manifest.json`, `retrieval_cache_{faiss,qdrant}.jsonl` with identity manifests, each system's `predictions.jsonl`, `progress.json`, `progress.log`, `metrics.json`, and aggregate `summary.json`/`summary.csv`. The CSV surfaces token F1, ROUGE-L, retrieval hit rates/MRR, citation coverage/precision/recall/validity, and selected grounding behavior; unavailable metrics remain blank. Detailed metrics include Exact Match, lexical required-fact phrase coverage, abstention behavior, retrieval HitRate/Recall/Precision/MRR/nDCG at 1/3/5/10, grounding and citations where applicable. Breakdown is by difficulty, answerability, and category; small groups should not be overinterpreted. The runner never declares a “best” model automatically.
 
 ## 7. Qdrant and limitations
 

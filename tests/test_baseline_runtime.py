@@ -32,6 +32,9 @@ class FakeModel:
     def __init__(self, model_id: str, *, fail: bool = False):
         self.model_id = model_id
         self.resolved_revision = "test-revision"
+        self.model_variant = "vanilla"
+        self.adapter_attached = False
+        self.adapter_fingerprint = None
         self.generation_settings = {"do_sample": False, "enable_thinking": False,
                                     "adapter": None, "quantization": None}
         self.fail = fail
@@ -189,6 +192,9 @@ def test_http_sse_deltas_reconstruct_stored_answer(tmp_path):
     saved = store.list_messages("baseline-test-client", conversation["id"])
     assert answer == saved[-1]["content"]
     assert done["model_id"] == HYBRID_MODEL_ID
+    assert done["model_variant"] == "vanilla"
+    assert done["adapter_attached"] is False
+    assert done["adapter_fingerprint"] is None
     assert done["metrics"]["model_ttft_ms"] is not None
     assert done["metrics"]["retrieval_ms"] is not None
     assert done["metrics"]["model_calls"] == 1

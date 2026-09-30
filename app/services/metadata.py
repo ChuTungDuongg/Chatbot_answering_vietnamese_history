@@ -113,6 +113,9 @@ def build_baseline_metadata(mode: str, app: Any) -> dict[str, Any]:
                   if mode == "hybrid" else settings.central_final_max_new_tokens}
     retrieval = retriever.retrieval_config if retriever is not None else None
     return {"schema_version": 1, "git_commit": _git_commit(), "mode": mode,
+            "model_variant": getattr(model, "model_variant", settings.model_variant if mode == "hybrid" else "vanilla"),
+            "adapter_attached": getattr(model, "adapter_attached", False),
+            "adapter_fingerprint": getattr(model, "adapter_fingerprint", None),
             "model_ids": {"hybrid": settings.hybrid_model_id, "central": settings.central_model_id},
             "model_id": settings.hybrid_model_id if mode == "hybrid" else settings.central_model_id,
             "model_revisions": {"hybrid": getattr(getattr(app.state, "hybrid_runtime", None), "model", None)

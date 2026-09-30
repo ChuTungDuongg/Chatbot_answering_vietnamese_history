@@ -31,6 +31,10 @@ def test_sse_frames_support_multiline_data_and_monotonic_observations():
 
 
 class FakeSSEHandler(BaseHTTPRequestHandler):
+    model_variant = "vanilla"
+    adapter_attached = False
+    adapter_fingerprint = None
+
     def log_message(self, *_args):
         pass
 
@@ -38,6 +42,9 @@ class FakeSSEHandler(BaseHTTPRequestHandler):
         assert self.path == "/api/v1/baseline/metadata?mode=hybrid"
         body = json.dumps({"schema_version": 1, "git_commit": "server-commit",
                            "model_ids": {"hybrid": "Qwen/Qwen3-4B-Instruct-2507", "central": "Qwen/Qwen3-8B"},
+                           "model_variant": self.model_variant,
+                           "adapter_attached": self.adapter_attached,
+                           "adapter_fingerprint": self.adapter_fingerprint,
                            "server_hardware": {"gpu_model": "Fake GPU", "gpu_memory_bytes": 16_000_000_000},
                            "corpus_hash": "corpus-sha", "retrieval_index_hash": "index-sha",
                            "generation_settings": {"hybrid": {"do_sample": False, "enable_thinking": False}},
@@ -68,7 +75,11 @@ class FakeSSEHandler(BaseHTTPRequestHandler):
             'event: answer_delta\ndata: {"delta":"Đáp "}\n\n',
             'event: answer_delta\ndata: {"delta":"án [S1]"}\n\n',
             'event: sources\ndata: {"items":[{"chunk_id":"c1","source_id":"s1","display_index":1}],"cited_source_ids":["s1"]}\n\n',
-            'event: done\ndata: {"status":"ok","request_id":"server-1","model_id":"Qwen/Qwen3-4B-Instruct-2507","metrics":{"retrieval_ms":5.0,"output_tokens":3}}\n\n',
+            'event: done\ndata: ' + json.dumps({
+                "status": "ok", "request_id": "server-1", "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+                "model_variant": self.model_variant, "adapter_attached": self.adapter_attached,
+                "adapter_fingerprint": self.adapter_fingerprint,
+                "metrics": {"retrieval_ms": 5.0, "output_tokens": 3}}) + '\n\n',
         ):
             self.wfile.write(frame.encode("utf-8"))
             self.wfile.flush()
@@ -212,6 +223,9 @@ def test_full_external_benchmark_and_offline_report(tmp_path: Path):
     assert summary["groups"]["warm"]["count"] == 2
     metadata = json.loads((benchmark_dir / "run_metadata.json").read_text(encoding="utf-8"))
     assert metadata["model_id"] == "Qwen/Qwen3-4B-Instruct-2507"
+    assert metadata["model_variant"] == "vanilla"
+    assert metadata["adapter_attached"] is False
+    assert metadata["adapter_fingerprint"] is None
     assert metadata["server_hardware"]["gpu_model"] == "Fake GPU"
     assert metadata["corpus_hash"] == "corpus-sha"
     assert metadata["retrieval_index_hash"] == "index-sha"
@@ -221,3 +235,32 @@ def test_full_external_benchmark_and_offline_report(tmp_path: Path):
     evaluation = json.loads((report / "metrics.json").read_text(encoding="utf-8"))
     assert evaluation["prediction_count"] == 2
     assert evaluation["provenance"]["model_id"] == metadata["model_id"]
+    assert evaluation["provenance"]["model_variant"] == "vanilla"
+
+
+def test_sft_benchmark_records_exact_adapter_identity(tmp_path: Path):
+    class FakeSFTHandler(FakeSSEHandler):
+        model_variant = "sft"
+        adapter_attached = True
+        adapter_fingerprint = "a" * 64
+
+    dataset = tmp_path / "questions.jsonl"
+    dataset.write_text('{"schema_version":1,"id":"q1","question":"Câu hỏi?","category":"fact"}\n',
+                       encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FakeSFTHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        output = run_benchmark(Namespace(
+            dataset=dataset, mode="hybrid", output=tmp_path / "benchmark",
+            base_url=f"http://127.0.0.1:{server.server_port}", warmup=0, runs=1,
+            concurrency=1, cold_start=False, client_id="test-client-sft",
+            timeout=5, metadata_file=None))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    metadata = json.loads((output / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["model_variant"] == "sft"
+    assert metadata["adapter_attached"] is True
+    assert metadata["adapter_fingerprint"] == "a" * 64

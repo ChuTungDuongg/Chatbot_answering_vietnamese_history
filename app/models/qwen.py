@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from app.models.base import ModelDelta, ModelDone
+from app.models.identity import file_tree_sha
 
 
 class QwenRuntime:
@@ -45,15 +46,27 @@ class QwenRuntime:
         self.model = None
         self.tokenizer = None
         self.resolved_revision: str | None = None
+        self.adapter_fingerprint: str | None = None
         self._load_lock = threading.Lock()
         self._generate_lock = threading.Lock()
+
+    @property
+    def model_variant(self) -> str:
+        return "sft" if self.adapter_path else "vanilla"
+
+    @property
+    def adapter_attached(self) -> bool:
+        return bool(self.model is not None and getattr(self.model, "peft_config", None))
 
     @property
     def generation_settings(self) -> dict[str, Any]:
         return {"do_sample": self.do_sample, "temperature": self.temperature,
                 "top_p": self.top_p, "enable_thinking": self.enable_thinking,
                 "dtype": self.dtype, "quantization": None,
-                "adapter": str(self.adapter_path) if self.adapter_path else None}
+                "adapter": str(self.adapter_path) if self.adapter_path else None,
+                "model_variant": self.model_variant,
+                "adapter_attached": self.adapter_attached,
+                "adapter_fingerprint": self.adapter_fingerprint}
 
     def load(self) -> None:
         if self.model is not None:
@@ -88,6 +101,7 @@ class QwenRuntime:
                                                  local_files_only=True)
                 if not getattr(model, "peft_config", None):
                     raise RuntimeError("PEFT adapter did not attach to the Qwen model")
+                self.adapter_fingerprint = file_tree_sha(self.adapter_path)
             model.eval()
             self.resolved_revision = getattr(model.config, "_commit_hash", None) or self.revision
             self.tokenizer, self.model = tokenizer, model

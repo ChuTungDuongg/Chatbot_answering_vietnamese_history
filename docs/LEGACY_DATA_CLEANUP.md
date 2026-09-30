@@ -1,13 +1,13 @@
 # Legacy data cleanup
 
-The V2 runtime has two vanilla Qwen models and loads no role adapters. These tracked files were removed from the active tree after checking that `app/`, `scripts/`, `evaluation/`, and `benchmarks/` do not import them. Git commit history can still recover every removed tracked file; history was not rewritten.
+At the time of this V2 cleanup, the runtime had two vanilla Qwen models and loaded no role adapters. Hybrid now also supports a separately configured PEFT adapter; the legacy role adapters listed here remain unused. These tracked files were removed from the active tree after checking that `app/`, `scripts/`, `evaluation/`, and `benchmarks/` did not import them. Git commit history can still recover every removed tracked file; history was not rewritten.
 
 | Removed path | Former purpose and architecture | Why removed |
 | --- | --- | --- |
 | `datasets/research_agent/history_trajectories.jsonl` | Research Agent trajectory SFT, former 3-LLM system | No active agent role training or runtime consumer. |
 | `datasets/evidence_agent/train.jsonl` | Evidence Agent / critic SFT, former 3-LLM system | No active critic adapter or consumer. |
 | `datasets/evidence_agent/train_v2.jsonl` | Revised Evidence Agent / critic SFT, former 3-LLM system | No active critic adapter or consumer. |
-| `datasets/history_answerer/train.jsonl` | History Answerer SFT, former 3-LLM system | Hybrid now uses vanilla Qwen3-4B. |
+| `datasets/history_answerer/train.jsonl` | History Answerer SFT, former 3-LLM system | Hybrid switched to Qwen3-4B; current Hybrid can optionally attach a separate PEFT adapter. |
 | `Dataset/merged_jsonl/all_messages.jsonl` | 1,000 RAG-SFT messages | Not the 58,603-chunk V0 runtime corpus; no current consumer. |
 | `Dataset/README.md` | Guide for the removed RAG-SFT export | Its active-looking instructions became misleading. |
 | `artifacts/reports/evidence_v23_validation.json` | Evidence Agent V2.3 validation | Describes an obsolete training run. |
