@@ -1,0 +1,26 @@
+{
+  "servers": {
+    "research": {
+      "label": "Research MCP",
+      "enabled": false,
+      "required": false,
+      "transport": "http",
+      "url_env": "RESEARCH_MCP_URL",
+      "headers_env": {"Authorization": "RESEARCH_MCP_AUTHORIZATION"},
+      "allowed_tools": ["lookup"],
+      "read_only_only": true,
+      "connect_timeout_seconds": 15,
+      "tool_timeout_seconds": 30,
+      "max_result_chars": 6000
+    },
+    "demo": {
+      "label": "Local demo",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "scripts.mcp_demo_server"],
+      "allowed_tools": ["lookup"],
+      "read_only_only": true
+    }
+  }
+}

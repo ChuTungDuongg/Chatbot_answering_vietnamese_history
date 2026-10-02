@@ -49,6 +49,9 @@ async function setup(page, { empty = false, insufficient = false, holdStream = f
     }
     return route.fulfill({ status: 404, json: { detail: "Unmocked test endpoint" } });
   });
+  await page.route("**/ready", (route) => route.fulfill({ json: {
+    ready: true, retrieval: { default_backend: "faiss", available_backends: ["faiss", "qdrant"] },
+  } }));
   await page.goto("/");
   await expect(page.locator(".sidebar-skeleton")).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
@@ -61,7 +64,7 @@ async function noOverflow(page) {
   expect(await page.locator(".thread-scroll").evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
 }
 
-test("empty state, composer keyboard behavior and unchanged streaming request", async ({ page }, info) => {
+test("empty state, composer keyboard behavior and backend-aware streaming request", async ({ page }, info) => {
   const state = await setup(page, { empty: true, holdStream: true });
   await expect(page.locator(".suggestion-grid button")).toHaveCount(4);
   await page.screenshot({ path: info.outputPath("empty-dark.png") });
@@ -91,7 +94,7 @@ test("empty state, composer keyboard behavior and unchanged streaming request", 
   await expect(page.getByText("Đang tìm và tổng hợp tư liệu...", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Dừng tạo câu trả lời" })).toBeVisible();
   await expect.poll(() => state.requests.length).toBe(1);
-  expect(state.requests[0]).toEqual({ conversation_id: "c1", question, mode: "central", final_k: 6, debug: true });
+  expect(state.requests[0]).toEqual({ conversation_id: "c1", question, mode: "central", retrieval_backend: "faiss", final_k: 6, debug: true });
   state.release();
   await expect(page.getByRole("heading", { name: "Nhiều yếu tố cùng tác động" })).toBeVisible();
   await expect(page.getByRole("button", { name: "2 nguồn", exact: true })).toBeVisible();

@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import BrandMark from "./BrandMark";
 import DeveloperTrace from "./DeveloperTrace";
+import RetrievalProgress from "./RetrievalProgress";
 import { CHAT_MODES } from "../config/chatModes";
 import { displayAnswer, indexedSources, remarkSourceCitations } from "../services/citations";
 import { progressLabel } from "../services/progressLabels";
@@ -57,6 +58,8 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
           {!isUser && modeLabel && <small>{modeLabel}</small>}
         </div>
 
+        {!isUser && <RetrievalProgress pipeline={message.pipeline} backend={message.retrieval_backend}
+          content={message.content} status={message.status} />}
         <div className={`message-content ${insufficient || validationFailed ? "insufficient-panel" : ""}`}>
           {insufficient && <div className="insufficient-title"><Info aria-hidden="true" /><strong>Chưa đủ tư liệu để trả lời chắc chắn.</strong></div>}
           {validationFailed && <div className="insufficient-title"><Info aria-hidden="true" /><strong>Câu trả lời chưa vượt qua kiểm tra.</strong></div>}
@@ -69,7 +72,7 @@ function ChatMessage({ message, isStreaming = false, onShowSources, enableDebugT
               <ReactMarkdown remarkPlugins={[remarkGfm, [remarkSourceCitations, { sources: message.sources }]]}
                 components={markdownComponents}>{content}</ReactMarkdown>
             </CitationContext.Provider>
-          ) : (
+          ) : message.pipeline?.length ? null : (
             <span className="thinking-state" role="status">
               <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
               {progressLabel(message.status)}

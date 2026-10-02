@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 
 vi.mock("../../src/services/api.js", () => ({
+  getRetrievalCapabilities: vi.fn(),
   listConversations: vi.fn(),
   getConversation: vi.fn(),
   createConversation: vi.fn(),
@@ -18,6 +19,7 @@ const { default: App } = await import("../../src/App.jsx");
 
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss", "qdrant"] });
   window.localStorage.clear();
   window.matchMedia = (query) => ({
     matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {},

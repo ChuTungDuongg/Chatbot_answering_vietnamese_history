@@ -5,6 +5,7 @@ function sourceLabel(source) {
   if (source.source_kind === "attachment") return "Tài liệu của bạn";
   if (source.source_kind === "wikipedia") return "Wikipedia";
   if (source.source_kind === "web") return "Nguồn web";
+  if (source.source_kind === "mcp") return "Nguồn MCP";
   return "Kho sử liệu";
 }
 

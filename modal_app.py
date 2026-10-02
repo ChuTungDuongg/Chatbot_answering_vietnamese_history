@@ -8,6 +8,7 @@ app = modal.App("vn-history-rag-api")
 repo_root = Path(__file__).resolve().parent
 adapter_path = "/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter"
 dense_backend = os.getenv("RETRIEVAL_DENSE_BACKEND", "faiss")
+available_backends = os.getenv("RETRIEVAL_AVAILABLE_BACKENDS", dense_backend)
 if dense_backend not in {"faiss", "qdrant"}:
     raise ValueError("RETRIEVAL_DENSE_BACKEND must be faiss or qdrant")
 qdrant_secret_name = os.getenv("MODAL_QDRANT_SECRET_NAME", "vn-history-qdrant").strip()
@@ -28,16 +29,20 @@ chat_data = modal.Volume.from_name(
 )
 
 web_search_secret_name = os.getenv("MODAL_WEB_SEARCH_SECRET_NAME", "").strip()
+mcp_enabled = os.getenv("MCP_ENABLED", "false").lower() == "true"
+mcp_secret_name = os.getenv("MODAL_MCP_SECRET_NAME", "").strip()
 runtime_secrets = (
     [modal.Secret.from_name(web_search_secret_name)]
     if web_search_secret_name
     else []
 )
-if dense_backend == "qdrant":
+if "qdrant" in [name.strip() for name in available_backends.split(",")]:
     if not qdrant_secret_name:
         raise ValueError("Qdrant requires MODAL_QDRANT_SECRET_NAME")
     runtime_secrets.append(modal.Secret.from_name(
         qdrant_secret_name, required_keys=["QDRANT_URL", "QDRANT_API_KEY", "QDRANT_COLLECTION"]))
+if mcp_enabled and mcp_secret_name:
+    runtime_secrets.append(modal.Secret.from_name(mcp_secret_name))
 
 image = modal.Image.from_dockerfile(
     str(repo_root / "Dockerfile"),
@@ -54,6 +59,7 @@ image = modal.Image.from_dockerfile(
         "INFERENCE_CONFIG_PATH": "/artifacts/corpus_v1/runtime/inference_config.json",
         "RUNTIME_MANIFEST_PATH": "/artifacts/corpus_v1/runtime/manifest.json",
         "RETRIEVAL_DENSE_BACKEND": dense_backend,
+        "RETRIEVAL_AVAILABLE_BACKENDS": available_backends,
         "HYBRID_MODEL_ID": "Qwen/Qwen3-4B-Instruct-2507",
         "CENTRAL_MODEL_ID": "Qwen/Qwen3-8B",
         "MODEL_VARIANT": os.getenv("MODEL_VARIANT", "vanilla"),
@@ -70,6 +76,10 @@ image = modal.Image.from_dockerfile(
         "CENTRAL_ENABLE_DOCUMENTS": "true",
         "CENTRAL_ENABLE_WIKIPEDIA": "true",
         "CENTRAL_ENABLE_WEB": "false",
+        "MCP_ENABLED": str(mcp_enabled).lower(),
+        "MCP_CONFIG_PATH": "/etc/vn-history/mcp_servers.json",
+        "MCP_MAX_TOOLS_PER_REQUEST": os.getenv("MCP_MAX_TOOLS_PER_REQUEST", "8"),
+        "MCP_SCHEMA_BUDGET_BYTES": os.getenv("MCP_SCHEMA_BUDGET_BYTES", "16384"),
         "WEB_SEARCH_PROVIDER": os.getenv("WEB_SEARCH_PROVIDER", "local-only"),
         "DEFAULT_INFERENCE_MODE": "hybrid",
         "CHAT_DATABASE_PATH": "/data/chat.sqlite3",
@@ -80,6 +90,15 @@ image = modal.Image.from_dockerfile(
         "CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
     }
 )
+
+
+if mcp_enabled:
+    mcp_config_path = Path(os.getenv("MCP_CONFIG_PATH", "config/mcp_servers.local.json"))
+    if not mcp_config_path.is_absolute():
+        mcp_config_path = repo_root / mcp_config_path
+    if not mcp_config_path.is_file():
+        raise ValueError("MCP_ENABLED=true requires an existing MCP_CONFIG_PATH")
+    image = image.add_local_file(str(mcp_config_path), "/etc/vn-history/mcp_servers.json", copy=True)
 
 
 @app.function(
@@ -112,6 +131,7 @@ def fastapi_app():
     volumes={"/artifacts": artifacts, "/hf-cache": hf_cache},
     secrets=runtime_secrets,
 )
+
 def runtime_smoke(generate: bool = False, central: bool = False,
                   question: str = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?") -> str:
     """Exercise real V1 retrieval and optionally Hybrid/Central generation once."""

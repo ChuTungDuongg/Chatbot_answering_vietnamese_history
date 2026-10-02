@@ -5,6 +5,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.chat_modes import ChatMode, normalize_chat_mode
+from app.rag.backends import RetrievalBackend
+from app.mcp.schemas import ToolSteering
 
 
 MessageRole = Literal["user", "assistant"]
@@ -44,6 +46,7 @@ class ReadyResponse(BaseModel):
 # ============================================================
 
 class RetrieveRequest(BaseModel):
+    retrieval_backend: RetrievalBackend | None = None
     question: str = Field(
         ...,
         min_length=2,
@@ -83,6 +86,7 @@ class RetrievalContextItem(BaseModel):
         "attachment",
         "wikipedia",
         "web",
+        "mcp",
     ] = "history"
 
     attachment_id: UUID | None = None
@@ -105,6 +109,8 @@ class RetrievalContextItem(BaseModel):
 
 
 class RetrieveResponse(BaseModel):
+    retrieval_backend: RetrievalBackend = "faiss"
+    timings_ms: dict[str, float] = Field(default_factory=dict)
     question: str
     is_ood: bool
     ood_reason: str = ""
@@ -148,6 +154,7 @@ class SourceItem(BaseModel):
         "attachment",
         "wikipedia",
         "web",
+        "mcp",
     ] = "history"
 
     attachment_id: UUID | None = None
@@ -256,6 +263,8 @@ class ConversationDetailResponse(BaseModel):
 # ============================================================
 
 class ChatRequest(BaseModel):
+    steering: ToolSteering | None = None
+    retrieval_backend: RetrievalBackend | None = None
     conversation_id: UUID
 
     question: str = Field(
@@ -288,6 +297,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    retrieval_backend: RetrievalBackend = "faiss"
     conversation_id: UUID
     message_id: UUID
 

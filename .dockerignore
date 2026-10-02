@@ -23,6 +23,7 @@ __pycache__/
 
 # Environment / secrets
 .env
+/config/mcp_servers.local.json
 .env.*
 !.env.example
 

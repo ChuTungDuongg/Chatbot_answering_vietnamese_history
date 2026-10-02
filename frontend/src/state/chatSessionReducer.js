@@ -5,13 +5,27 @@ import {
 import { getLatestSources } from "./normalizers.js";
 
 export const ACTIVE_STATUSES = new Set([
+  "request_preparation", "query_analysis", "embedding", "dense_search", "bm25_search", "fusion", "rerank", "context_selection", "prompt_preparation", "tool_selection", "attachment_search", "generation",
   "processing", "retrieval_started", "reranking", "generating", "validating", "validated", "streaming",
   "hybrid_retrieval", "hybrid_answering",
   "central_loading", "central_analyzing", "central_tools", "central_answering",
 ]);
 
 export function isRunningStatus(status) {
-  return ACTIVE_STATUSES.has(status);
+  return ACTIVE_STATUSES.has(status) || status?.startsWith("tool:");
+}
+
+function updatePipeline(pipeline = [], event) {
+  if (!event?.stage || !event?.state) return pipeline;
+  const entry = { stage: event.stage, state: event.state, label: event.message,
+    latencyMs: event.latency_ms, requestId: event.request_id,
+    provider: event.provider, server: event.server, tool: event.tool };
+  const index = pipeline.findIndex((item) => item.stage === event.stage);
+  return index < 0 ? [...pipeline, entry] : pipeline.map((item, i) => i === index ? entry : item);
+}
+
+function finishPipeline(pipeline = [], state) {
+  return pipeline.map((item) => item.state === "started" ? { ...item, state } : item);
 }
 
 export const initialChatSessionState = {
@@ -145,7 +159,10 @@ export function chatSessionReducer(state, action) {
     case "STREAM_STATUS":
       return {
         ...state,
-        messages: patchMessage(state, action.messageId, { status: action.status, mode: action.mode }),
+        messages: patchMessage(state, action.messageId, (message) => ({ ...message,
+          status: action.status, mode: action.mode,
+          retrieval_backend: action.progress?.retrieval_backend ?? message.retrieval_backend,
+          pipeline: updatePipeline(message.pipeline, action.progress) })),
         status: action.status,
       };
 
@@ -180,6 +197,7 @@ export function chatSessionReducer(state, action) {
           ...message,
           content: message.content || ANSWER_FAILURE_MESSAGE,
           status: "error",
+          pipeline: finishPipeline(message.pipeline, "failed"),
           debug_trace: action.trace ?? message.debug_trace,
         })),
         status: "error",
@@ -190,7 +208,10 @@ export function chatSessionReducer(state, action) {
 
     case "STREAM_DONE": {
       const status = state.streamFailed ? "error" : "done";
-      return { ...state, messages: patchMessage(state, action.messageId, { status }), status };
+      return { ...state, messages: patchMessage(state, action.messageId, (message) => ({ ...message, status,
+        server_id: action.metadata?.message_id ?? message.server_id,
+        retrieval_backend: action.metadata?.retrieval_backend ?? message.retrieval_backend,
+        pipeline: finishPipeline(message.pipeline, state.streamFailed ? "failed" : "completed") })), status };
     }
 
     case "STREAM_ABORTED":
@@ -200,6 +221,7 @@ export function chatSessionReducer(state, action) {
           ...message,
           content: message.content || ANSWER_STOPPED_MESSAGE,
           status: "cancelled",
+          pipeline: finishPipeline(message.pipeline, "cancelled"),
         })),
         status: "cancelled",
       };
@@ -208,7 +230,10 @@ export function chatSessionReducer(state, action) {
       return {
         ...state,
         conversations: action.conversations,
-        messages: action.detail.messages,
+        messages: action.detail.messages.map((message) => {
+          const local = state.messages.find((item) => item.server_id && item.server_id === message.id);
+          return local ? { ...message, pipeline: local.pipeline, retrieval_backend: local.retrieval_backend } : message;
+        }),
         attachments: preservePreviews(state.attachments, action.detail.attachments),
         sources: getLatestSources(action.detail.messages),
       };

@@ -17,6 +17,8 @@ from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.chat_modes import ChatMode, normalize_chat_mode
 from app.config import settings
 from app.models.base import ModelDelta, ModelDone
+from app.rag.backends import DenseBackendError
+from app.tools.policy import ToolPolicyError
 from app.services.metadata import build_baseline_metadata
 from app.schemas import (ChatRequest, ChatResponse, RetrieveRequest, RetrieveResponse,
                          RetrievalContextItem, SourceItem)
@@ -33,7 +35,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 def _source_kind(chunk: dict[str, Any]) -> str:
     value = str(chunk.get("source_kind") or "history")
-    if value in {"history", "attachment", "wikipedia", "web"}:
+    if value in {"history", "attachment", "wikipedia", "web", "mcp"}:
         return value
     return "attachment" if str(chunk.get("chunk_id") or "").startswith("temp:") else "history"
 
@@ -100,10 +102,17 @@ def _debug_trace(mode: ChatMode, trace: RequestTrace, prepared: Any,
             "reranker_rank", "final_rank", "best_dense_score", "best_bm25_score",
             "rrf_score", "reranker_score", "final_retrieval_score")})
     return {"schema_version": 1, "mode": mode.value,
-            "request": {"request_id": trace.request_id},
+            "request": {"request_id": trace.request_id, "mode": mode.value,
+                        "retrieval_backend": prepared.retrieval.get("retrieval_backend"),
+                        **({"steering": prepared.retrieval["steering"]} if "steering" in prepared.retrieval else {})},
             "retrieval": {"query_variants": prepared.retrieval.get("query_variants") or [],
+                          "backend": prepared.retrieval.get("retrieval_backend"),
+                          "timings_ms": prepared.retrieval.get("timings_ms", {}),
+                          **({"history_retrieval_executed": prepared.retrieval["history_retrieval_executed"]}
+                             if "history_retrieval_executed" in prepared.retrieval else {}),
                           "final_context": diagnostics},
             "tool_trace": prepared.tool_calls,
+            **({"mcp": prepared.retrieval["mcp"]} if prepared.retrieval.get("mcp") else {}),
             "generation": {"model_id": model.model_id,
                            "model_revision": getattr(model, "resolved_revision", None),
                            "settings": model.generation_settings},
@@ -142,6 +151,11 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
     if completed:
         metrics.update(completed.metrics)
     if prepared:
+        mcp_metrics = prepared.retrieval.get("mcp", [])
+        if mcp_metrics:
+            metrics["mcp_tool_ms"] = sum(item["mcp_tool_ms"] for item in mcp_metrics)
+            metrics["mcp_calls"] = len(mcp_metrics)
+        metrics.update({f"{name}_ms": value for name, value in prepared.retrieval.get("timings_ms", {}).items()})
         metrics["model_calls"] = prepared.model_calls_before_final + (1 if completed else 0)
         metrics["tool_calls"] = len(prepared.tool_calls)
         metrics["tool_call_types"] = [item["name"] for item in prepared.tool_calls]
@@ -169,6 +183,33 @@ def _runtime(request: Request, mode: ChatMode):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _resolve_backend(request: Request, selected: str | None):
+    service = getattr(request.app.state, "rag_service", None)
+    backend = selected or getattr(service, "default_dense_backend", settings.retrieval_dense_backend)
+    if service is not None and callable(getattr(service, "get_dense_retriever", None)):
+        try:
+            service.get_dense_retriever(backend)
+        except DenseBackendError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+    return backend
+
+
+def _resolve_tools(runtime, payload, mode):
+    if mode != ChatMode.CENTRAL:
+        if payload.steering is not None:
+            raise HTTPException(status_code=422, detail="Tool steering chỉ hỗ trợ Central Agent.")
+        return None
+    resolver = getattr(runtime, "resolve_tools", None)
+    if not callable(resolver):
+        if payload.steering is not None:
+            raise HTTPException(status_code=503, detail="Runtime chưa hỗ trợ tool steering.")
+        return None
+    try:
+        return resolver(payload.steering, payload.question)
+    except ToolPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 async def _watch_disconnect(request: Request, cancel: threading.Event) -> None:
     while not cancel.is_set():
         if await request.is_disconnected():
@@ -179,18 +220,43 @@ async def _watch_disconnect(request: Request, cancel: threading.Event) -> None:
 
 async def _execute(payload: ChatRequest, request: Request, owner_id: str, store: Any,
                    runtime: Any, mode: ChatMode, trace: RequestTrace,
-                   *, watch_disconnect: bool) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+                   *, watch_disconnect: bool, tool_view=None) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     cancel = threading.Event()
     monitor = asyncio.create_task(_watch_disconnect(request, cancel)) if watch_disconnect else None
     prepared = None
     completed: ModelDone | None = None
     delta_times: list[int] = []
     answer_parts: list[str] = []
+    backend = _resolve_backend(request, payload.retrieval_backend)
+    prepare_task = None
+    progress_waiter = None
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    current_stage = "request_preparation"
+    completed_detail_stages: set[str] = set()
+    seen_detail_stages: set[str] = set()
+    detail_stages = {"query_analysis", "embedding", "dense_search", "bm25_search", "fusion", "rerank", "context_selection"}
+
+    def progress(event):
+        if cancel.is_set():
+            raise RuntimeError("Request cancelled")
+        # Later Central searches retain tool events and aggregate metrics,
+        # while detailed retrieval events are coalesced after the first pass.
+        stage = event["stage"]
+        if mode == ChatMode.CENTRAL and stage in completed_detail_stages and event["state"] != "failed":
+            return
+        if stage in detail_stages:
+            seen_detail_stages.add(stage)
+        if stage == "tool:search_history" and event["state"] == "completed":
+            completed_detail_stages.update(seen_detail_stages)
+        loop.call_soon_threadsafe(queue.put_nowait, {**event, "request_id": trace.request_id,
+                                                   "retrieval_backend": backend, "mode": mode.value})
     token = set_request_telemetry(trace)
     try:
         trace.mark("first_status_event")
-        yield "status", {"stage": "retrieval", "message": "Đang tìm tư liệu...", "mode": mode.value,
-                         "request_id": trace.request_id}
+        yield "status", {"stage": "request_preparation", "state": "started",
+                         "message": "Phân tích câu hỏi...", "mode": mode.value,
+                         "retrieval_backend": backend, "request_id": trace.request_id}
         requested_ids = tuple(str(value) for value in payload.attachment_ids)
         if requested_ids:
             ready = {str(item["id"]): item for item in await asyncio.to_thread(
@@ -207,13 +273,35 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                               for value in requested_ids]
         user_message = await asyncio.to_thread(store.add_message, owner_id, payload.conversation_id,
                                                 "user", payload.question, attachment_sources)
-        prepared = await runtime.prepare(question, payload.final_k, history,
+        yield "status", {"stage": "request_preparation", "state": "completed", "message": "Đã nhận câu hỏi",
+                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
+        prepare_task = asyncio.create_task(runtime.prepare(question, payload.final_k, history,
                                          owner_id=owner_id, conversation_id=str(payload.conversation_id),
-                                         attachment_ids=requested_ids, trace=trace, cancel=cancel)
+                                         attachment_ids=requested_ids, trace=trace, cancel=cancel,
+                                         retrieval_backend=backend, progress=progress,
+                                         **({"tool_view": tool_view} if tool_view is not None else {})))
+        # Wait for execution events or prepare completion, without polling or blocking.
+        while not prepare_task.done():
+            progress_waiter = asyncio.create_task(queue.get())
+            await asyncio.wait({prepare_task, progress_waiter}, return_when=asyncio.FIRST_COMPLETED)
+            if progress_waiter.done():
+                event = progress_waiter.result()
+                current_stage = event["stage"]
+                yield "status", event
+            else:
+                progress_waiter.cancel()
+                await asyncio.gather(progress_waiter, return_exceptions=True)
+            progress_waiter = None
+        while not queue.empty():
+            event = queue.get_nowait()
+            current_stage = event["stage"]
+            yield "status", event
+        prepared = prepare_task.result()
         if cancel.is_set():
             return
-        yield "status", {"stage": "generation", "message": "Đang tạo câu trả lời...",
-                         "mode": mode.value}
+        current_stage = "generation"
+        yield "status", {"stage": "generation", "state": "started", "message": "Tạo câu trả lời...",
+                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
         async for item in runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel):
@@ -235,6 +323,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if completed.first_token_ns is not None:
             trace.mark("first_model_token", completed.first_token_ns)
         trace.mark("generation_finished", completed.finished_ns)
+        yield "status", {"stage": "generation", "state": "completed", "message": "Đã tạo câu trả lời",
+                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id,
+                         "latency_ms": completed.metrics.get("generation_ms")}
         answer = "".join(answer_parts)
         if not answer.strip():
             raise RuntimeError("Model returned an empty answer")
@@ -255,6 +346,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         done = {"request_id": trace.request_id, "conversation_id": str(payload.conversation_id),
                 "message_id": str(assistant_message["id"]), "user_message_id": str(user_message["id"]),
                 "answer": answer, "status": "done", "mode": mode.value,
+                "retrieval_backend": backend,
                 "latency_ms": metrics["e2e_ms"], "model_id": runtime.model.model_id,
                 "model_revision": completed.model_revision,
                 "model_variant": getattr(runtime.model, "model_variant", None),
@@ -274,17 +366,27 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         cancel.set()
         raise
     except Exception as exc:
-        logger.exception("Chat request failed", extra={"request_id": trace.request_id})
+        if cancel.is_set():
+            return
+        logger.error("Chat request failed: type=%s", type(exc).__name__, extra={"request_id": trace.request_id})
         trace.mark("request_finished")
         metrics = _model_metrics(completed, trace, prepared, delta_times)
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=getattr(runtime.model, "resolved_revision", None), error=type(exc).__name__)
-        yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id}
+        yield "status", {"stage": current_stage, "state": "failed", "message": "Không thể hoàn tất bước này",
+                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
+        yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id,
+                        "retrieval_backend": backend}
         yield "done", {"request_id": trace.request_id, "status": "error", "mode": mode.value,
                        "model_id": runtime.model.model_id, "model_revision": getattr(runtime.model, "resolved_revision", None),
+                       "retrieval_backend": backend,
                        "metrics": metrics, "latency_ms": metrics["e2e_ms"]}
     finally:
         cancel.set()
+        for task in (prepare_task, progress_waiter):
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         if monitor:
             monitor.cancel()
             try:
@@ -303,8 +405,13 @@ async def retrieve(payload: RetrieveRequest, request: Request) -> RetrieveRespon
     import time
 
     started = time.perf_counter_ns()
-    result = await asyncio.to_thread(retriever.retrieve, payload.question, payload.final_k)
+    backend = _resolve_backend(request, payload.retrieval_backend)
+    try:
+        result = await asyncio.to_thread(retriever.retrieve, payload.question, payload.final_k, dense_backend=backend)
+    except DenseBackendError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
     return RetrieveResponse(
+        retrieval_backend=result.get("retrieval_backend", backend), timings_ms=result.get("timings_ms", {}),
         question=result["question"], is_ood=result.get("is_ood", False),
         ood_reason=result.get("ood_reason", ""), intent=result.get("intent"),
         analysis=result.get("analysis"), query_variants=result.get("query_variants", []),
@@ -327,6 +434,8 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
                store: StoreDependency) -> ChatResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
     runtime = _runtime(request, mode)
+    _resolve_backend(request, payload.retrieval_backend)
+    view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)
     trace = RequestTrace(str(uuid.uuid4()), mode.value)
     result = None
@@ -334,7 +443,7 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
     sources: list[dict[str, Any]] = []
     debug_trace = None
     async for event, data in _execute(payload, request, owner_id, store, runtime, mode, trace,
-                                      watch_disconnect=False):
+                                      watch_disconnect=False, tool_view=view):
         if event == "error":
             failure = data
         elif event == "sources":
@@ -344,9 +453,11 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
         elif event == "done":
             result = data
     if failure or not result or result["status"] != "done":
-        raise HTTPException(status_code=500, detail=(failure or {}).get("message", "Generation failed"))
+        raise HTTPException(status_code=503 if failure and failure.get("type") in {"QdrantSearchError", "DenseBackendError", "DenseBackendUnavailable", "MCPToolError"} else 500,
+                            detail=(failure or {}).get("message", "Generation failed"))
     return ChatResponse(conversation_id=payload.conversation_id, message_id=result["message_id"],
                         answer=result["answer"], status="done", mode=mode,
+                        retrieval_backend=result["retrieval_backend"],
                         sources=[SourceItem.model_validate(item) for item in sources],
                         latency_ms=result["latency_ms"], debug=debug_trace)
 
@@ -356,12 +467,14 @@ async def chat_stream(payload: ChatRequest, request: Request, owner_id: OwnerId,
                       store: StoreDependency) -> StreamingResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
     runtime = _runtime(request, mode)
+    _resolve_backend(request, payload.retrieval_backend)
+    view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)
     trace = RequestTrace(str(uuid.uuid4()), mode.value)
 
     async def events() -> AsyncIterator[str]:
         async for event, data in _execute(payload, request, owner_id, store, runtime, mode, trace,
-                                          watch_disconnect=True):
+                                          watch_disconnect=True, tool_view=view):
             if event == "done":
                 data = {key: value for key, value in data.items() if key != "answer"}
             yield _sse(event, data)

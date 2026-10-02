@@ -10,13 +10,15 @@ vi.mock("../../src/services/api.js", () => ({
 const api = await import("../../src/services/api.js");
 const { useChatStream } = await import("../../src/hooks/useChatStream.js");
 
-function setup({ isRunning = false, mode = "central" } = {}) {
+function setup({ isRunning = false, mode = "central", retrievalBackend = "faiss", steering } = {}) {
   const dispatch = vi.fn();
   const ensureActiveConversation = vi.fn().mockResolvedValue("c1");
   const { result } = renderHook(() => useChatStream({
     dispatch,
     isRunning,
     mode,
+    retrievalBackend,
+    steering,
     showDebugTrace: false,
     ensureActiveConversation,
   }));
@@ -44,8 +46,30 @@ test.each(["hybrid", "central"])("gửi đúng chế độ %s tới API streamin
     question: "Chiến thắng Bạch Đằng?",
     mode,
     finalK: 6,
+    retrievalBackend: "faiss",
   });
   expect(api.streamChat.mock.calls[0][0]).not.toHaveProperty("responseMode");
+});
+
+test("Central forwards request steering snapshot and abort stops MCP progress updates", async () => {
+  const steering = { mcp_enabled: true, allowed_mcp_servers: ["research"], allowed_tools: ["search_history", "mcp__research__lookup"] };
+  let emit, finish, signal;
+  api.streamChat.mockImplementation(({ onEvent, signal: requestSignal }) => {
+    emit = onEvent; signal = requestSignal;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  const { result, dispatch } = setup({ steering });
+  let submission;
+  await act(async () => { submission = result.current.submit("History?"); });
+  expect(api.streamChat.mock.calls[0][0].steering).toEqual(steering);
+  act(() => emit({ event: "status", data: { stage: "tool:mcp__research__lookup", state: "started", provider: "mcp" } }));
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "STREAM_STATUS", progress: expect.objectContaining({ provider: "mcp" }) }));
+  act(() => result.current.stop());
+  expect(signal.aborted).toBe(true);
+  const count = dispatch.mock.calls.length;
+  act(() => emit({ event: "status", data: { stage: "tool:mcp__research__lookup", state: "completed" } }));
+  expect(dispatch.mock.calls.length).toBe(count);
+  await act(async () => { finish(); await submission; });
 });
 
 test("bỏ qua câu hỏi rỗng và khi đang chạy", async () => {

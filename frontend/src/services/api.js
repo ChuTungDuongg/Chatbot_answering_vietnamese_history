@@ -141,11 +141,19 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
   });
 }
 
+export async function getRetrievalCapabilities(options = {}) {
+  const ready = await requestJson("/ready", options);
+  return { ...(ready.retrieval ?? { available_backends: [] }),
+    mcp: ready.mcp ?? { enabled: false, servers: [] }, tools: ready.tools ?? [], tool_policy: ready.tool_policy ?? {} };
+}
+
 export async function streamChat({
   conversationId,
   question,
   attachmentIds = [],
   mode = ChatMode.HYBRID,
+  retrievalBackend,
+  steering,
   finalK = 6,
   debug = false,
   onEvent,
@@ -168,6 +176,8 @@ export async function streamChat({
       question: normalizedQuestion,
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       mode,
+      ...(retrievalBackend ? { retrieval_backend: retrievalBackend } : {}),
+      ...(mode === ChatMode.CENTRAL && steering ? { steering } : {}),
       final_k: finalK,
       debug,
     }),

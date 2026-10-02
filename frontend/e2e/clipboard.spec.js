@@ -41,6 +41,9 @@ async function setup(page, { holdUpload = false, failUpload = false, empty = fal
     }
     return route.fulfill({ status: 404, json: { detail: "Unmocked local test endpoint" } });
   });
+  await page.route("**/ready", (route) => route.fulfill({ json: {
+    ready: true, retrieval: { default_backend: "faiss", available_backends: ["faiss", "qdrant"] },
+  } }));
   await page.goto("/");
   await expect(page.locator(".sidebar-skeleton")).toHaveCount(0);
   return state;

@@ -112,6 +112,7 @@ def build_baseline_metadata(mode: str, app: Any) -> dict[str, Any]:
     generation = {**generation, "max_new_tokens": settings.hybrid_max_new_tokens
                   if mode == "hybrid" else settings.central_final_max_new_tokens}
     retrieval = retriever.retrieval_config if retriever is not None else None
+    service = getattr(app.state, "rag_service", None)
     return {"schema_version": 1, "git_commit": _git_commit(), "mode": mode,
             "model_variant": getattr(model, "model_variant", settings.model_variant if mode == "hybrid" else "vanilla"),
             "adapter_attached": getattr(model, "adapter_attached", False),
@@ -127,5 +128,6 @@ def build_baseline_metadata(mode: str, app: Any) -> dict[str, Any]:
             "corpus_hash": _hash_file(settings.corpus_path),
             "retrieval_index_hash": _hash_index([settings.faiss_path, settings.bm25_path]),
             "generation_settings": generation, "retrieval_settings": retrieval,
+            "retrieval_backends": (service.readiness().get("retrieval") if service else None),
             "server_hardware": _hardware(),
             "server_environment": {"app_mode": settings.app_mode, "app_env": settings.app_env}}

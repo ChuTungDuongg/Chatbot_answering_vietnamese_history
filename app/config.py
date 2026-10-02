@@ -25,10 +25,12 @@ class Settings(BaseSettings):
     inference_config_path_override: Path | None = Field(default=None, validation_alias="INFERENCE_CONFIG_PATH")
     runtime_manifest_path: Path | None = None
     retrieval_dense_backend: Literal["faiss", "qdrant"] = "faiss"
+    retrieval_available_backends: str | None = None
     qdrant_url: str | None = None
     qdrant_api_key: SecretStr | None = None
     qdrant_collection: str = "vn_history_v1_e5"
     qdrant_hnsw_ef: int | None = Field(default=None, ge=1)
+    qdrant_timeout_seconds: float = Field(default=30.0, ge=1, le=300)
     device: Literal["cpu", "cuda"] = "cpu"
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
     hybrid_model_id: str = HYBRID_MODEL_ID
@@ -54,6 +56,10 @@ class Settings(BaseSettings):
     central_enable_documents: bool = True
     central_enable_wikipedia: bool = True
     central_enable_web: bool = False
+    mcp_enabled: bool = False
+    mcp_config_path: Path = REPO_ROOT / "config" / "mcp_servers.local.json"
+    mcp_max_tools_per_request: int = Field(default=8, ge=1, le=32)
+    mcp_schema_budget_bytes: int = Field(default=16384, ge=1024, le=65536)
     web_search_provider: str = "local-only"
     web_search_api_key: str | None = None
     chat_database_path: Path = REPO_ROOT / "data" / "chat.sqlite3"
@@ -110,6 +116,20 @@ class Settings(BaseSettings):
         if self.model_variant == "sft" and self.model_adapter_path is None:
             raise ValueError("MODEL_VARIANT=sft requires MODEL_ADAPTER_PATH")
         return self
+
+    @model_validator(mode="after")
+    def validate_dense_backends(self):
+        if any(name not in {"faiss", "qdrant"} for name in self.requested_dense_backends):
+            raise ValueError("RETRIEVAL_AVAILABLE_BACKENDS must contain only faiss,qdrant")
+        if self.retrieval_dense_backend not in self.requested_dense_backends:
+            raise ValueError("RETRIEVAL_AVAILABLE_BACKENDS must include the default backend")
+        return self
+
+    @property
+    def requested_dense_backends(self) -> tuple[str, ...]:
+        if self.retrieval_available_backends is None:
+            return (self.retrieval_dense_backend,)
+        return tuple(dict.fromkeys(name.strip() for name in self.retrieval_available_backends.split(",") if name.strip()))
 
     @property
     def cors_origins(self) -> list[str]:

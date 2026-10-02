@@ -10,7 +10,7 @@ import { getSources, normalizeConversationDetail, normalizeConversationList } fr
 import { getConversation, listConversations, streamChat } from "../services/api.js";
 
 export function useChatStream({ dispatch, activeConversationId, isRunning, isUploading,
-  attachments = [], mode, showDebugTrace, ensureActiveConversation }) {
+  attachments = [], mode, retrievalBackend, steering, showDebugTrace, ensureActiveConversation }) {
   const requestRef = useRef(null);
 
   const stop = useCallback(() => {
@@ -85,6 +85,8 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
           content: "",
           sources: [],
           status: "processing",
+          retrieval_backend: retrievalBackend,
+          pipeline: [],
           created_at: createdAt,
         },
       ],
@@ -98,6 +100,8 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
         question: trimmedQuestion,
         attachmentIds: readyAttachments.map((item) => item.id),
         mode,
+        retrievalBackend,
+        ...(mode === "central" && steering ? { steering } : {}),
         finalK: 6,
         debug: showDebugTrace,
         signal: controller.signal,
@@ -109,6 +113,7 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
               messageId: assistantMessageId,
               status: typeof data === "string" ? data : data?.stage ?? "processing",
               mode: data?.mode ?? mode,
+              progress: typeof data === "object" ? data : null,
             });
             return;
           }
@@ -148,7 +153,7 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
           }
 
           if (eventName === "done") {
-            sendAction({ type: "STREAM_DONE", messageId: assistantMessageId });
+            sendAction({ type: "STREAM_DONE", messageId: assistantMessageId, metadata: data });
           }
         },
       });

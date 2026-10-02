@@ -7,6 +7,7 @@ from typing import Any
 from app.rag.prompting import build_messages
 from app.rag.schemas import PreparedAnswer
 from app.rag.retriever import Retriever
+from app.rag.progress import StageProgress, ProgressCallback
 
 
 class HybridRuntime:
@@ -22,23 +23,29 @@ class HybridRuntime:
                       *, trace: Any = None, owner_id: str | None = None,
                       conversation_id: str | None = None,
                       attachment_ids: tuple[str, ...] = (),
+                      retrieval_backend: str | None = None, progress: ProgressCallback | None = None,
                       **_: Any) -> PreparedAnswer:
         if trace:
             trace.mark("retrieval_started")
         retrieval_started = time.perf_counter_ns()
-        retrieval = await asyncio.to_thread(self.retriever.retrieve, question, top_k)
+        options = {**({"dense_backend": retrieval_backend} if retrieval_backend else {}),
+                   **({"progress": progress} if progress else {})}
+        retrieval = await asyncio.to_thread(self.retriever.retrieve, question, top_k, **options)
+        stages = StageProgress(progress, retrieval.get("retrieval_backend", retrieval_backend))
         contexts = list(retrieval.get("final_context") or [])
         if attachment_ids and self.attachment_retriever is not None:
-            attached = await asyncio.to_thread(
-                self.attachment_retriever.retrieve, owner_id, conversation_id,
-                question, top_k, attachment_ids,
-            )
+            with stages.track("attachment_search"):
+                attached = await asyncio.to_thread(
+                    self.attachment_retriever.retrieve, owner_id, conversation_id,
+                    question, top_k, attachment_ids,
+                )
             contexts.extend({**chunk, "source_kind": "attachment"} for chunk in attached)
         retrieval_ms = (time.perf_counter_ns() - retrieval_started) / 1e6
         if trace:
             trace.mark("retrieval_finished")
         prompt_started = time.perf_counter_ns()
-        messages = build_messages(question, contexts, history)
+        with stages.track("prompt_preparation"):
+            messages = build_messages(question, contexts, history)
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")

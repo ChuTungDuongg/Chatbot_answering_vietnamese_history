@@ -18,6 +18,8 @@
 .stop-button svg { width: 13px; height: 13px; }
 .composer-disclaimer { margin: 11px 0 0; color: var(--text-muted); font-size: 10px; text-align: center; line-height: 1.6; }
 .composer-mode-selector { position: relative; }
+.retrieval-backend-selector .composer-mode-menu { width: 210px; }
+.retrieval-backend-selector button:disabled { opacity: .45; cursor: not-allowed; }
 .composer-mode-trigger { display: flex; align-items: center; gap: 9px; height: 32px; padding: 6px 9px; border: 1px solid var(--border-subtle); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 11px; }
 .composer-mode-trigger svg { width: 12px; height: 12px; }
 .composer-mode-trigger:hover, .composer-mode-trigger[aria-expanded="true"] { background: var(--surface-hover); }
@@ -45,6 +47,8 @@
 .attachment-remove svg { width: 13px; height: 13px; }
 @media (max-width: 540px) {
   .composer-leading-actions { gap: 5px; }
+  .composer-toolbar { gap: 5px; }
+  .composer-mode-trigger { padding-inline: 6px; gap: 4px; }
   .composer-shell { padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
   .chat-composer { padding: 13px 12px 10px; border-radius: var(--radius-lg); }
   .chat-composer textarea { font-size: 16px; min-height: 52px; }
@@ -65,4 +69,22 @@
   font-size: 0.85em;
   overflow-wrap: anywhere;
   opacity: 0.85;
+}
+
+.tool-steering { position: relative; }
+.tool-steering-panel {
+  position: absolute; bottom: calc(100% + 12px); right: -44px;
+  width: min(290px, calc(100vw - 36px)); max-height: min(430px, 55vh); overflow-y: auto;
+  padding: 14px; display: grid; gap: 9px; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); background: var(--surface); color: var(--text-primary); z-index: 30;
+  box-shadow: 0 8px 24px #0002; font-size: 13px;
+}
+.tool-steering-panel label { display: flex; align-items: center; gap: 7px; min-height: 30px; }
+.tool-steering-panel input { accent-color: var(--accent); }
+.tool-steering-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.tool-steering-panel .mcp-tool-option { margin-left: 22px; }
+.tool-steering-panel small { color: var(--text-muted); font-size: 11px; }
+.tool-steering-panel p[role="alert"] { color: var(--danger); }
+@media (max-width: 540px) {
+  .tool-steering-panel { right: -64px; }
 }

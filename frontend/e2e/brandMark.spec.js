@@ -2,6 +2,9 @@ import { test, expect } from "@playwright/test";
 
 test("blossom remains clear at 16–40px in dark and light themes", async ({ page }, info) => {
   await page.route("**/api/v1/**", (route) => route.fulfill({ json: [] }));
+  await page.route("**/ready", (route) => route.fulfill({ json: {
+    ready: true, retrieval: { default_backend: "faiss", available_backends: ["faiss", "qdrant"] },
+  } }));
   await page.goto("/");
   const welcome = page.locator(".welcome-identity .brand-mark");
   await expect(welcome).toBeVisible();

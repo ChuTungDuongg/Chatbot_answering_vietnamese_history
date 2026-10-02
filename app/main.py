@@ -13,6 +13,8 @@ from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
 from app.models.qwen import QwenRuntime
+from app.mcp.manager import MCPManager
+from app.tools.policy import builtin_capabilities
 from app.rag.hybrid_runtime import HybridRuntime
 from app.rag.retrieval import HybridRetriever
 from app.services.chat_mode_router import ChatModeRouter
@@ -39,6 +41,8 @@ async def lifespan(app: FastAPI):
     app.state.hybrid_runtime = None
     app.state.central_runtime = None
     app.state.chat_mode_router = None
+    manager = MCPManager()
+    app.state.mcp_manager = manager
     try:
         service.load()
         if settings.should_load_retrieval:
@@ -52,6 +56,10 @@ async def lifespan(app: FastAPI):
         if settings.should_load_model:
             if app.state.retriever is None:
                 raise RuntimeError("Full mode requires retrieval artifacts")
+            if settings.enable_central_mode:
+                manager = MCPManager.from_settings(settings)
+                app.state.mcp_manager = manager
+                await manager.start()
             common = dict(device=settings.device, dtype=settings.dtype,
                           cache_dir=str(settings.model_cache_dir) if settings.model_cache_dir else None,
                           local_files_only=settings.model_local_files_only,
@@ -83,9 +91,12 @@ async def lifespan(app: FastAPI):
                     registry.register(SearchWebTool(build_web_search_provider(
                         settings.web_search_provider, settings.web_search_api_key)))
                     registry.register(FetchPageTool())
+                manager.register(registry)
                 central = CentralRuntime(model=central_model, tools=registry,
                                          max_action_rounds=settings.central_max_action_rounds,
-                                         action_max_new_tokens=settings.central_action_max_new_tokens)
+                                         action_max_new_tokens=settings.central_action_max_new_tokens,
+                                         mcp_manager=manager, max_mcp_tools=settings.mcp_max_tools_per_request,
+                                         mcp_schema_budget=settings.mcp_schema_budget_bytes)
                 if settings.runtime_loading_strategy == "eager":
                     central_model.load()
             app.state.hybrid_runtime = hybrid
@@ -93,6 +104,7 @@ async def lifespan(app: FastAPI):
             app.state.chat_mode_router = ChatModeRouter(hybrid=hybrid, central=central)
         yield
     finally:
+        await manager.close()
         service.shutdown()
 
 
@@ -128,6 +140,12 @@ async def ready():
     if service is None:
         return {"ready": False}
     state = service.readiness()
+    manager = getattr(app.state, "mcp_manager", None)
+    central = getattr(app.state, "central_runtime", None)
+    state.update({"mcp": manager.capabilities() if manager else {"enabled": False, "servers": []},
+                  "tools": builtin_capabilities(central.tools) if central else [],
+                  "tool_policy": {"max_mcp_tools": settings.mcp_max_tools_per_request,
+                                  "schema_budget_bytes": settings.mcp_schema_budget_bytes}})
     if settings.is_full:
         hybrid = getattr(app.state, "hybrid_runtime", None)
         central = getattr(app.state, "central_runtime", None)

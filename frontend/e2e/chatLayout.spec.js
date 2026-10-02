@@ -5,7 +5,7 @@ const answer = (turn, paragraphs = 6) => Array.from({ length: paragraphs }, (_, 
   `Đoạn ${index + 1} của câu trả lời ${turn}. Việc tìm hiểu lịch sử cần đặt sự kiện trong bối cảnh, đối chiếu tư liệu và xem xét hoạt động của các lực lượng tham gia. Những yếu tố chính trị, quân sự và xã hội có quan hệ với nhau.`).join("\n\n");
 
 // Real frontend/SSE parser with deterministic incremental responses; no backend.
-async function setupChat(page, { initialTurns = 0 } = {}) {
+async function setupChat(page, { initialTurns = 0, capabilities = {} } = {}) {
   const conversation = { id: "layout", title: "Cuộc trò chuyện nhiều lượt" };
   const messages = [];
   for (let turn = 1; turn <= initialTurns; turn += 1) {
@@ -28,6 +28,10 @@ async function setupChat(page, { initialTurns = 0 } = {}) {
     if (path === "/api/v1/conversations/layout") return route.fulfill({ json: { conversation, messages, attachments: [] } });
     return route.fulfill({ status: 404, json: { detail: "Unexpected fixture request" } });
   });
+  await page.route("**/ready", (route) => route.fulfill({ json: {
+    ready: true, retrieval: { default_backend: "faiss", available_backends: ["faiss", "qdrant"] },
+    ...capabilities,
+  } }));
   await page.goto("/");
   await expect(page.locator(".sidebar-skeleton")).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
@@ -47,7 +51,7 @@ async function setupChat(page, { initialTurns = 0 } = {}) {
       messages.push({ id: `u${turn}`, role: "user", content: payload.question, status: "done" },
         { id: `a${turn}`, role: "assistant", content: pending, mode: "central", status: "done", sources: [] });
       pending = "";
-      await emit("done", {});
+      await emit("done", { message_id: `a${turn}`, retrieval_backend: payload.retrieval_backend });
       await page.evaluate(() => { window.__layoutStream.active.close(); window.__layoutStream.active = null; });
       await expect(page.getByRole("button", { name: "Dừng tạo câu trả lời" })).toHaveCount(0);
       await expect(page.locator(".assistant-message")).toHaveCount(turn);
@@ -180,4 +184,80 @@ test("stream follows near-bottom readers and preserves manual scrollback", async
   await submit(page, 4);
   await atBottom(page);
   await fixture.finish(answer(4));
+});
+
+test("Central MCP steering and live tool progress fit mobile and desktop", async ({ page }, info) => {
+  const fixture = await setupChat(page, { capabilities: {
+    tools: [{ id: "search_history", label: "Kho sử liệu", available: true }, { id: "search_wikipedia", label: "Wikipedia", available: true }],
+    mcp: { enabled: true, servers: [{ id: "research", label: "Research MCP", available: true,
+      tools: [{ id: "mcp__research__lookup", label: "lookup" }] }, { id: "offline", label: "Offline MCP", available: false, tools: [] }] },
+  } });
+  await expect(page.getByRole("button", { name: "Công cụ Central" })).toHaveCount(0);
+  await page.getByRole("button", { name: /Chọn chế độ trả lời/ }).click();
+  await page.getByRole("option", { name: /Central Agent/ }).click();
+  await page.getByRole("button", { name: "Công cụ Central" }).click();
+  const panel = page.getByRole("group", { name: "Công cụ Central Agent" });
+  await expect(page.getByRole("checkbox", { name: /Offline MCP/ })).toBeDisabled();
+  await page.getByRole("checkbox", { name: "Research MCP" }).check();
+  await page.getByRole("checkbox", { name: "Wikipedia" }).uncheck();
+  const box = await panel.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize().width);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  await page.screenshot({ path: info.outputPath("mcp-tools.png") });
+  await page.keyboard.press("Escape");
+  await submit(page, 1);
+  const payload = await page.evaluate(() => window.__layoutStream.requests.at(-1));
+  expect(payload.steering).toMatchObject({ mcp_enabled: true, allowed_mcp_servers: ["research"],
+    allowed_tools: ["search_history", "mcp__research__lookup"] });
+  expect(payload).not.toHaveProperty("response_mode");
+  const progress = page.locator(".retrieval-progress").last();
+  const event = { stage: "tool:mcp__research__lookup", message: "Tra cứu Research MCP", provider: "mcp", server: "research", tool: "lookup" };
+  await fixture.emit("status", { ...event, state: "started" });
+  await expect(progress.locator('[data-state="started"]')).toContainText("Research MCP");
+  await assertDocked(page);
+  await fixture.emit("status", { ...event, state: "completed", latency_ms: 20 });
+  await fixture.finish("Câu trả lời dựa trên bằng chứng.");
+  await expect(progress.locator(".pipeline-spinner")).toHaveCount(0);
+  await expect(progress.locator("summary")).toContainText("Research MCP");
+  await assertDocked(page);
+});
+
+test("independent backend selector and live progress remain compact during streaming", async ({ page }, info) => {
+  const fixture = await setupChat(page);
+  const backend = page.getByRole("button", { name: /Chọn nguồn truy xuất/ });
+  await backend.press("ArrowDown");
+  await expect(page.getByRole("option", { name: /FAISS/ })).toBeFocused();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(backend).toContainText("Qdrant");
+  await expect(page.getByRole("button", { name: /Chọn chế độ trả lời/ })).toContainText("Hybrid RAG");
+  await submit(page, 1);
+  expect(await page.evaluate(() => window.__layoutStream.requests.at(-1))).toMatchObject({
+    mode: "hybrid", retrieval_backend: "qdrant",
+  });
+  const progress = page.locator(".retrieval-progress").last();
+  const emitStage = (stage, state, message) => fixture.emit("status", {
+    stage, state, message, retrieval_backend: "qdrant", request_id: "layout-progress",
+  });
+  await emitStage("query_analysis", "started", "Phân tích câu hỏi");
+  await expect(progress).toContainText("Phân tích câu hỏi");
+  await emitStage("query_analysis", "completed", "Phân tích câu hỏi");
+  await emitStage("dense_search", "started", "Truy vấn Qdrant");
+  await expect(progress.locator('[data-state="started"]')).toContainText("Truy vấn Qdrant");
+  await expect(progress.locator('[data-state="completed"]')).toContainText("Phân tích câu hỏi");
+  await assertDocked(page);
+  expect((await progress.boundingBox()).height).toBeLessThan(180);
+  await page.screenshot({ path: info.outputPath("qdrant-progress.png") });
+  await emitStage("dense_search", "completed", "Truy vấn Qdrant");
+  await emitStage("generation", "started", "Tạo câu trả lời");
+  await fixture.emit("answer_delta", { delta: "Câu trả lời từ tư liệu lịch sử." });
+  await expect(page.locator(".assistant-message").last()).toContainText("Câu trả lời từ tư liệu lịch sử.");
+  await expect(progress).not.toHaveAttribute("open", "");
+  await expect(progress.locator("summary")).toContainText("Đã truy xuất bằng Qdrant");
+  await fixture.finish();
+  await expect(progress.locator(".pipeline-spinner")).toHaveCount(0);
+  await assertDocked(page);
+  await page.reload();
+  await expect(backend).toContainText("Qdrant");
 });

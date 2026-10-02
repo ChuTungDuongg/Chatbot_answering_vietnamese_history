@@ -76,3 +76,13 @@
   .insufficient-panel { padding: 17px; font-size: 13px; }
   .message-action { min-height: 38px; }
 }
+.retrieval-progress { max-width: 480px; margin: 8px 0; padding: 9px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 11px; }
+.retrieval-progress summary { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.retrieval-progress ol { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 10px 0 0; margin: 0; list-style: none; }
+.retrieval-progress li { display: flex; align-items: center; gap: 5px; }
+.retrieval-progress svg { width: 13px; height: 13px; flex-shrink: 0; }
+.retrieval-progress [data-state="completed"] svg { color: var(--success); }
+.retrieval-progress [data-state="failed"] svg { color: var(--danger); }
+.pipeline-spinner { animation: pipeline-spin 1s linear infinite; }
+@keyframes pipeline-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pipeline-spinner { animation: none; } }

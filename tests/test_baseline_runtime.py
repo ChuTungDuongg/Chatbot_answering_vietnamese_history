@@ -65,11 +65,11 @@ class FakeRetriever:
     def __init__(self):
         self.calls = 0
 
-    def retrieve(self, query: str, top_k: int):
+    def retrieve(self, query: str, top_k: int, *, dense_backend=None, progress=None):
         self.calls += 1
         return {"question": query, "final_context": [{"chunk_id": "c1", "source_id": "s1",
                 "title": "Bạch Đằng", "text": "Chiến thắng năm 938."}],
-                "query_variants": [query]}
+                "query_variants": [query], "retrieval_backend": dense_backend or "faiss"}
 
 
 def _app(tmp_path, *, fail=False):

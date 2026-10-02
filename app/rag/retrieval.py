@@ -3,6 +3,9 @@ import time
 import unicodedata
 from collections import Counter, defaultdict
 from typing import Any
+from threading import Lock
+
+from app.rag.progress import StageProgress, ProgressCallback
 
 import bm25s
 import numpy as np
@@ -453,6 +456,7 @@ def balance_comparison_candidates(
 
 class HybridRetriever:
     def __init__(self, service: RAGService):
+        self._anchors_lock = Lock()
         self.service = service
         self.history_anchor_embs: np.ndarray | None = None
         self.ood_anchor_embs: np.ndarray | None = None
@@ -572,6 +576,11 @@ class HybridRetriever:
     # ========================================================
 
     def _ensure_anchor_embeddings(self) -> None:
+        if not self._anchors_ready:
+            with self._anchors_lock:
+                self._load_anchor_embeddings()
+
+    def _load_anchor_embeddings(self) -> None:
         if self._anchors_ready:
             return
 
@@ -848,10 +857,16 @@ class HybridRetriever:
     # Dense search
     # ========================================================
 
-    def _dense_backend(self):
+    def _dense_backend(self, name=None):
+        getter = getattr(self.service, "get_dense_retriever", None)
+        if callable(getter):
+            return getter(name)
         backend = getattr(self.service, "dense_retriever", None)
-        if backend is not None:
+        if backend is not None and (name is None or name == backend.name):
             return backend
+        if name not in {None, "faiss"}:
+            from app.rag.backends import DenseBackendUnavailable
+            raise DenseBackendUnavailable("Qdrant hiện không khả dụng. Hãy chọn FAISS hoặc thử lại.")
         # Tiny legacy test services and V0 callers may expose only faiss_index.
         from app.rag.dense_backend import FaissDenseRetriever
 
@@ -1099,6 +1114,8 @@ class HybridRetriever:
         final_k: int | None = None,
         *,
         include_stage_diagnostics: bool = False,
+        dense_backend: str | None = None,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         retrieve_started = time.perf_counter()
         telemetry = current_request_telemetry()
@@ -1109,6 +1126,15 @@ class HybridRetriever:
         fusion_ms = 0.0
         reranker_ms = 0.0
         self._ensure_ready()
+        selected_dense = self._dense_backend(dense_backend)
+        backend_name = selected_dense.name
+        stages = StageProgress(progress, backend_name)
+
+        def finish_result(result):
+            result["retrieval_backend"] = backend_name
+            result["timings_ms"] = dict(stages.timings)
+            result["retrieval_ms"] = (time.perf_counter() - retrieve_started) * 1000
+            return result
 
         question = clean_text(question)
 
@@ -1117,27 +1143,28 @@ class HybridRetriever:
 
         final_k = final_k or self.final_context_k
 
-        analysis = self.analyze_question(question)
-        comparison_query_plan = build_comparison_target_queries(question, analysis)
-        if comparison_query_plan:
-            query_specs = [
-                {"query": comparison_query_plan["global_query"], "role": "global", "weight": 0.7},
-                {"query": comparison_query_plan["target_a_query"], "role": "target_a", "weight": 1.0},
-                {"query": comparison_query_plan["target_b_query"], "role": "target_b", "weight": 1.0},
-            ]
-            query_variants = [spec["query"] for spec in query_specs]
-        else:
-            query_variants = self.plan_query_variants(question)
-            query_specs = [
-                {
-                    "query": query,
-                    "role": "global" if index == 0 else "global_expansion",
-                    "weight": 1.0 if index == 0 else self.query_expansion_weight,
-                }
-                for index, query in enumerate(query_variants)
-            ]
-        classification = self.classify_question(question)
-        public_intent = classification.get("intent", {})
+        with stages.track("query_analysis"):
+            analysis = self.analyze_question(question)
+            comparison_query_plan = build_comparison_target_queries(question, analysis)
+            if comparison_query_plan:
+                query_specs = [
+                    {"query": comparison_query_plan["global_query"], "role": "global", "weight": 0.7},
+                    {"query": comparison_query_plan["target_a_query"], "role": "target_a", "weight": 1.0},
+                    {"query": comparison_query_plan["target_b_query"], "role": "target_b", "weight": 1.0},
+                ]
+                query_variants = [spec["query"] for spec in query_specs]
+            else:
+                query_variants = self.plan_query_variants(question)
+                query_specs = [
+                    {
+                        "query": query,
+                        "role": "global" if index == 0 else "global_expansion",
+                        "weight": 1.0 if index == 0 else self.query_expansion_weight,
+                    }
+                    for index, query in enumerate(query_variants)
+                ]
+            classification = self.classify_question(question)
+            public_intent = classification.get("intent", {})
 
         # ----------------------------------------------------
         # Shared domain gate: no corpus retrieval for scoped exits.
@@ -1184,7 +1211,7 @@ class HybridRetriever:
                 reranker_pair_count=0,
                 final_count=0,
             )
-            return result
+            return finish_result(result)
 
         # ----------------------------------------------------
         # Dense + BM25 for all query variants
@@ -1194,20 +1221,23 @@ class HybridRetriever:
 
         for query_spec in query_specs:
             query = str(query_spec["query"])
-            embedding_started = time.perf_counter()
-            embedding = self.service.embedder.encode(
-                [query_for_embedding(query)],
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-            ).astype("float32")
-            embedding_ms += (time.perf_counter() - embedding_started) * 1000
-            faiss_started = time.perf_counter()
-            dense = [(hit.row_id, hit.score) for hit in
-                     self._dense_backend().search(embedding[0], self.dense_fetch_k)]
-            faiss_ms += (time.perf_counter() - faiss_started) * 1000
-            bm25_started = time.perf_counter()
-            bm25 = self.bm25_search(query)
-            bm25_ms += (time.perf_counter() - bm25_started) * 1000
+            with stages.track("embedding", accumulate=True):
+                embedding_started = time.perf_counter()
+                embedding = self.service.embedder.encode(
+                    [query_for_embedding(query)],
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                ).astype("float32")
+                embedding_ms += (time.perf_counter() - embedding_started) * 1000
+            with stages.track("dense_search", accumulate=True):
+                faiss_started = time.perf_counter()
+                dense = [(hit.row_id, hit.score) for hit in
+                         selected_dense.search(embedding[0], self.dense_fetch_k)]
+                faiss_ms += (time.perf_counter() - faiss_started) * 1000
+            with stages.track("bm25_search", accumulate=True):
+                bm25_started = time.perf_counter()
+                bm25 = self.bm25_search(query)
+                bm25_ms += (time.perf_counter() - bm25_started) * 1000
             runs.append(
                 {
                     "query": query,
@@ -1283,41 +1313,42 @@ class HybridRetriever:
                 reranker_pair_count=0,
                 final_count=0,
             )
-            return result
+            return finish_result(result)
 
         # ----------------------------------------------------
         # RRF
         # ----------------------------------------------------
 
         fusion_started = time.perf_counter()
-        candidates = self.multi_query_rrf(
-            runs,
-            top_k=self.rrf_top_k,
-        )
-        if comparison_query_plan:
-            by_corpus_index = {int(item["_corpus_idx"]): item for item in candidates}
-            per_target_k = max(6, final_k * 3)
-            for role in ("target_a", "target_b"):
-                role_runs = [run for run in runs if run.get("role") == role]
-                for item in self.multi_query_rrf(role_runs, top_k=per_target_k):
-                    corpus_index = int(item["_corpus_idx"])
-                    existing = by_corpus_index.get(corpus_index)
-                    if existing is None:
-                        candidates.append(item)
-                        by_corpus_index[corpus_index] = item
-                        continue
-                    existing["retrieval_hits"] = list(dict.fromkeys([
-                        *existing.get("retrieval_hits", []),
-                        *item.get("retrieval_hits", []),
-                    ]))
-                    existing["retrieval_query_roles"] = list(dict.fromkeys([
-                        *existing.get("retrieval_query_roles", []),
-                        *item.get("retrieval_query_roles", []),
-                    ]))
-                    for score_key in ("best_dense_score", "best_bm25_score"):
-                        values = [value for value in (existing.get(score_key), item.get(score_key)) if value is not None]
-                        existing[score_key] = max(values) if values else None
-        fusion_ms = (time.perf_counter() - fusion_started) * 1000
+        with stages.track("fusion"):
+            candidates = self.multi_query_rrf(
+                runs,
+                top_k=self.rrf_top_k,
+            )
+            if comparison_query_plan:
+                by_corpus_index = {int(item["_corpus_idx"]): item for item in candidates}
+                per_target_k = max(6, final_k * 3)
+                for role in ("target_a", "target_b"):
+                    role_runs = [run for run in runs if run.get("role") == role]
+                    for item in self.multi_query_rrf(role_runs, top_k=per_target_k):
+                        corpus_index = int(item["_corpus_idx"])
+                        existing = by_corpus_index.get(corpus_index)
+                        if existing is None:
+                            candidates.append(item)
+                            by_corpus_index[corpus_index] = item
+                            continue
+                        existing["retrieval_hits"] = list(dict.fromkeys([
+                            *existing.get("retrieval_hits", []),
+                            *item.get("retrieval_hits", []),
+                        ]))
+                        existing["retrieval_query_roles"] = list(dict.fromkeys([
+                            *existing.get("retrieval_query_roles", []),
+                            *item.get("retrieval_query_roles", []),
+                        ]))
+                        for score_key in ("best_dense_score", "best_bm25_score"):
+                            values = [value for value in (existing.get(score_key), item.get(score_key)) if value is not None]
+                            existing[score_key] = max(values) if values else None
+            fusion_ms = (time.perf_counter() - fusion_started) * 1000
 
         # Diagnostic ranks only. These annotations do not affect scoring,
         # ordering, thresholds, or context selection.
@@ -1367,7 +1398,7 @@ class HybridRetriever:
                 reranker_pair_count=0,
                 final_count=0,
             )
-            return result
+            return finish_result(result)
 
         # ----------------------------------------------------
         # Cross-encoder reranking
@@ -1384,98 +1415,100 @@ class HybridRetriever:
             for chunk in candidates
         ]
 
-        reranker_started = time.perf_counter()
-        reranker_scores = np.asarray(
-            self.service.reranker.predict(
-                pairs,
-                batch_size=self.rerank_batch_size,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-            )
-        ).reshape(-1).astype(float)
-        reranker_ms = (time.perf_counter() - reranker_started) * 1000
-
-        reranker_norm = self.minmax(reranker_scores.tolist())
-
-        for rank, index in enumerate(np.argsort(-reranker_scores), 1):
-            candidates[int(index)]["reranker_rank"] = rank
-
-        rrf_norm = self.minmax(
-            [chunk["rrf_score"] for chunk in candidates]
-        )
-
-        # ----------------------------------------------------
-        # Final Phase 9 score
-        #
-        # 0.72 * reranker
-        # + 0.28 * RRF
-        # + metadata soft boost
-        # ----------------------------------------------------
-
-        for index, chunk in enumerate(candidates):
-            bonus, hits = self.metadata_bonus(
-                question,
-                chunk,
-                analysis=analysis,
-            )
-
-            chunk["reranker_score"] = float(reranker_scores[index])
-            chunk["reranker_norm"] = float(reranker_norm[index])
-            chunk["rrf_norm"] = float(rrf_norm[index])
-            chunk["metadata_bonus"] = float(bonus)
-            chunk["metadata_hits"] = hits
-
-            chunk["final_retrieval_score"] = float(
-                0.72 * reranker_norm[index]
-                + 0.28 * rrf_norm[index]
-                + bonus
-            )
-
-        candidates.sort(
-            key=lambda item: item["final_retrieval_score"],
-            reverse=True,
-        )
-
-        # ----------------------------------------------------
-        # Final context diversity
-        # ----------------------------------------------------
-        if comparison_query_plan:
-            final_context, comparison_balance = balance_comparison_candidates(
-                question,
-                candidates,
-                final_k,
-            )
-        else:
-            final_context = self.select_diverse_contexts(
-                candidates,
-                analysis,
-                final_k,
-            )
-            comparison_balance = {}
-
-        target_retrieval_results: dict[str, list[dict[str, Any]]] = {}
-        if comparison_query_plan:
-            for role in ("target_a", "target_b", "global"):
-                role_items = [
-                    item
-                    for item in candidates
-                    if role in item.get("retrieval_query_roles", [])
-                ]
-                role_items.sort(
-                    key=lambda item: (
-                        item.get("comparison_target_relevance", {}).get(role, {}).get("direct", False),
-                        item.get("comparison_target_relevance", {}).get(role, {}).get("score", 0.0),
-                        item.get("final_retrieval_score", 0.0),
-                    ),
-                    reverse=True,
+        with stages.track("rerank"):
+            reranker_started = time.perf_counter()
+            reranker_scores = np.asarray(
+                self.service.reranker.predict(
+                    pairs,
+                    batch_size=self.rerank_batch_size,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
                 )
-                target_retrieval_results[role] = role_items[:10]
+            ).reshape(-1).astype(float)
+            reranker_ms = (time.perf_counter() - reranker_started) * 1000
 
-        trace_candidates = candidates[:self.rrf_top_k]
-        trace_ids = {str(item.get("chunk_id")) for item in trace_candidates}
-        trace_candidates.extend(
-            item for item in final_context if str(item.get("chunk_id")) not in trace_ids
-        )
+        with stages.track("context_selection"):
+            reranker_norm = self.minmax(reranker_scores.tolist())
+
+            for rank, index in enumerate(np.argsort(-reranker_scores), 1):
+                candidates[int(index)]["reranker_rank"] = rank
+
+            rrf_norm = self.minmax(
+                [chunk["rrf_score"] for chunk in candidates]
+            )
+
+            # ----------------------------------------------------
+            # Final Phase 9 score
+            #
+            # 0.72 * reranker
+            # + 0.28 * RRF
+            # + metadata soft boost
+            # ----------------------------------------------------
+
+            for index, chunk in enumerate(candidates):
+                bonus, hits = self.metadata_bonus(
+                    question,
+                    chunk,
+                    analysis=analysis,
+                )
+
+                chunk["reranker_score"] = float(reranker_scores[index])
+                chunk["reranker_norm"] = float(reranker_norm[index])
+                chunk["rrf_norm"] = float(rrf_norm[index])
+                chunk["metadata_bonus"] = float(bonus)
+                chunk["metadata_hits"] = hits
+
+                chunk["final_retrieval_score"] = float(
+                    0.72 * reranker_norm[index]
+                    + 0.28 * rrf_norm[index]
+                    + bonus
+                )
+
+            candidates.sort(
+                key=lambda item: item["final_retrieval_score"],
+                reverse=True,
+            )
+
+            # ----------------------------------------------------
+            # Final context diversity
+            # ----------------------------------------------------
+            if comparison_query_plan:
+                final_context, comparison_balance = balance_comparison_candidates(
+                    question,
+                    candidates,
+                    final_k,
+                )
+            else:
+                final_context = self.select_diverse_contexts(
+                    candidates,
+                    analysis,
+                    final_k,
+                )
+                comparison_balance = {}
+
+            target_retrieval_results: dict[str, list[dict[str, Any]]] = {}
+            if comparison_query_plan:
+                for role in ("target_a", "target_b", "global"):
+                    role_items = [
+                        item
+                        for item in candidates
+                        if role in item.get("retrieval_query_roles", [])
+                    ]
+                    role_items.sort(
+                        key=lambda item: (
+                            item.get("comparison_target_relevance", {}).get(role, {}).get("direct", False),
+                            item.get("comparison_target_relevance", {}).get(role, {}).get("score", 0.0),
+                            item.get("final_retrieval_score", 0.0),
+                        ),
+                        reverse=True,
+                    )
+                    target_retrieval_results[role] = role_items[:10]
+
+            trace_candidates = candidates[:self.rrf_top_k]
+            trace_ids = {str(item.get("chunk_id")) for item in trace_candidates}
+            trace_candidates.extend(
+                item for item in final_context if str(item.get("chunk_id")) not in trace_ids
+            )
 
         result = {
             "question": question,
@@ -1498,7 +1531,7 @@ class HybridRetriever:
             "tool_trace": [
                 "question_analyzer",
                 "query_planner",
-                f"multi_query_faiss_bm25:{len(query_variants)}q",
+                f"multi_query_{backend_name}_bm25:{len(query_variants)}q",
                 *( ["compare:target_specific_retrieval", "compare:target_balanced_pool"] if comparison_query_plan else [] ),
                 "weighted_rrf:top20",
                 "cross_encoder_reranker",
@@ -1527,4 +1560,4 @@ class HybridRetriever:
             reranker_pair_count=len(pairs),
             final_count=len(final_context),
         )
-        return result
+        return finish_result(result)

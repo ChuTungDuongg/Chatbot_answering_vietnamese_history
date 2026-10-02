@@ -22,10 +22,19 @@ modal volume list --json
 modal secret list --json
 modal volume ls vn-history-artifacts /corpus_v1/runtime --json
 $env:RETRIEVAL_DENSE_BACKEND = 'faiss'
+$env:RETRIEVAL_AVAILABLE_BACKENDS = 'faiss,qdrant'
+$env:MODAL_QDRANT_SECRET_NAME = 'vn-history-qdrant'
 $env:MODEL_VARIANT = 'vanilla'
 ```
 
 Chỉ nếu chưa đăng nhập: `modal token new`. Dữ liệu đã upload; không cần restore/upload mỗi lần mở máy.
+
+Hai lane được load/validate một lần; chọn FAISS/Qdrant tại composer theo từng request.
+Nếu Secret Qdrant chưa có, dùng `$env:RETRIEVAL_AVAILABLE_BACKENDS = 'faiss'`.
+
+MCP mặc định tắt. Khi cần server ngoài, xem [MCP setup](MCP_INTEGRATION_REPORT.md):
+đặt `MCP_ENABLED=true`, `MCP_CONFIG_PATH` và optional `MODAL_MCP_SECRET_NAME` trước `serve`/`deploy`.
+Tools chỉ hiện trong Central, theo capabilities và quyền từng request.
 
 ## Start API for development
 
@@ -69,7 +78,7 @@ $base = 'https://tungduong156gli--vn-history-rag-api-fastapi-app.modal.run'
 Invoke-RestMethod "$base/ready" -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 1200
 $headers = @{'X-Client-ID'='terminal-smoke'}
 $c = Invoke-RestMethod -Method Post -Uri "$base/api/v1/conversations" -Headers $headers -ContentType 'application/json' -Body '{}'
-$body = @{conversation_id=$c.id; question='Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?'; mode='hybrid'; final_k=3} | ConvertTo-Json
+$body = @{conversation_id=$c.id; question='Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?'; mode='hybrid'; retrieval_backend='faiss'; final_k=3} | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri "$base/api/v1/chat" -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 1200
 ```
 
@@ -83,3 +92,4 @@ python -m scripts.upload_modal_volume --include-v0 --ipv4
 ```
 
 Xem [report đầy đủ](RESTORE_MODAL_QDRANT_REPORT.md) để tạo Secret, restore ZIP, logs và dừng deployment.
+Xem [dynamic retrieval](DYNAMIC_RETRIEVAL_REPORT.md) để chạy hai backend cùng lúc và đo latency.

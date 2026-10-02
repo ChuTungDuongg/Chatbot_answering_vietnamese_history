@@ -37,6 +37,14 @@ The project includes real model-token SSE streaming, an HTTP latency benchmark, 
 
 See [Modal quick start](MODAL_QUICKSTART.md) and [restoration report](RESTORE_MODAL_QDRANT_REPORT.md) for the current machine. The historical [V1 indexing guide](docs/CORPUS_V1_INDEXING.md), [legacy cleanup](docs/LEGACY_DATA_CLEANUP.md), and [repository audit](docs/REPO_AUDIT.md) describe earlier states. V1 is now the default; FAISS or Qdrant uses the same preserved BM25S, fusion and reranker.
 
+For request-level FAISS/Qdrant switching, set `RETRIEVAL_DENSE_BACKEND=faiss` and
+`RETRIEVAL_AVAILABLE_BACKENDS=faiss,qdrant` before startup. Both validated V1 lanes
+reuse the shared runtime; the composer reads available backends from `/ready`.
+Changing the UI selection sends `retrieval_backend` for that request without a
+restart. Central's `search_history` honors the same selection. Qdrant failures
+produce an error without switching lanes. See [dynamic retrieval report](DYNAMIC_RETRIEVAL_REPORT.md)
+for local/Modal commands, real SSE stages, validation and latency measurements.
+
 ## Run locally
 
 Create an environment and install the runtime and frontend dependencies:
@@ -111,6 +119,13 @@ python -m evaluation.runner --dataset evaluation/datasets/fixtures/questions.jso
 The included fixture questions are unlabeled and do not establish historical correctness. Add reviewed gold answers, relevant chunk/source IDs, or citation labels to obtain the corresponding metrics; missing labels are reported as N/A. [Evaluation metrics](docs/EVALUATION.md) and [experiment template](docs/EXPERIMENTS.md) describe reproducible comparisons.
 
 ## Verify changes
+
+Central also supports optional, configured MCP tools with request-scoped permissions.
+MCP is disabled by default; copy `config/mcp_servers.example.json` to a private config,
+enable selected servers and set `MCP_ENABLED=true` / `MCP_CONFIG_PATH`. Credentials use
+environment references. The Central-only Tools popover reads `/ready`; Hybrid stays unchanged.
+[MCP setup, steering, transports and tests](MCP_INTEGRATION_REPORT.md) includes dev examples.
+
 
 ```powershell
 .venv\Scripts\python -m pytest -q

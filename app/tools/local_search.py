@@ -5,6 +5,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.rag.retriever import Retriever
+from app.rag.backends import DenseBackendError
+from app.tools.registry import ToolExecutionContext
 
 
 class SearchHistoryInput(BaseModel):
@@ -24,3 +26,18 @@ class SearchHistoryTool:
         result = self.retriever.retrieve(arguments.query, arguments.top_k)
         return [{**chunk, "source_kind": "history"}
                 for chunk in result.get("final_context") or []]
+
+    def run_with_context(self, arguments: SearchHistoryInput, context: ToolExecutionContext):
+        options = {**({"dense_backend": context.retrieval_backend} if context.retrieval_backend else {}),
+                   **({"progress": context.progress} if context.progress else {})}
+        try:
+            result = self.retriever.retrieve(arguments.query, arguments.top_k, **options)
+        except DenseBackendError:
+            raise
+        except Exception:
+            raise DenseBackendError("Tìm tư liệu thất bại. Hãy thử lại hoặc chọn nguồn truy xuất khác.") from None
+        context.retrieval_metrics["backend"] = result.get("retrieval_backend", context.retrieval_backend)
+        timings = context.retrieval_metrics.setdefault("timings_ms", {})
+        for name, value in result.get("timings_ms", {}).items():
+            timings[name] = timings.get(name, 0.0) + value
+        return [{**chunk, "source_kind": "history"} for chunk in result.get("final_context") or []]

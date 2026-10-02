@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Paperclip, Square } from "lucide-react";
 import ModeSelector from "./ModeSelector";
+import RetrievalBackendSelector from "./RetrievalBackendSelector";
+import ToolSteering from "./ToolSteering";
 import { clipboardImages } from "../services/attachments";
 
 const ACCEPTED_FILES = ".pdf,image/png,image/jpeg,image/webp";
@@ -13,6 +15,10 @@ function ChatInput({
   onFilesSelected,
   mode,
   onModeChange,
+  retrievalBackend,
+  availableBackends,
+  onRetrievalBackendChange,
+  toolControl,
   isRunning,
   isUploading,
   hasAttachments = false,
@@ -102,6 +108,9 @@ function ChatInput({
       <div className="composer-toolbar">
       <div className="composer-leading-actions">
         <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled || isRunning} />
+        <RetrievalBackendSelector backend={retrievalBackend} available={availableBackends}
+          onChange={onRetrievalBackendChange} disabled={disabled || isRunning} />
+        {mode === "central" && <ToolSteering control={toolControl} disabled={isRunning || isUploading} />}
         <button
           type="button"
           className="icon-button composer-attach"

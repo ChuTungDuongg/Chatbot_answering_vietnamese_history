@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
+from app.rag.backends import DenseBackendError, QdrantSearchError
 
 
 @dataclass(frozen=True)
@@ -64,15 +65,20 @@ class QdrantDenseRetriever:
                 with_vectors=False, search_params=models.SearchParams(
                     exact=exact, hnsw_ef=None if exact else self.hnsw_ef))
         except Exception:
-            raise RuntimeError("Qdrant search failed") from None
+            raise QdrantSearchError() from None
         hits = []
         for rank, point in enumerate(response.points, 1):
-            row_id = int(point.id)
+            try:
+                row_id = int(point.id)
+                score = float(point.score)
+                payload_id = (point.payload or {}).get("chunk_id")
+            except (ValueError, TypeError, AttributeError):
+                raise QdrantSearchError() from None
             if not 0 <= row_id < len(self.chunk_ids):
-                raise RuntimeError(f"Qdrant point ID outside corpus order: {row_id}")
+                raise DenseBackendError(f"Qdrant point ID outside corpus order: {row_id}")
             chunk_id = self.chunk_ids[row_id]
-            if (point.payload or {}).get("chunk_id") != chunk_id:
-                raise RuntimeError(f"Qdrant point/chunk mismatch at row {row_id}")
+            if payload_id != chunk_id:
+                raise DenseBackendError(f"Qdrant point/chunk mismatch at row {row_id}")
             hits.append(DenseHit(row_id=row_id, chunk_id=chunk_id,
-                                 score=float(point.score), rank=rank, backend=self.name))
+                                 score=score, rank=rank, backend=self.name))
         return hits

@@ -24,6 +24,8 @@ import {
 } from "./config/messages";
 import { useAttachments } from "./hooks/useAttachments";
 import { useChatMode } from "./hooks/useChatMode";
+import { useRetrievalBackend } from "./hooks/useRetrievalBackend";
+import { useToolSteering } from "./hooks/useToolSteering";
 import { useChatSession } from "./hooks/useChatSession";
 import { useChatScroll } from "./hooks/useChatScroll";
 import { useChatStream } from "./hooks/useChatStream";
@@ -44,6 +46,8 @@ function App() {
 
   const { theme, toggleTheme } = useTheme();
   const { mode: inferenceMode, setMode: setInferenceMode } = useChatMode();
+  const retrieval = useRetrievalBackend();
+  const toolControl = useToolSteering(retrieval.capabilities);
 
   const session = useChatSession();
   const { state, dispatch, isRunning, ensureActiveConversation } = session;
@@ -69,6 +73,8 @@ function App() {
     isUploading,
     isRunning,
     mode: inferenceMode,
+    retrievalBackend: retrieval.backend,
+    steering: toolControl.payload,
     showDebugTrace: SHOW_DEBUG_TRACE,
     ensureActiveConversation,
   });
@@ -171,7 +177,7 @@ function App() {
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
-    if ((!question.trim() && !readyAttachments.length) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
+    if ((!question.trim() && !readyAttachments.length) || !retrieval.ready || (inferenceMode === "central" && toolControl.overBudget) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
 
     const pending = question;
     setQuestion("");
@@ -198,8 +204,11 @@ function App() {
           if (!isLoading && !isDeletingConversation && !conversationActionRef.current && !stream.isBusy()) uploads.upload(files, options);
         }}
         mode={inferenceMode} onModeChange={setInferenceMode}
+        retrievalBackend={retrieval.backend} availableBackends={retrieval.available} onRetrievalBackendChange={retrieval.setBackend}
+        toolControl={toolControl}
         isRunning={isRunning} isUploading={isUploading}
-        disabled={isLoading || isDeletingConversation} hasAttachments={readyAttachments.length > 0} />
+        disabled={isLoading || isDeletingConversation || !retrieval.ready || (inferenceMode === "central" && toolControl.overBudget)} hasAttachments={readyAttachments.length > 0} />
+      {retrieval.error && <small role="alert">{retrieval.error}</small>}
       <p className="composer-disclaimer">Lịch sử cần được nhìn từ nhiều nguồn. Hãy đối chiếu tư liệu khi cần.</p>
     </div>
   );
@@ -273,7 +282,7 @@ function App() {
               />
             ))}
 
-            <StatusIndicator status={messages.at(-1)?.role === "assistant" && !messages.at(-1)?.content ? null : status} />
+            <StatusIndicator status={messages.at(-1)?.pipeline?.length || (messages.at(-1)?.role === "assistant" && !messages.at(-1)?.content) ? null : status} />
           </div>
         </main>
 
