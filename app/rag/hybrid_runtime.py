@@ -21,7 +21,7 @@ class HybridRuntime:
     async def prepare(self, question: str, top_k: int, history: list[dict[str, str]],
                       *, trace: Any = None, owner_id: str | None = None,
                       conversation_id: str | None = None,
-                      attachment_ids: tuple[str, ...] = (), response_mode: str = "standard",
+                      attachment_ids: tuple[str, ...] = (),
                       **_: Any) -> PreparedAnswer:
         if trace:
             trace.mark("retrieval_started")
@@ -38,7 +38,7 @@ class HybridRuntime:
         if trace:
             trace.mark("retrieval_finished")
         prompt_started = time.perf_counter_ns()
-        messages = build_messages(question, contexts, history, response_mode=response_mode)
+        messages = build_messages(question, contexts, history)
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")

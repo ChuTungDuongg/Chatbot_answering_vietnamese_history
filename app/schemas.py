@@ -5,7 +5,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.chat_modes import ChatMode, normalize_chat_mode
-from app.rag.response_modes import ResponseMode
 
 
 MessageRole = Literal["user", "assistant"]
@@ -272,7 +271,6 @@ class ChatRequest(BaseModel):
     )
 
     mode: InferenceMode | None = None
-    response_mode: ResponseMode = "standard"
 
     debug: bool = False
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
@@ -296,7 +294,6 @@ class ChatResponse(BaseModel):
     answer: str
     status: str
     mode: InferenceMode
-    response_mode: ResponseMode = "standard"
 
     sources: list[SourceItem] = Field(
         default_factory=list,

@@ -1,4 +1,8 @@
-"""Stable response controls shared by SFT preparation and future inference."""
+"""Frozen SFT V1/Citation V2 and offline evaluation compatibility.
+
+Keep instruction strings stable for research provenance. Live application
+requests and Hybrid/Central runtime do not use these response controls.
+"""
 
 from __future__ import annotations
 

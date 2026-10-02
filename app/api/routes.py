@@ -190,7 +190,6 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
     try:
         trace.mark("first_status_event")
         yield "status", {"stage": "retrieval", "message": "Đang tìm tư liệu...", "mode": mode.value,
-                         "response_mode": payload.response_mode,
                          "request_id": trace.request_id}
         requested_ids = tuple(str(value) for value in payload.attachment_ids)
         if requested_ids:
@@ -210,12 +209,11 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                                                 "user", payload.question, attachment_sources)
         prepared = await runtime.prepare(question, payload.final_k, history,
                                          owner_id=owner_id, conversation_id=str(payload.conversation_id),
-                                         attachment_ids=requested_ids, trace=trace, cancel=cancel,
-                                         response_mode=payload.response_mode)
+                                         attachment_ids=requested_ids, trace=trace, cancel=cancel)
         if cancel.is_set():
             return
         yield "status", {"stage": "generation", "message": "Đang tạo câu trả lời...",
-                         "mode": mode.value, "response_mode": payload.response_mode}
+                         "mode": mode.value}
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
         async for item in runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel):
@@ -257,7 +255,6 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         done = {"request_id": trace.request_id, "conversation_id": str(payload.conversation_id),
                 "message_id": str(assistant_message["id"]), "user_message_id": str(user_message["id"]),
                 "answer": answer, "status": "done", "mode": mode.value,
-                "response_mode": payload.response_mode,
                 "latency_ms": metrics["e2e_ms"], "model_id": runtime.model.model_id,
                 "model_revision": completed.model_revision,
                 "model_variant": getattr(runtime.model, "model_variant", None),
@@ -284,7 +281,6 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                    model_revision=getattr(runtime.model, "resolved_revision", None), error=type(exc).__name__)
         yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id}
         yield "done", {"request_id": trace.request_id, "status": "error", "mode": mode.value,
-                       "response_mode": payload.response_mode,
                        "model_id": runtime.model.model_id, "model_revision": getattr(runtime.model, "resolved_revision", None),
                        "metrics": metrics, "latency_ms": metrics["e2e_ms"]}
     finally:
@@ -351,7 +347,6 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
         raise HTTPException(status_code=500, detail=(failure or {}).get("message", "Generation failed"))
     return ChatResponse(conversation_id=payload.conversation_id, message_id=result["message_id"],
                         answer=result["answer"], status="done", mode=mode,
-                        response_mode=payload.response_mode,
                         sources=[SourceItem.model_validate(item) for item in sources],
                         latency_ms=result["latency_ms"], debug=debug_trace)
 

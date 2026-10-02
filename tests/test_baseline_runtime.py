@@ -10,9 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.api.routes import _context_to_api, _model_metrics, _sources, chat_stream
+from app.api.routes import _context_to_api, _model_metrics, _sources, chat_stream, router
 from app.central.runtime import CentralRuntime
 from app.chat.store import ConversationStore
 from app.chat_modes import ChatMode, normalize_chat_mode
@@ -20,6 +21,7 @@ from app.config import CENTRAL_MODEL_ID, HYBRID_MODEL_ID
 from app.models.base import ModelDelta, ModelDone
 from app.models.qwen import QwenRuntime
 from app.rag.hybrid_runtime import HybridRuntime
+from app.rag.prompting import SYSTEM_PROMPT
 from app.rag.schemas import PreparedAnswer
 from app.schemas import ChatRequest
 from app.services.chat_mode_router import ChatModeRouter
@@ -39,8 +41,10 @@ class FakeModel:
                                     "adapter": None, "quantization": None}
         self.fail = fail
         self.calls = 0
+        self.messages = None
 
     async def stream(self, messages, *, max_new_tokens, cancel):
+        self.messages = messages
         self.calls += 1
         started = time.perf_counter_ns()
         for delta in ("Chiến thắng ", "có ý nghĩa [c1]."):
@@ -74,13 +78,14 @@ def _app(tmp_path, *, fail=False):
     model = FakeModel(HYBRID_MODEL_ID, fail=fail)
     hybrid = HybridRuntime(retriever, model)
     app = FastAPI()
+    app.include_router(router)
     app.state.chat_store = store
     app.state.retriever = retriever
     app.state.chat_mode_router = ChatModeRouter(hybrid=hybrid, central=None)
     return app, store, model, retriever
 
 
-async def _stream(app, store, *, fail=False, response_mode="standard"):
+async def _stream(app, store, *, fail=False):
     owner = "baseline-test-client"
     conversation = store.create_conversation(owner)
 
@@ -89,7 +94,7 @@ async def _stream(app, store, *, fail=False, response_mode="standard"):
 
     request = SimpleNamespace(app=app, is_disconnected=connected)
     payload = ChatRequest(conversation_id=conversation["id"], question="Ý nghĩa Bạch Đằng?",
-                          mode="hybrid", response_mode=response_mode)
+                          mode="hybrid")
     response = await chat_stream(payload, request, owner, store)
     body = "".join([frame async for frame in response.body_iterator])
     return conversation, response, _events(body)
@@ -107,15 +112,36 @@ def _events(body: str):
     return events
 
 
-def test_response_mode_reaches_sse_and_final_prompt(tmp_path):
+def test_live_sse_uses_fixed_grounded_prompt_without_detail_metadata(tmp_path):
     app, store, model, retriever = _app(tmp_path)
-    _, _, events = asyncio.run(_stream(app, store, response_mode="detailed"))
-    assert next(data for event, data in events if event == "status")["response_mode"] == "detailed"
-    assert next(data for event, data in events if event == "done")["response_mode"] == "detailed"
-    prepared = asyncio.run(HybridRuntime(retriever, model).prepare(
-        "Ý nghĩa Bạch Đằng?", 6, [], response_mode="detailed"))
-    from app.rag.response_modes import MODE_INSTRUCTIONS
-    assert MODE_INSTRUCTIONS["detailed"] in prepared.messages[0]["content"]
+    _, _, events = asyncio.run(_stream(app, store))
+    assert all("response_mode" not in data for _, data in events)
+    assert model.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert "[c1] Bạch Đằng\nChiến thắng năm 938." in model.messages[-1]["content"]
+    assert model.calls == retriever.calls == 1
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v1/chat", "/api/v1/chat/stream"])
+def test_live_api_contract_has_no_response_detail_field(tmp_path, endpoint):
+    app, store, model, _ = _app(tmp_path)
+    owner = "baseline-test-client"
+    conversation = store.create_conversation(owner)
+    with TestClient(app) as client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+        for name in ("ChatRequest", "ChatResponse"):
+            assert "response_mode" not in schemas[name]["properties"]
+        response = client.post(endpoint, headers={"X-Client-ID": owner}, json={
+            "conversation_id": conversation["id"], "question": "Ý nghĩa Bạch Đằng?", "mode": "hybrid"})
+    assert response.status_code == 200
+    if endpoint.endswith("/stream"):
+        events = _events(response.text)
+        assert all("response_mode" not in data for _, data in events)
+        assert events[-1][1]["status"] == "done"
+    else:
+        assert "response_mode" not in response.json()
+        assert response.json()["mode"] == "hybrid"
+        assert response.json()["sources"][0]["cited"] is True
+    assert model.messages[0]["content"] == SYSTEM_PROMPT
 
 
 def test_only_two_modes_and_model_ids():
@@ -140,6 +166,7 @@ def test_retrieval_does_not_call_model():
     model = FakeModel(HYBRID_MODEL_ID)
     prepared = asyncio.run(HybridRuntime(retriever, model).prepare("Bạch Đằng?", 6, []))
     assert prepared.contexts[0]["chunk_id"] == "c1"
+    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
     assert retriever.calls == 1
     assert model.calls == 0
 
@@ -177,6 +204,42 @@ def test_central_uses_same_history_retriever_as_tool():
     assert prepared.model_calls_before_final == 1
     assert prepared.tool_calls[0]["name"] == "search_history"
     assert prepared.contexts[0]["chunk_id"] == "c1"
+    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
+
+
+def test_hybrid_prompt_preserves_history_and_attachment_evidence():
+    class AttachmentRetriever:
+        def retrieve(self, owner, conversation, question, top_k, attachment_ids):
+            assert attachment_ids == ("a1",)
+            return [{"chunk_id": "attachment:c2", "title": "Tư liệu", "text": "Ngô Quyền lãnh đạo."}]
+
+    history = [{"role": "user", "content": "Ai lãnh đạo?"},
+               {"role": "assistant", "content": "Ngô Quyền [c1]."}]
+    runtime = HybridRuntime(FakeRetriever(), FakeModel(HYBRID_MODEL_ID), AttachmentRetriever())
+    prepared = asyncio.run(runtime.prepare("Bạch Đằng?", 3, history,
+        owner_id="owner", conversation_id="chat", attachment_ids=("a1",)))
+    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert prepared.messages[1:3] == history
+    assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
+    assert "[attachment:c2] Tư liệu\nNgô Quyền lãnh đạo." in prepared.messages[-1]["content"]
+    assert prepared.contexts[1]["source_kind"] == "attachment"
+
+
+def test_central_fallback_still_provides_chunk_evidence():
+    class NoToolModel(FakeModel):
+        async def generate(self, messages, *, tools, max_new_tokens, cancel):
+            return "", None
+
+    retriever = FakeRetriever()
+    tools = ToolRegistry()
+    tools.register(SearchHistoryTool(retriever))
+    runtime = CentralRuntime(model=NoToolModel(CENTRAL_MODEL_ID), tools=tools)
+    prepared = asyncio.run(runtime.prepare("Bạch Đằng?", 3, []))
+    assert retriever.calls == 1
+    assert prepared.tool_calls[0]["name"] == "search_history"
+    assert prepared.messages[0]["content"] == SYSTEM_PROMPT
+    assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
 
 
 def test_http_sse_deltas_reconstruct_stored_answer(tmp_path):
@@ -208,6 +271,7 @@ def test_model_failure_becomes_sse_error_without_assistant(tmp_path):
     assert [name for name, _ in events][-2:] == ["error", "done"]
     assert events[-1][1]["status"] == "error"
     assert len(store.list_messages("baseline-test-client", conversation["id"])) == 1
+    assert all("response_mode" not in data for _, data in events)
 
 
 def test_metrics_use_monotonic_spans_and_leave_missing_null():

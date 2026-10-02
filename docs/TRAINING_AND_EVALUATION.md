@@ -131,9 +131,9 @@ Changing model ID/revision, train or validation data hash, split hash, batch/acc
 python -m training.merge_adapter --model-id Qwen/Qwen3-4B-Instruct-2507 --adapter-path /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/run_01/adapter --output-dir /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/merged_01 --dtype float16
 ```
 
-## 5. App response mode and adapter
+## 5. App inference modes and adapter
 
-The app's three-position slider is **Ngắn gọn / Tiêu chuẩn / Chi tiết**, stored in browser localStorage. `response_mode` defaults to `standard`; API rejects other values. It affects the shared prompt instruction and SSE metadata, while retrieval settings and generation sampling remain independent. The existing Hybrid/Central mode selector remains separate.
+The live app offers Hybrid RAG and Central Agent. Both final generators use the same fixed grounded `SYSTEM_PROMPT`; answer length follows the question and evidence. The UI/API has no response-detail control. Frozen SFT and offline six-way evaluation retain their historical response-mode instructions through compatibility helpers; their data, hashes and prompt strings are unchanged.
 
 For a trained Hybrid 4B answer (with local Corpus V1 retrieval metadata prepared):
 

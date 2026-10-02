@@ -8,10 +8,6 @@
 .chat-composer textarea::placeholder { color: var(--text-muted); }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 5px; }
 .composer-leading-actions { display: flex; align-items: center; gap: 10px; }
-.response-detail-control { display: grid; width: min(100%, 260px); gap: 2px; margin: 2px 0 6px; color: var(--text-secondary); font-size: 10px; }
-.response-detail-control label strong { color: var(--text-primary); }
-.response-detail-control input { width: 100%; accent-color: var(--accent); cursor: pointer; }
-.response-detail-ticks { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 9px; }
 .composer-attach { width: 34px; height: 34px; }
 .composer-attach svg { width: 17px; height: 17px; }
 .composer-submit { width: 36px; height: 36px; border-radius: 11px; }
@@ -49,8 +45,6 @@
 .attachment-remove svg { width: 13px; height: 13px; }
 @media (max-width: 540px) {
   .composer-leading-actions { gap: 5px; }
-  .response-detail-control { width: min(100%, 260px); }
-  .response-detail-ticks { font-size: 8px; }
   .composer-shell { padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
   .chat-composer { padding: 13px 12px 10px; border-radius: var(--radius-lg); }
   .chat-composer textarea { font-size: 16px; min-height: 52px; }

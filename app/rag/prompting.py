@@ -1,4 +1,8 @@
-"""Small grounded-answer prompt shared by both final generators."""
+"""Fixed grounded prompt for live generators, with explicit offline compatibility.
+
+Live Hybrid/Central callers omit the optional mode and use SYSTEM_PROMPT exactly.
+Explicit mode arguments preserve frozen six-way evaluation prompt bytes.
+"""
 
 from typing import Any
 
@@ -34,7 +38,7 @@ def build_messages(question: str, contexts: list[dict[str, Any]],
 
 
 def build_no_rag_messages(question: str, *, response_mode: ResponseMode = "standard") -> list[dict[str, str]]:
-    """Knowledge-only baseline: no retrieved context or fabricated citations."""
+    """Offline knowledge-only baseline; retain historical mode instructions."""
     return [
         {"role": "system", "content": (
             "Bạn là trợ lý trả lời câu hỏi lịch sử. Nếu không biết chắc, hãy nói rõ giới hạn; "

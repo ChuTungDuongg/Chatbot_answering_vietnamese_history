@@ -147,7 +147,7 @@ def runtime_smoke(generate: bool = False, central: bool = False,
                 conversation.raise_for_status()
                 response = client.post("/api/v1/chat", headers=headers, json={
                     "conversation_id": conversation.json()["id"], "question": question,
-                    "mode": mode, "response_mode": "concise", "final_k": 3})
+                    "mode": mode, "final_k": 3})
                 if response.is_error:
                     raise RuntimeError(f"{mode} HTTP {response.status_code}: {response.text}")
                 response.raise_for_status()

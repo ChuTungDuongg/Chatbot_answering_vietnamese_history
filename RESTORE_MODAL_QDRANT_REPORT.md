@@ -386,7 +386,7 @@ $retrievalBody = @{question='Chiến thắng Bạch Đằng năm 938 có ý ngh�
 Invoke-RestMethod -Method Post -Uri "$base/api/v1/retrieve" -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($retrievalBody)) -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 1200
 $headers = @{'X-Client-ID'='terminal-smoke'}
 $c = Invoke-RestMethod -Method Post -Uri "$base/api/v1/conversations" -Headers $headers -ContentType 'application/json' -Body '{}'
-$body = @{conversation_id=$c.id; question='Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?'; mode='hybrid'; response_mode='concise'; final_k=3} | ConvertTo-Json
+$body = @{conversation_id=$c.id; question='Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?'; mode='hybrid'; final_k=3} | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri "$base/api/v1/chat" -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 1200
 ```
 

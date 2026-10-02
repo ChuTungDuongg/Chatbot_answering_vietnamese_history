@@ -4,16 +4,13 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 
 from app.config import Settings
 from app.models.qwen import QwenRuntime
 from app.rag.prompting import build_messages, build_no_rag_messages
 from app.rag.response_modes import MODE_INSTRUCTIONS
-from app.schemas import ChatRequest
 from evaluation.schema import Question
 from evaluation.six_way import (SYSTEMS, SYSTEM_NAMES, _append, _read_jsonl,
                                 aggregate, score_prediction, select_systems)
@@ -24,19 +21,18 @@ from training.train_qwen3 import (SFT_LOSS_OPTIONS, assert_split_isolation, buil
 
 
 @pytest.mark.parametrize("mode", ["concise", "standard", "detailed"])
-def test_response_mode_crosses_schema_and_prompt_without_retrieval_change(mode):
-    payload = ChatRequest(conversation_id=uuid4(), question="Chiến thắng Bạch Đằng?", response_mode=mode)
-    assert payload.response_mode == mode
-    assert MODE_INSTRUCTIONS[mode] in build_messages(payload.question, [], response_mode=mode)[0]["content"]
-    no_rag = build_no_rag_messages(payload.question, response_mode=mode)
+def test_offline_response_mode_preserves_grounded_and_no_rag_prompts(mode):
+    question = "Chiến thắng Bạch Đằng?"
+    assert MODE_INSTRUCTIONS[mode] in build_messages(question, [], response_mode=mode)[0]["content"]
+    no_rag = build_no_rag_messages(question, response_mode=mode)
     assert MODE_INSTRUCTIONS[mode] in no_rag[0]["content"]
     assert len(no_rag) == 2 and "Nguồn được truy xuất" not in str(no_rag)
 
 
-def test_response_default_and_invalid():
-    assert ChatRequest(conversation_id=uuid4(), question="Lịch sử Việt Nam?").response_mode == "standard"
-    with pytest.raises(ValidationError):
-        ChatRequest(conversation_id=uuid4(), question="Lịch sử Việt Nam?", response_mode="verbose")
+def test_offline_default_and_invalid_mode_and_missing_adapter():
+    assert MODE_INSTRUCTIONS["standard"] in build_no_rag_messages("Lịch sử Việt Nam?")[0]["content"]
+    with pytest.raises(ValueError):
+        build_messages("Lịch sử Việt Nam?", [], response_mode="verbose")
     with pytest.raises(ValueError):
         Settings(model_variant="sft", model_adapter_path=None)
 

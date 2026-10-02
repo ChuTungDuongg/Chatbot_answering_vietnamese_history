@@ -39,6 +39,21 @@ test("hiển thị hội thoại đã có sau khi bootstrap", async () => {
   expect(await screen.findByRole("heading", { name: "Nhà Trần", level: 1 })).toBeInTheDocument();
 });
 
+test("composer keeps inference modes and ignores stored response detail", async () => {
+  window.localStorage.setItem("vn-history-response-mode", "detailed");
+  const readStorage = vi.spyOn(Storage.prototype, "getItem");
+  const writeStorage = vi.spyOn(Storage.prototype, "setItem");
+  render(<App />);
+  await screen.findByRole("heading", { name: "Nhà Trần", level: 1 });
+  expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Độ chi tiết/)).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Nội dung câu hỏi" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Tải PDF hoặc hình ảnh" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Gửi câu hỏi" })).toBeInTheDocument();
+  expect(readStorage).not.toHaveBeenCalledWith("vn-history-response-mode");
+  expect(writeStorage.mock.calls.some(([key]) => key === "vn-history-response-mode")).toBe(false);
+});
+
 test.each([["hybrid", "Hybrid RAG"], ["central", "Central Agent"]])("gửi câu hỏi ở mode %s thì câu trả lời hiện trên màn hình", async (mode, label) => {
   const CAU_HOI = "Vì sao nhà Trần suy yếu?";
   const CAU_TRA_LOI = "Nhà Trần suy yếu vì nhiều nguyên nhân.";
