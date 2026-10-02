@@ -123,8 +123,11 @@ def test_qwen_generate_joins_worker_and_releases_inputs(raises):
         with pytest.raises(RuntimeError, match="fake generation failure"):
             asyncio.run(runtime.generate([{"role": "user", "content": "x"}], max_new_tokens=4))
     else:
-        answer, done = asyncio.run(runtime.generate([{"role": "user", "content": "x"}], max_new_tokens=4))
+        cancel = threading.Event()
+        answer, done = asyncio.run(runtime.generate(
+            [{"role": "user", "content": "x"}], max_new_tokens=4, cancel=cancel))
         assert answer == "answer" and done.output_tokens == 1
+        assert not cancel.is_set()  # Successful completion must reach the API caller.
     assert {thread.ident for thread in threading.enumerate() if thread.name == "qwen-generate"} == before
     assert not runtime._generate_lock.locked()
     gc.collect()

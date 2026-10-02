@@ -314,13 +314,13 @@ def test_hybrid_uses_either_dense_backend_without_changing_fusion():
         (row["chunk_id"], row["rrf_score"]) for row in b]
 
 
-def test_faiss_mode_needs_no_qdrant_and_qdrant_needs_url(monkeypatch):
+def test_faiss_mode_needs_no_qdrant_and_qdrant_needs_url(monkeypatch, tmp_path):
     baseline = Settings(_env_file=None, retrieval_dense_backend="faiss")
     assert baseline.faiss_path in baseline.required_retrieval_paths()
     assert baseline.qdrant_manifest_path not in baseline.required_retrieval_paths()
     import app.services.rag_service as service_module
     monkeypatch.setattr(service_module, "settings", Settings(
-        _env_file=None, retrieval_dense_backend="qdrant", qdrant_url=None))
+        _env_file=None, artifact_root=tmp_path, retrieval_dense_backend="qdrant", qdrant_url=None))
     with pytest.raises(RuntimeError, match="index is not finalized"):
         RAGService()._load_qdrant()
 

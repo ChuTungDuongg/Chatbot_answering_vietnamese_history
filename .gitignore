@@ -89,6 +89,8 @@ output/
 # Deployment artifacts
 # =========================
 # Deployment bundles belong in Modal Volume / Drive, not Git.
+/vn_history_*_release.zip
+/portable_backup/
 artifacts/vn_history_deployment/
 artifacts/vn_history_modal/
 /artifacts/corpus_v1/

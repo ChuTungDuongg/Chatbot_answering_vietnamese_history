@@ -187,6 +187,7 @@ class QwenRuntime:
 
         worker = threading.Thread(target=generate_worker, name="qwen-generate", daemon=False)
         worker.start()
+        generation_finished = False
         try:
             while True:
                 try:
@@ -198,6 +199,7 @@ class QwenRuntime:
                 if kind == "delta":
                     yield ModelDelta(str(value), produced_ns)
                 elif kind == "done":
+                    generation_finished = True
                     yield value
                     break
                 elif kind == "error":
@@ -205,7 +207,8 @@ class QwenRuntime:
                 elif kind == "cancelled":
                     break
         finally:
-            cancel.set()
+            if not generation_finished:
+                cancel.set()
             # A timed join can leave generate() and its CUDA inputs alive after
             # the caller has moved to the next question or model.
             worker.join()

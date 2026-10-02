@@ -11,6 +11,7 @@ from app.chat_modes import ChatMode, normalize_chat_mode
 
 HYBRID_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 CENTRAL_MODEL_ID = "Qwen/Qwen3-8B"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
     app_version: str = "2.0.0"
     app_env: str = "development"
     app_mode: Literal["api-only", "retrieval-only", "full"] = "api-only"
-    artifact_root: Path = Path("./artifacts/vn_history_deployment")
+    artifact_root: Path = REPO_ROOT / "artifacts" / "corpus_v1"
     corpus_path_override: Path | None = Field(default=None, validation_alias="CORPUS_PATH")
     retrieval_root: Path | None = None
     inference_config_path_override: Path | None = Field(default=None, validation_alias="INFERENCE_CONFIG_PATH")
@@ -55,7 +56,7 @@ class Settings(BaseSettings):
     central_enable_web: bool = False
     web_search_provider: str = "local-only"
     web_search_api_key: str | None = None
-    chat_database_path: Path = Path("./data/chat.sqlite3")
+    chat_database_path: Path = REPO_ROOT / "data" / "chat.sqlite3"
     cors_origins_value: str = Field(default="http://localhost:5173,http://127.0.0.1:5173", validation_alias="CORS_ORIGINS", exclude=True)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8",
@@ -72,6 +73,23 @@ class Settings(BaseSettings):
     @classmethod
     def empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("artifact_root", "corpus_path_override", "retrieval_root",
+                     "inference_config_path_override", "runtime_manifest_path",
+                     "model_adapter_path", "model_cache_dir", "chat_database_path", mode="after")
+    @classmethod
+    def resolve_repo_path(cls, value):
+        if value is None:
+            return None
+        return value if value.is_absolute() else (REPO_ROOT / value).resolve()
+
+    @model_validator(mode="after")
+    def select_v1_layout(self):
+        # V1 enables the existing strict corpus/index identity validation.
+        # An explicit legacy ARTIFACT_ROOT retains the V0 bundle contract.
+        if self.artifact_root.name == "corpus_v1" and self.retrieval_root is None:
+            self.retrieval_root = self.artifact_root / "retrieval"
+        return self
 
     @field_validator("hybrid_model_id")
     @classmethod
@@ -119,7 +137,11 @@ class Settings(BaseSettings):
 
     @property
     def corpus_path(self) -> Path:
-        return self.corpus_path_override or self.artifact_root / "corpus" / "vn_history_rag_chunks_enriched.jsonl"
+        if self.corpus_path_override:
+            return self.corpus_path_override
+        if self.artifact_root.name == "corpus_v1":
+            return self.artifact_root / "chunks.jsonl"
+        return self.artifact_root / "corpus" / "vn_history_rag_chunks_enriched.jsonl"
 
     @property
     def retrieval_dir(self) -> Path:
@@ -155,6 +177,8 @@ class Settings(BaseSettings):
             return self.inference_config_path_override
         if self.corpus_path_override and self.retrieval_root:
             return self.corpus_path.parent / "runtime" / "inference_config.json"
+        if self.artifact_root.name == "corpus_v1":
+            return self.artifact_root / "runtime" / "inference_config.json"
         return self.artifact_root / "config" / "inference_config.json"
 
     @property
@@ -163,6 +187,8 @@ class Settings(BaseSettings):
             return self.runtime_manifest_path
         if self.corpus_path_override and self.retrieval_root:
             return self.corpus_path.parent / "runtime" / "manifest.json"
+        if self.artifact_root.name == "corpus_v1":
+            return self.artifact_root / "runtime" / "manifest.json"
         return self.artifact_root / "manifest.json"
 
     def required_retrieval_paths(self) -> list[Path]:

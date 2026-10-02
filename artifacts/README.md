@@ -1,6 +1,10 @@
 # Retrieval artifacts
 
-The baseline reads an existing historical corpus and its retrieval indexes from `ARTIFACT_ROOT` (default `artifacts/vn_history_deployment`). Git does not contain the large deployment files. Restoring them is an explicit setup step; application startup never builds or rewrites them.
+The current runtime defaults to `ARTIFACT_ROOT=artifacts/corpus_v1`, resolved from the repository root. Modal reads `/artifacts/corpus_v1/chunks.jsonl` from `vn-history-artifacts`. See [the current restoration report](../RESTORE_MODAL_QDRANT_REPORT.md) and [quick start](../MODAL_QUICKSTART.md). Git does not contain large deployment files; startup never builds or rewrites them.
+
+V1 contains `chunks.jsonl`, `documents.jsonl`, `retrieval/{faiss,bm25s_index,qdrant}`, and `runtime/{inference_config.json,manifest.json}`. The 2026-09-30 release has finalized FAISS/BM25S indexes for 624,288 chunks. Qdrant metadata refers to the separate remote collection `vn_history_v1_e5`.
+
+V0 remains available locally at `artifacts/vn_history_deployment` through an explicit `ARTIFACT_ROOT`. The following tree describes that preserved legacy bundle:
 
 ```text
 artifacts/vn_history_deployment/
@@ -30,8 +34,7 @@ New corpus or index outputs belong in separate paths and require a separately re
 
 ## UVW-2026 Corpus V1 full candidate
 
-**Corpus V1 full candidate build completed; indexing and retrieval evaluation are
-still pending.** The supplied full-build report records 1.118M source Wikipedia
+The following build statistics are historical provenance. The restored release now includes completed retrieval indexes and runtime metadata. The supplied full-build report records 1.118M source Wikipedia
 records scanned, 145,648 retained documents, and 624,288 RAG chunks. Chunking
 used a hard maximum of 384 tokens and 48 configured overlap tokens; chunks
 averaged about 289 tokens (median 315). The build took about 58 minutes.
@@ -98,10 +101,9 @@ overlap.
 | Elapsed seconds | 3,496.47 |
 
 `documents.jsonl` preserves the full retained articles and source provenance.
-`chunks.jsonl` is the primary input for retrieval indexing. There is no
-accepted V1 FAISS/BM25S index yet. V0 remains the runtime and evaluation
-baseline until V1 indexing and a reviewed comparison are complete; these
-build statistics do not establish that V1 is better.
+`chunks.jsonl` is the primary input for retrieval. V1 is now the runtime default;
+V0 is preserved for explicit reproduction and comparison. These build statistics
+do not establish that V1 is better.
 
 The intended local layout is:
 
@@ -115,13 +117,12 @@ artifacts/
     └── [local archive of previous artifacts]
 ```
 
-Only the two JSONL files were present under `artifacts/corpus_v1/` at this
-inspection. Copy genuine small build manifests and reports if available;
-do not fabricate them. `artifacts/corpus_v1/` is generated local data and
+The historical inspection originally found only two JSONL files; the release restore
+also supplies existing retrieval and runtime manifests. `artifacts/corpus_v1/` is generated local data and
 must not be committed. `artifacts/old_corpus/` is the user's local archive,
 not a new runtime source of truth, and must not be committed.
 
-The historical preservation manifest still targets the original V0 paths; its
-audit reports missing files while those artifacts are archived locally. The
-runtime default remains V0. See [the V1 indexing guide](../docs/CORPUS_V1_INDEXING.md)
-for preflight and future index-build instructions.
+The historical preservation manifest still targets original V0 paths; its broader
+inventory includes files deliberately excluded from runtime backups. Runtime V0 is
+restored locally, and runtime V1 is the default. The [V1 indexing guide](../docs/CORPUS_V1_INDEXING.md)
+describes earlier build preparation; use the restoration report for current serving.
