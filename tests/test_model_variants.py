@@ -52,7 +52,17 @@ def test_full_startup_loads_selected_hybrid_once(monkeypatch, tmp_path, variant)
             self.loads += 1
             self.model = SimpleNamespace(peft_config={"default": {}} if self.adapter_path else None)
 
-    monkeypatch.setattr(main, "QwenRuntime", FakeQwen)
+        @property
+        def is_loaded(self):
+            return self.model is not None
+
+        async def aload(self):
+            self.load()
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(main, "build_model_runtime", FakeQwen)
     app = SimpleNamespace(state=SimpleNamespace())
 
     async def start():

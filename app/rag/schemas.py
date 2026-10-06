@@ -15,3 +15,4 @@ class PreparedAnswer:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_parse_failures: int = 0
     action_rounds: int = 0
+    planning: dict[str, Any] = field(default_factory=dict)

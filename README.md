@@ -9,6 +9,19 @@ A reproducible baseline for answering Vietnamese history questions with grounded
 
 Both modes use the same preserved historical corpus and shared retriever. The baseline keeps multilingual E5, FAISS, BM25S, weighted RRF, cross-encoder reranking, and context selection. Hybrid SFT attaches a local PEFT adapter to the same 4B base model; its tokenizer comes from the base model. Hybrid vanilla and Central use no adapter. Generation defaults to `do_sample=false` and `enable_thinking=false`.
 
+Hybrid vanilla and SFT share `settings.hybrid_max_new_tokens`, default **1536**.
+Set `HYBRID_MAX_NEW_TOKENS=1024` or `2048` before startup to override it, including
+before `modal serve`/`deploy`. This is a ceiling; answer style and natural EOS are
+unchanged. Central's final ceiling remains **1536**. Generation metadata and the
+developer trace record the actual budget and observed termination (`stop`,
+`length`, or unknown/null), with `hit_max_new_tokens` and `truncated`.
+
+Central distinguishes the Vietnamese corpus from external evidence tools while
+respecting request tool permissions. Its trace exposes planner round timing,
+tokens, requested tools and a breakdown of time before final generation. Explicit
+planner completion can skip a redundant round only after successful usable
+evidence without pending dependencies. See [runtime telemetry](docs/RUNTIME_TELEMETRY.md).
+
 The project includes real model-token SSE streaming, an HTTP latency benchmark, retrieval and answer evaluation, and a read-only corpus audit. See [the architecture](docs/ARCHITECTURE.md) for the execution paths.
 
 ## Repository map
@@ -79,7 +92,16 @@ npm run frontend
 
 Set `VITE_API_BASE_URL=http://127.0.0.1:8000` in `frontend/.env` before starting Vite. For the Modal development backend, `npm run dev` starts the frontend and `modal serve modal_app.py` together. The stream endpoint is `POST /api/v1/chat/stream`; `answer_delta` carries actual generated text, while status events may arrive earlier.
 
-For Modal, export `MODEL_VARIANT=vanilla` (the default), or export `MODEL_VARIANT=sft` and `MODEL_ADAPTER_PATH=/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter` before `modal serve modal_app.py` or `modal deploy modal_app.py`. The `/artifacts` Modal Volume must contain that directory and `adapter_model.safetensors` for SFT. No adapter weights are stored in Git.
+For Modal, `modal_app.py` automatically reads the repository-root `.env`. Start the
+backend with `modal serve modal_app.py`. To switch Hybrid to SFT, edit
+`MODEL_VARIANT=vanilla` to `MODEL_VARIANT=sft` in `.env`, stop the current process and
+run the same command again. Modal automatically uses
+`/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter` on its mounted Volume;
+no local `MODEL_ADAPTER_PATH` is needed for Modal. Central remains vanilla Qwen3-8B.
+Existing shell environment variables take precedence over `.env`; remove an old
+`$env:MODEL_VARIANT` override if you want the file's value to apply. The `/artifacts`
+Modal Volume must contain that directory and `adapter_model.safetensors` for SFT.
+No adapter weights are stored in Git. See [Modal quick start](MODAL_QUICKSTART.md).
 
 ## Preserve and audit the corpus
 

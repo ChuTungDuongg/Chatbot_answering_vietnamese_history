@@ -13,6 +13,8 @@ HEADLINE_METRICS = (
     "itl_p50_ms", "itl_p95_ms", "itl_p99_ms",
     "model_calls", "tool_calls", "tool_execution_ms", "tool_parse_failures",
     "action_rounds", "time_until_final_generation_ms", "final_answer_ttft_ms",
+    "planning_model_ms", "planning_model_ttft_ms", "planning_wall_ms",
+    "planning_input_tokens", "planning_output_tokens", "dense_search_ms", "output_tokens",
 )
 
 
@@ -33,19 +35,24 @@ def distribution(values: Iterable[float | int | None]) -> dict[str, float | int 
             "p95": percentile(.95), "p99": percentile(.99)}
 
 
-def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(records: list[dict[str, Any]], *, phase_durations_s: dict[str, float] | None = None) -> dict[str, Any]:
     """Cold, warm, and warmup observations are always separate."""
     groups: dict[str, Any] = {}
     for phase in ("cold", "warm", "warmup"):
         rows = [row for row in records if row.get("phase") == phase]
         successful = [row for row in rows if row.get("success") is True]
         count = len(rows)
+        wall = (phase_durations_s or {}).get(phase)
         groups[phase] = {
             "count": count,
             "success_count": len(successful),
             "error_count": count - len(successful),
             "success_rate": len(successful) / count if count else None,
             "error_rate": (count - len(successful)) / count if count else None,
+            "wall_seconds": wall,
+            "successful_requests_per_second": len(successful) / wall if wall and wall > 0 else None,
+            "output_tokens_per_second": sum(row.get("output_tokens") or 0 for row in successful) / wall
+                if wall and wall > 0 and all(row.get("output_tokens") is not None for row in successful) else None,
             "metrics": {name: distribution(row.get(name) for row in successful)
                         for name in HEADLINE_METRICS},
         }

@@ -1,5 +1,12 @@
 # Baseline HTTP SSE benchmark
 
+The production application can select Transformers (default) or optional vLLM
+without changing this HTTP/SSE contract. For the frozen 100-question dataset,
+isolated Modal deployments, C1/C2/C4/C8 experiment matrix, comparison invariants
+and Drive/Colab workflow, see [VLLM_LATENCY_EXPERIMENTS.md](VLLM_LATENCY_EXPERIMENTS.md).
+The original commands below remain supported. Run metadata now includes actual
+backend/version/effective engine settings, deployment source SHA and topology.
+
 The benchmark calls the real `POST /api/v1/chat/stream` endpoint. It creates a fresh conversation before each timed request, sends `X-Client-ID`, consumes actual SSE frames, and uses `time.perf_counter_ns()` for client observations. Conversation creation is outside the timed interval. The client saves **one raw JSONL row for every cold, warmup, and warm request**, including failures. It never calls a Python generation function.
 
 ## Run it
@@ -68,5 +75,17 @@ Where the server also reports first-status, E2E, or ITL values, the raw row stor
 Central rows can additionally carry `model_calls`, `tool_calls`, `tool_call_types`, `tool_execution_ms`, `tool_parse_failures`, `action_rounds`, `time_until_final_generation_ms`, and `final_answer_ttft_ms` from server telemetry. Missing Central observations remain null.
 
 ## Comparison discipline
+
+`benchmarks.latency.compare` orchestrates already-deployed variants and rejects
+invalid comparisons before measured work. It produces experiment-level JSON and
+Markdown, separates modes/populations/concurrency, retains failed raw records,
+and labels latency reduction versus throughput increase explicitly. Strict SSE
+guardrails and optional existing offline quality evaluation complement latency
+metrics; neither proves answer equivalence. Aggregate successful requests/s and
+output tokens/s use phase wall time, including conversation/client scheduling.
+Central additionally records planning_model_ms, planning_wall_ms, planner tokens,
+per-round metrics and dense_search_ms. Generation termination and timing-observer
+metadata are preserved in raw records. vLLM uses engine-core monotonic model
+timestamps where supported; queue time still appears in answer TTFT and E2E.
 
 Keep dataset hash, corpus/index hashes, exact model IDs and revisions, generation settings (`do_sample=false`, `enable_thinking=false` for the baseline), retrieval settings, hardware, server restart procedure, and load level fixed when comparing changes. Report cold and warm separately. Compare like-for-like concurrency; never mix concurrency 1 with concurrency 4 in a single headline. The included question fixture has no quality labels and is only a pipeline smoke test. Do not report its timing as representative of all Vietnamese history questions.

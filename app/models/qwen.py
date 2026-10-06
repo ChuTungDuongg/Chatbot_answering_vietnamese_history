@@ -9,11 +9,12 @@ import time
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from app.models.base import ModelDelta, ModelDone
+from app.models.base import ModelDelta, ModelDone, chat_prompt
 from app.models.identity import file_tree_sha
 
 
 class QwenRuntime:
+    inference_backend = "transformers"
     def __init__(self, *, model_id: str, revision: str | None = None,
                  device: str = "cpu", dtype: str = "bfloat16", cache_dir: str | None = None,
                  local_files_only: bool = False, do_sample: bool = False,
@@ -49,6 +50,26 @@ class QwenRuntime:
         self.adapter_fingerprint: str | None = None
         self._load_lock = threading.Lock()
         self._generate_lock = threading.Lock()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.model is not None
+
+    @property
+    def engine_metadata(self) -> dict[str, Any]:
+        import importlib.metadata
+
+        return {"inference_backend": self.inference_backend,
+                "inference_engine_version": importlib.metadata.version("transformers"),
+                "inference_engine_config": {"generation_serialized": True}}
+
+    async def aload(self) -> None:
+        await asyncio.to_thread(self.load)
+
+    async def aclose(self) -> None:
+        # Existing callers also own this runtime; retain the reference backend's
+        # model lifetime rather than changing CUDA eviction behavior.
+        pass
 
     @property
     def model_variant(self) -> str:
@@ -108,11 +129,8 @@ class QwenRuntime:
 
     def _prepare(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None):
         self.load()
-        template_options = {"tokenize": False, "add_generation_prompt": True,
-                            "enable_thinking": self.enable_thinking}
-        if tools:
-            template_options["tools"] = tools
-        prompt = self.tokenizer.apply_chat_template(messages, **template_options)
+        prompt = chat_prompt(self.tokenizer, messages, tools=tools,
+                             enable_thinking=self.enable_thinking)
         inputs = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
         inputs = inputs.to(self.model.get_input_embeddings().weight.device)
         return inputs, int(inputs["input_ids"].shape[-1])
@@ -137,6 +155,7 @@ class QwenRuntime:
             first_ns: int | None = None
             last_ns: int | None = None
             output_tokens = 0
+            cancelled = False
 
             def __call__(self, input_ids, scores, **kwargs) -> bool:
                 now = time.perf_counter_ns()
@@ -144,7 +163,8 @@ class QwenRuntime:
                     self.first_ns = now
                 self.last_ns = now
                 self.output_tokens = max(0, int(input_ids.shape[-1]) - input_tokens)
-                return cancel.is_set()
+                self.cancelled = cancel.is_set()
+                return self.cancelled
 
         clock = TokenClock()
 
@@ -165,7 +185,7 @@ class QwenRuntime:
                     with torch.inference_mode():
                         sampling = ({"temperature": self.temperature, "top_p": self.top_p}
                                     if self.do_sample else {})
-                        self.model.generate(
+                        generated = self.model.generate(
                             **inputs, streamer=streamer, max_new_tokens=max_new_tokens,
                             do_sample=self.do_sample, use_cache=True,
                             **sampling,
@@ -176,11 +196,39 @@ class QwenRuntime:
                 finally:
                     self._generate_lock.release()
                 finished_ns = clock.last_ns or time.perf_counter_ns()
+                # Inspect the actual generated IDs, never re-tokenize decoded text.
+                # EOS at the token ceiling is still a natural stop. Backends that
+                # don't expose sequences, or have other stopping rules, stay unknown.
+                sequences = getattr(generated, "sequences", generated)
+                reason = None
+                output_tokens = clock.output_tokens
+                if clock.cancelled:
+                    reason = "cancelled"
+                elif isinstance(sequences, torch.Tensor) and sequences.ndim == 2 and sequences.shape[0] == 1:
+                    output_tokens = max(0, int(sequences.shape[-1]) - input_tokens)
+                    eos_ids = self.tokenizer.eos_token_id
+                    config = getattr(self.model, "generation_config", None)
+                    if eos_ids is None:
+                        eos_ids = getattr(config, "eos_token_id", None)
+                    if isinstance(eos_ids, int):
+                        eos_ids = [eos_ids]
+                    elif isinstance(eos_ids, torch.Tensor):
+                        eos_ids = eos_ids.flatten().tolist()
+                    if output_tokens and int(sequences[0, -1].item()) in (eos_ids or []):
+                        reason = "stop"
+                    elif (output_tokens == max_new_tokens
+                          and getattr(config, "max_time", None) is None
+                          and not getattr(config, "stop_strings", None)):
+                        reason = "length"
+                hit_limit = reason == "length" if reason in {"stop", "length"} else None
                 messages_queue.put(("done", ModelDone(
                     model_id=self.model_id, model_revision=self.resolved_revision,
                     started_ns=started_ns, first_token_ns=clock.first_ns,
                     finished_ns=finished_ns, input_tokens=input_tokens,
-                    output_tokens=clock.output_tokens,
+                    output_tokens=output_tokens, max_new_tokens=max_new_tokens,
+                    finish_reason=reason, hit_max_new_tokens=hit_limit,
+                    truncated=hit_limit,
+                    timing_observer="transformers_generation_worker_monotonic",
                 ), time.perf_counter_ns()))
             except BaseException as exc:
                 messages_queue.put(("error", exc, time.perf_counter_ns()))

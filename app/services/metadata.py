@@ -88,7 +88,8 @@ def _hardware() -> dict[str, Any]:
             "cpu": platform.processor() or None, "cpu_count": os.cpu_count(),
             "ram_bytes": ram_bytes, "gpu_model": gpu_model,
             "gpu_memory_bytes": gpu_memory_bytes, "cuda_version": cuda_version,
-            "torch_version": _version("torch"), "transformers_version": _version("transformers")}
+            "torch_version": _version("torch"), "transformers_version": _version("transformers"),
+            "fastapi_version": _version("fastapi"), "numpy_version": _version("numpy")}
 
 
 def _git_commit() -> str | None:
@@ -113,7 +114,12 @@ def build_baseline_metadata(mode: str, app: Any) -> dict[str, Any]:
                   if mode == "hybrid" else settings.central_final_max_new_tokens}
     retrieval = retriever.retrieval_config if retriever is not None else None
     service = getattr(app.state, "rag_service", None)
-    return {"schema_version": 1, "git_commit": _git_commit(), "mode": mode,
+    return {"schema_version": 1, "git_commit": os.getenv("DEPLOYMENT_GIT_COMMIT") or _git_commit(), "mode": mode,
+            "deployment_source_sha256": os.getenv("DEPLOYMENT_SOURCE_SHA256"),
+            **(getattr(model, "engine_metadata", None) or {
+                "inference_backend": settings.inference_backend,
+                "inference_engine_version": _version(settings.inference_backend),
+                "inference_engine_config": None}),
             "model_variant": getattr(model, "model_variant", settings.model_variant if mode == "hybrid" else "vanilla"),
             "adapter_attached": getattr(model, "adapter_attached", False),
             "adapter_fingerprint": getattr(model, "adapter_fingerprint", None),
@@ -130,4 +136,17 @@ def build_baseline_metadata(mode: str, app: Any) -> dict[str, Any]:
             "generation_settings": generation, "retrieval_settings": retrieval,
             "retrieval_backends": (service.readiness().get("retrieval") if service else None),
             "server_hardware": _hardware(),
-            "server_environment": {"app_mode": settings.app_mode, "app_env": settings.app_env}}
+            "server_environment": {"app_mode": settings.app_mode, "app_env": settings.app_env,
+                                   "enable_hybrid_mode": settings.enable_hybrid_mode,
+                                   "enable_central_mode": settings.enable_central_mode,
+                                   "runtime_loading_strategy": settings.runtime_loading_strategy,
+                                   "deployment_name": os.getenv("MODAL_APP_NAME"),
+                                   "modal_max_inputs": int(os.getenv("MODAL_MAX_INPUTS", "1")) if os.getenv("MODAL_APP_NAME") else None,
+                                   "modal_gpu_class": os.getenv("MODAL_GPU_CLASS"),
+                                   "runtime_image": os.getenv("MODAL_RUNTIME_IMAGE", "transformers")},
+            "central_settings": {"max_action_rounds": settings.central_max_action_rounds,
+                                 "action_max_new_tokens": settings.central_action_max_new_tokens,
+                                 "documents": settings.central_enable_documents,
+                                 "wikipedia": settings.central_enable_wikipedia,
+                                 "web": settings.central_enable_web,
+                                 "mcp_enabled": settings.mcp_enabled}}

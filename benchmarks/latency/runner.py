@@ -9,6 +9,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -70,7 +71,7 @@ def _server_metadata(base_url: str, client_id: str, timeout: float, mode: str) -
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=min(timeout, 30)) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             value = json.load(response)
     except Exception as exc:
         raise RuntimeError(f"could not fetch server baseline metadata: {exc}") from exc
@@ -129,6 +130,9 @@ def run(args: argparse.Namespace) -> Path:
         "generation_settings": _for_mode(observed_metadata.get("generation_settings"), args.mode),
         "retrieval_settings": _for_mode(observed_metadata.get("retrieval_settings"), args.mode),
         "server_environment": observed_metadata.get("server_environment"),
+        **{key: observed_metadata.get(key) for key in (
+            "inference_backend", "inference_engine_version", "inference_engine_config",
+            "central_settings", "deployment_source_sha256")},
     }
     selected_metadata = {
         key: _merge_observed(value, metadata_extra.get(key), key)
@@ -158,8 +162,18 @@ def run(args: argparse.Namespace) -> Path:
         "retrieval_settings": selected_metadata["retrieval_settings"],
         "server_environment": selected_metadata["server_environment"],
         "server_metadata_schema_version": observed_metadata.get("schema_version"),
+        **{key: selected_metadata[key] for key in (
+            "inference_backend", "inference_engine_version", "inference_engine_config",
+            "central_settings", "deployment_source_sha256")},
+        "experiment_id": getattr(args, "experiment_id", None),
+        "variant_id": getattr(args, "variant_id", None),
+        "population": getattr(args, "population", None) or ("hybrid" if args.mode == "hybrid" else "realistic_central"),
+        "request_options": getattr(args, "request_options", None) or {},
+        "strict_contract": getattr(args, "strict_contract", False), "status": "running",
     }
+    write_json(output / "run_metadata.json", metadata)
     rows: list[dict] = []
+    phase_durations_s: dict[str, float] = {}
     raw_path = output / "latency_records.jsonl"
     with raw_path.open("x", encoding="utf-8") as handle:
         def save(row: dict) -> None:
@@ -171,17 +185,32 @@ def run(args: argparse.Namespace) -> Path:
             question, phase, index = item
             return measure_request(base_url=args.base_url, question=question, mode=args.mode,
                                    client_id=client_id, timeout=args.timeout,
-                                   phase=phase, run_index=index)
+                                   phase=phase, run_index=index,
+                                   request_options=metadata["request_options"],
+                                   strict_contract=metadata["strict_contract"], expected_model_id=metadata["model_id"])
 
         dataset = [q.model_dump(mode="json") for q in questions]
         if args.cold_start:
+            started = time.perf_counter()
             save(measure((dataset[0], "cold", 0)))
+            phase_durations_s["cold"] = time.perf_counter() - started
+        started = time.perf_counter()
         for index in range(args.warmup):
             save(measure((dataset[index % len(dataset)], "warmup", index)))
+        phase_durations_s["warmup"] = time.perf_counter() - started
         work = [(question, "warm", repeat) for repeat in range(args.runs) for question in dataset]
+        started = time.perf_counter()
         with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
             for row in pool.map(measure, work):
                 save(row)
+        phase_durations_s["warm"] = time.perf_counter() - started
+    # Keep a self-describing raw run even if telemetry invariants fail below.
+    metadata["phase_durations_s"] = phase_durations_s
+    metadata["status"] = "measured"
+    write_json(output / "run_metadata.json", metadata)
+    summary = summarize(rows, phase_durations_s=phase_durations_s)
+    write_json(output / "latency_summary.json", summary)
+    (output / "latency_summary.md").write_text(render_markdown(summary, metadata), encoding="utf-8")
     observed_model_ids = {row["model_id"] for row in rows if row.get("model_id")}
     observed_revisions = {row["model_revision"] for row in rows if row.get("model_revision")}
     if len(observed_model_ids) > 1 or len(observed_revisions) > 1:
@@ -196,7 +225,8 @@ def run(args: argparse.Namespace) -> Path:
         if metadata["model_revision"] and metadata["model_revision"] != observed:
             raise ValueError("declared model_revision differs from server telemetry")
         metadata["model_revision"] = observed
-    for field in ("model_variant", "adapter_attached", "adapter_fingerprint"):
+    for field in ("model_variant", "adapter_attached", "adapter_fingerprint", "inference_backend",
+                  "inference_engine_version", "inference_engine_config"):
         observed = [row[field] for row in rows if row.get(field) is not None]
         if observed:
             if any(value != observed[0] for value in observed[1:]):
@@ -212,7 +242,8 @@ def run(args: argparse.Namespace) -> Path:
             if metadata[setting] is not None and metadata[setting] != observed[0]:
                 raise ValueError(f"declared {setting} differs from server telemetry")
             metadata[setting] = observed[0]
-    summary = summarize(rows)
+    metadata["status"] = "complete"
+    summary = summarize(rows, phase_durations_s=phase_durations_s)
     write_json(output / "run_metadata.json", metadata)
     write_json(output / "latency_summary.json", summary)
     (output / "latency_summary.md").write_text(render_markdown(summary, metadata), encoding="utf-8")
@@ -233,7 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--metadata-file", type=Path,
                         help="Optional server hardware and artifact/config hashes JSON")
+    parser.add_argument("--request-options", type=Path, help="JSON with request-local retrieval_backend/steering/debug")
+    parser.add_argument("--population", choices=["hybrid", "controlled_central", "realistic_central"])
+    parser.add_argument("--strict-contract", action="store_true")
     args = parser.parse_args(argv)
+    args.request_options = json.loads(args.request_options.read_text(encoding="utf-8")) if args.request_options else {}
     print(run(args))
     return 0
 

@@ -520,6 +520,25 @@ class ConversationStore:
 
         return message
 
+    def update_message_debug_trace(
+        self, owner_id: str, conversation_id: str | UUID, message_id: str | UUID,
+        debug_trace: dict[str, Any],
+    ) -> None:
+        """Save the completed trace after answer persistence and request_finished."""
+        with self._write_lock:
+            with self.connection() as connection:
+                cursor = connection.execute(
+                    """UPDATE messages SET debug_json = ?
+                       WHERE id = ? AND conversation_id = ? AND role = 'assistant'
+                       AND EXISTS (SELECT 1 FROM conversations c
+                                   WHERE c.id = messages.conversation_id AND c.owner_id = ?)""",
+                    (serialize_debug_trace(debug_trace), normalize_id(message_id),
+                     normalize_id(conversation_id), owner_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError("Assistant message not found.")
+                connection.commit()
+
     def get_message(
         self,
         owner_id: str,

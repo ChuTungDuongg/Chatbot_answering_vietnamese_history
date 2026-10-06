@@ -17,7 +17,9 @@ def _fmt(value: Any) -> str:
 
 def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
     lines = ["# HTTP SSE latency baseline", "", f"Run ID: `{metadata['run_id']}`  ",
-             f"Mode: `{metadata['mode']}`  ", f"Concurrency: `{metadata['concurrency']}`", "",
+             f"Mode: `{metadata['mode']}`  ", f"Concurrency: `{metadata['concurrency']}`  ",
+             f"Backend: `{metadata.get('inference_backend')}` (`{metadata.get('inference_engine_version')}`)  ",
+             f"Variant: `{metadata.get('variant_id')}`; population: `{metadata.get('population')}`", "",
              "Metrics use client receipt times or explicit server telemetry. N/A means unobserved.", ""]
     for phase, group in summary["groups"].items():
         lines += [f"## {phase.title()}", "",

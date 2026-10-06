@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "experiment_id": "vllm_latency_central_realistic_v1",
+  "dataset": "evaluation/datasets/latency_v1/questions_100.jsonl",
+  "dataset_sha256": "9536de94eb02978e5728d9c900cab01345faa3cd4ea94661fa1d918684a53fb3",
+  "mode": "central",
+  "population": "realistic_central",
+  "concurrency": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "warmup": 2,
+  "runs": 1,
+  "timeout": 900,
+  "offline_evaluation": true,
+  "max_error_rate_increase": 0,
+  "reference_variant": "transformers_reference",
+  "request_options": {
+    "retrieval_backend": "faiss"
+  },
+  "variants": [
+    {
+      "id": "transformers_reference",
+      "base_url": "${TF_CENTRAL_REALISTIC_URL}",
+      "expected": {
+        "inference_backend": "transformers",
+        "model_variant": "vanilla",
+        "server_hardware": {
+          "gpu_model": "NVIDIA L4"
+        }
+      }
+    },
+    {
+      "id": "vllm_reference",
+      "base_url": "${VLLM_CENTRAL_REALISTIC_URL}",
+      "expected": {
+        "inference_backend": "vllm",
+        "inference_engine_version": "0.23.0",
+        "model_variant": "vanilla",
+        "inference_engine_config": {
+          "enable_prefix_caching": false,
+          "gpu_memory_utilization": 0.9,
+          "max_num_seqs": 8,
+          "enforce_eager": false,
+          "max_model_len": 16384
+        },
+        "server_hardware": {
+          "gpu_model": "NVIDIA L4"
+        }
+      }
+    },
+    {
+      "id": "vllm_prefix_caching",
+      "base_url": "${VLLM_CENTRAL_REALISTIC_PREFIX_URL}",
+      "expected": {
+        "inference_backend": "vllm",
+        "inference_engine_version": "0.23.0",
+        "model_variant": "vanilla",
+        "inference_engine_config": {
+          "enable_prefix_caching": true,
+          "gpu_memory_utilization": 0.9,
+          "max_num_seqs": 8,
+          "enforce_eager": false,
+          "max_model_len": 16384
+        },
+        "server_hardware": {
+          "gpu_model": "NVIDIA L4"
+        }
+      }
+    }
+  ]
+}
