@@ -18,9 +18,13 @@ class ModelDone:
     finished_ns: int
     input_tokens: int
     output_tokens: int
+    max_new_tokens: int | None = None
+    finish_reason: str | None = None
+    hit_max_new_tokens: bool | None = None
+    truncated: bool | None = None
 
     @property
-    def metrics(self) -> dict[str, float | int | None]:
+    def metrics(self) -> dict[str, float | int | str | bool | None]:
         generation_ms = (self.finished_ns - self.started_ns) / 1e6
         model_ttft_ms = (self.first_token_ns - self.started_ns) / 1e6 if self.first_token_ns else None
         decode_ms = (self.finished_ns - self.first_token_ns) / 1e6 if self.first_token_ns else None
@@ -29,6 +33,10 @@ class ModelDone:
             "generation_ms": generation_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "max_new_tokens": self.max_new_tokens,
+            "finish_reason": self.finish_reason,
+            "hit_max_new_tokens": self.hit_max_new_tokens,
+            "truncated": self.truncated,
             "tokens_per_second": self.output_tokens / (generation_ms / 1000) if generation_ms > 0 else None,
             "decode_tokens_per_second": (self.output_tokens - 1) / (decode_ms / 1000)
                 if decode_ms is not None and decode_ms > 0 and self.output_tokens > 1 else None,

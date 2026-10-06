@@ -48,6 +48,7 @@ function DeveloperTrace({ trace }) {
         {trace.retrieval?.backend && <p>Dense backend: {trace.retrieval.backend === "qdrant" ? "Qdrant" : "FAISS"}</p>}
         <TraceSection label="Retrieval" value={trace.retrieval} defaultOpen />
         <TraceSection label="Tools" value={trace.tool_trace} />
+        <TraceSection label="Planning" value={trace.planning} />
         <TraceSection label="MCP" value={trace.mcp} />
         <TraceSection label="Generation" value={trace.generation} />
         <TraceSection label="Sources" value={trace.sources} />

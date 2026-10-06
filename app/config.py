@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     model_temperature: float = Field(default=0.7, ge=0)
     model_top_p: float = Field(default=1.0, gt=0, le=1)
     enable_thinking: bool = False
-    hybrid_max_new_tokens: int = Field(default=768, ge=1)
+    hybrid_max_new_tokens: int = Field(default=1536, ge=1)
     central_action_max_new_tokens: int = Field(default=256, ge=1)
     central_final_max_new_tokens: int = Field(default=1536, ge=1)
     central_max_action_rounds: int = Field(default=2, ge=0, le=8)

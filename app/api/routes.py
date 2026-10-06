@@ -112,10 +112,14 @@ def _debug_trace(mode: ChatMode, trace: RequestTrace, prepared: Any,
                              if "history_retrieval_executed" in prepared.retrieval else {}),
                           "final_context": diagnostics},
             "tool_trace": prepared.tool_calls,
+            **({"planning": prepared.planning} if prepared.planning else {}),
             **({"mcp": prepared.retrieval["mcp"]} if prepared.retrieval.get("mcp") else {}),
             "generation": {"model_id": model.model_id,
                            "model_revision": getattr(model, "resolved_revision", None),
-                           "settings": model.generation_settings},
+                           "settings": {**model.generation_settings,
+                                        "max_new_tokens": metrics.get("max_new_tokens")},
+                           **{key: metrics.get(key) for key in
+                              ("finish_reason", "hit_max_new_tokens", "truncated")}},
             "sources": [{"chunk_id": item["chunk_id"], "cited": item["cited"]}
                         for item in source_items],
             "performance": metrics}
@@ -132,6 +136,10 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
         "generation_ms": None,
         "input_tokens": None,
         "output_tokens": None,
+        "max_new_tokens": None,
+        "finish_reason": None,
+        "hit_max_new_tokens": None,
+        "truncated": None,
         "tokens_per_second": None,
         "decode_tokens_per_second": None,
         "tpot_ms": None,
@@ -151,6 +159,13 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
     if completed:
         metrics.update(completed.metrics)
     if prepared:
+        if prepared.planning:
+            planning = prepared.planning
+            metrics.update({"planning_model_ms": planning["total_model_ms"],
+                            "planning_model_ttft_ms": planning["total_ttft_ms"],
+                            "planning_input_tokens": planning["input_tokens"],
+                            "planning_output_tokens": planning["output_tokens"],
+                            "planning_wall_ms": planning["total_wall_ms"]})
         mcp_metrics = prepared.retrieval.get("mcp", [])
         if mcp_metrics:
             metrics["mcp_tool_ms"] = sum(item["mcp_tool_ms"] for item in mcp_metrics)
@@ -163,6 +178,20 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
         metrics["tool_parse_failures"] = prepared.tool_parse_failures
         metrics["action_rounds"] = prepared.action_rounds
         metrics["time_until_final_generation_ms"] = trace.offset_ms("generation_started")
+        prepare_ms = trace.span_ms("prepare_started", "prompt_ready")
+        planner_wall_ms = prepared.planning.get("total_wall_ms", 0.0)
+        # Non-overlapping wall-time buckets, including model load/tokenization
+        # and queueing which generation-only ModelDone metrics do not include.
+        metrics["pre_final_breakdown_ms"] = {
+            "request_preparation": trace.offset_ms("prepare_started"),
+            "planning": planner_wall_ms,
+            "tools": metrics["tool_execution_ms"],
+            "prompt_build": prepared.prompt_build_ms,
+            "orchestration": max(0.0, prepare_ms - planner_wall_ms - metrics["tool_execution_ms"]
+                                 - (prepared.prompt_build_ms or 0.0)) if prepare_ms is not None else None,
+            "prepare_to_model_request": trace.span_ms("prompt_ready", "final_model_requested"),
+            "final_model_preparation_and_queue": trace.span_ms("final_model_requested", "generation_started"),
+        } if prepared.planning else {}
     if len(delta_times_ns) > 1:
         gaps = sorted((b - a) / 1e6 for a, b in zip(delta_times_ns, delta_times_ns[1:]))
         for percentile in (50, 95, 99):
@@ -275,6 +304,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                                                 "user", payload.question, attachment_sources)
         yield "status", {"stage": "request_preparation", "state": "completed", "message": "Đã nhận câu hỏi",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
+        trace.mark("prepare_started")
         prepare_task = asyncio.create_task(runtime.prepare(question, payload.final_k, history,
                                          owner_id=owner_id, conversation_id=str(payload.conversation_id),
                                          attachment_ids=requested_ids, trace=trace, cancel=cancel,
@@ -304,6 +334,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
+        trace.mark("final_model_requested")
         async for item in runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel):
             if cancel.is_set():
                 return
@@ -332,17 +363,21 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         source_items, cited_ids = _sources(answer, prepared.contexts)
         trace.mark("sources_ready")
         stored_sources = source_items
-        debug_trace = (_debug_trace(mode, trace, prepared, source_items,
-                                    _model_metrics(completed, trace, prepared, delta_times), runtime.model)
-                       if payload.debug else None)
         assistant_message = await asyncio.to_thread(
-            store.add_message, owner_id, payload.conversation_id, "assistant", answer, stored_sources,
-            debug_trace
+            store.add_message, owner_id, payload.conversation_id, "assistant", answer, stored_sources
         )
         yield "sources", {"items": source_items, "cited_source_ids": cited_ids,
                           "final_context_count": len(prepared.contexts)}
         trace.mark("request_finished")
         metrics = _model_metrics(completed, trace, prepared, delta_times)
+        # Legacy/unknown model metadata still reports the actual request budget,
+        # but never guesses a finish reason from the decoded token count.
+        metrics["max_new_tokens"] = max_tokens
+        debug_trace = (_debug_trace(mode, trace, prepared, source_items, metrics, runtime.model)
+                       if payload.debug else None)
+        if debug_trace is not None:
+            await asyncio.to_thread(store.update_message_debug_trace, owner_id, payload.conversation_id,
+                                    assistant_message["id"], debug_trace)
         done = {"request_id": trace.request_id, "conversation_id": str(payload.conversation_id),
                 "message_id": str(assistant_message["id"]), "user_message_id": str(user_message["id"]),
                 "answer": answer, "status": "done", "mode": mode.value,
@@ -360,7 +395,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=completed.model_revision)
         if payload.debug:
-            yield "debug_trace", _debug_trace(mode, trace, prepared, source_items, metrics, runtime.model)
+            yield "debug_trace", debug_trace
         yield "done", done
     except asyncio.CancelledError:
         cancel.set()

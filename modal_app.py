@@ -2,10 +2,15 @@ import os
 from pathlib import Path
 
 import modal
+from dotenv import load_dotenv
 
+
+repo_root = Path(__file__).resolve().parent
+# Read the repo's local settings before constructing the Modal image/client.
+# Explicit shell/deployment environment variables keep precedence over .env.
+load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
 
 app = modal.App("vn-history-rag-api")
-repo_root = Path(__file__).resolve().parent
 adapter_path = "/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter"
 dense_backend = os.getenv("RETRIEVAL_DENSE_BACKEND", "faiss")
 available_backends = os.getenv("RETRIEVAL_AVAILABLE_BACKENDS", dense_backend)
@@ -69,7 +74,9 @@ image = modal.Image.from_dockerfile(
         "CENTRAL_MAX_ACTION_ROUNDS": "2",
         "CENTRAL_ACTION_MAX_NEW_TOKENS": "256",
         "CENTRAL_FINAL_MAX_NEW_TOKENS": "1536",
-        "HYBRID_MAX_NEW_TOKENS": "768",
+        # Omit the default so container Settings is the single source of truth.
+        **({"HYBRID_MAX_NEW_TOKENS": os.environ["HYBRID_MAX_NEW_TOKENS"]}
+           if os.getenv("HYBRID_MAX_NEW_TOKENS") else {}),
         "RUNTIME_LOADING_STRATEGY": "lazy",
         "ENABLE_HYBRID_MODE": os.getenv("ENABLE_HYBRID_MODE", "true"),
         "ENABLE_CENTRAL_MODE": os.getenv("ENABLE_CENTRAL_MODE", "true"),
