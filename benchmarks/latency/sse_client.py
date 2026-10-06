@@ -17,6 +17,8 @@ SERVER_METRICS = (
     "decode_tokens_per_second", "tpot_ms", "model_calls", "tool_calls",
     "tool_execution_ms", "tool_parse_failures", "action_rounds",
     "time_until_final_generation_ms", "final_answer_ttft_ms",
+    "planning_model_ms", "planning_model_ttft_ms", "planning_wall_ms",
+    "planning_input_tokens", "planning_output_tokens", "dense_search_ms",
 )
 OVERLAPPING_SERVER_METRICS = {
     "first_status_event_ms": "server_first_status_event_ms",
@@ -91,6 +93,8 @@ def _json_request(url: str, payload: dict[str, Any], client_id: str, timeout: fl
 def measure_request(
     *, base_url: str, question: dict[str, Any], mode: str, client_id: str,
     timeout: float, phase: str, run_index: int, clock=time.perf_counter_ns,
+    request_options: dict[str, Any] | None = None, strict_contract: bool = False,
+    expected_model_id: str | None = None,
 ) -> dict[str, Any]:
     """Create an isolated conversation, then time only the streamed chat request."""
     if mode not in {"hybrid", "central"}:
@@ -105,13 +109,21 @@ def measure_request(
         "ttfb_ms": None, "first_status_event_ms": None, "answer_ttft_ms": None,
         "e2e_ms": None, "itl_p50_ms": None, "itl_p95_ms": None,
         "itl_p99_ms": None, "inter_token_latency_ms": [],
+        "answer_delta_count": 0,
         "answer": "", "sources": [], "cited_source_ids": [], "error": None,
         "generation_settings": None, "retrieval_settings": None,
         "tool_call_types": None,
+        "inference_backend": None, "inference_engine_version": None,
+        "inference_engine_config": None, "guardrails": {},
+        "client_started_ns": None, "client_finished_ns": None,
         **{key: None for key in SERVER_METRICS},
         **{key: None for key in OVERLAPPING_SERVER_METRICS.values()},
     }
     root = base_url.rstrip("/")
+    options = request_options or {}
+    if set(options) - {"retrieval_backend", "steering", "debug"}:
+        raise ValueError("Benchmark request options may only select retrieval_backend, steering or debug")
+    parts: list[str] = []
     try:
         with _json_request(f"{root}/api/v1/conversations", {}, client_id, timeout) as response:
             conversation = json.load(response)
@@ -119,13 +131,14 @@ def measure_request(
         request = urllib.request.Request(
             f"{root}/api/v1/chat/stream",
             data=json.dumps({"conversation_id": conversation_id,
-                             "question": question["question"], "mode": mode},
+                             "question": question["question"], "mode": mode, **options},
                             ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json", "Accept": "text/event-stream",
                      "X-Client-ID": client_id, "X-Request-ID": client_request_id},
             method="POST",
         )
         start_ns = clock()
+        record["client_started_ns"] = start_ns
         with urllib.request.urlopen(request, timeout=timeout) as response:
             response_started_ns = clock()
             record["http_status"] = response.status
@@ -133,7 +146,6 @@ def measure_request(
             first_status_ns = first_answer_ns = done_ns = None
             answer_times: list[int] = []
             done: dict[str, Any] | None = None
-            parts: list[str] = []
             for event in parse_sse(response, clock=clock):
                 if event.name == "status" and first_status_ns is None:
                     first_status_ns = event.observed_ns
@@ -145,6 +157,7 @@ def measure_request(
                         if first_answer_ns is None:
                             first_answer_ns = event.observed_ns
                         answer_times.append(event.observed_ns)
+                        record["answer_delta_count"] += 1
                         parts.append(delta)
                 elif event.name == "sources":
                     record["sources"] = event.data.get("items") or []
@@ -159,6 +172,7 @@ def measure_request(
             record["first_status_event_ms"] = _ms(first_status_ns, start_ns)
             record["answer_ttft_ms"] = _ms(first_answer_ns, start_ns)
             record["e2e_ms"] = _ms(done_ns, start_ns)
+            record["client_finished_ns"] = done_ns or clock()
             latencies = [(right - left) / 1_000_000 for left, right in zip(answer_times, answer_times[1:])]
             record["inter_token_latency_ms"] = latencies
             for name, p in (("itl_p50_ms", .5), ("itl_p95_ms", .95), ("itl_p99_ms", .99)):
@@ -172,6 +186,8 @@ def measure_request(
                 record["model_variant"] = done.get("model_variant")
                 record["adapter_attached"] = done.get("adapter_attached")
                 record["adapter_fingerprint"] = done.get("adapter_fingerprint")
+                for key in ("inference_backend", "inference_engine_version", "inference_engine_config"):
+                    record[key] = done.get(key)
                 record["generation_settings"] = done.get("generation_settings")
                 record["retrieval_settings"] = done.get("retrieval_settings")
                 metrics = done.get("metrics") or {}
@@ -181,6 +197,8 @@ def measure_request(
                     value = metrics.get(key)
                     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
                         record[key] = value
+                for key in ("finish_reason", "hit_max_new_tokens", "truncated", "max_new_tokens", "model_timing_observer"):
+                    record[key] = metrics.get(key)
                 for server_key, raw_key in OVERLAPPING_SERVER_METRICS.items():
                     value = metrics.get(server_key)
                     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
@@ -191,10 +209,33 @@ def measure_request(
                     record["tool_call_types"] = metrics["tool_call_types"]
                 if done.get("status") == "error" and record["error"] is None:
                     record["error"] = {"type": "server_error", "message": "done status was error"}
-            record["success"] = record["http_status"] == 200 and done is not None and record["error"] is None
+            sources = record["sources"]
+            valid_sources = isinstance(sources, list) and all(
+                isinstance(item, dict) and isinstance(item.get("chunk_id"), str) and item["chunk_id"]
+                for item in sources)
+            known = {str(item.get(key)) for item in sources if isinstance(item, dict)
+                     for key in ("chunk_id", "source_id") if item.get(key)} if isinstance(sources, list) else set()
+            cited = record["cited_source_ids"]
+            valid_citations = isinstance(cited, list) and all(isinstance(item, str) and item in known for item in cited)
+            done_metrics = done.get("metrics", {}) if done else {}
+            record["guardrails"] = {
+                "stream_done": done is not None and done.get("status") in {"done", "ok"},
+                "nonempty_answer": bool(record["answer"].strip()),
+                "model_identity": bool(record["model_id"]) and (not expected_model_id or record["model_id"] == expected_model_id),
+                "model_done_metadata": isinstance(done_metrics, dict) and all(
+                    isinstance(done_metrics.get(key), (int, float)) for key in
+                    ("input_tokens", "output_tokens", "generation_ms")),
+                "sources_structure": valid_sources, "citations_structure": valid_citations,
+            }
+            if strict_contract and not all(record["guardrails"].values()) and record["error"] is None:
+                record["error"] = {"type": "contract_guardrail", "failed": [
+                    key for key, value in record["guardrails"].items() if not value]}
+            record["success"] = (record["http_status"] == 200 and done is not None
+                                  and bool(record["answer"].strip()) and record["error"] is None)
     except urllib.error.HTTPError as exc:
         record["http_status"] = exc.code
         record["error"] = {"type": "http_error", "message": exc.read(2048).decode("utf-8", errors="replace")}
     except Exception as exc:
         record["error"] = {"type": type(exc).__name__, "message": str(exc)}
+    record["answer"] = "".join(parts)
     return record

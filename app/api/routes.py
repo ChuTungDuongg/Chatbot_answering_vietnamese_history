@@ -115,6 +115,7 @@ def _debug_trace(mode: ChatMode, trace: RequestTrace, prepared: Any,
             **({"planning": prepared.planning} if prepared.planning else {}),
             **({"mcp": prepared.retrieval["mcp"]} if prepared.retrieval.get("mcp") else {}),
             "generation": {"model_id": model.model_id,
+                           **getattr(model, "engine_metadata", {}),
                            "model_revision": getattr(model, "resolved_revision", None),
                            "settings": {**model.generation_settings,
                                         "max_new_tokens": metrics.get("max_new_tokens")},
@@ -384,6 +385,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                 "retrieval_backend": backend,
                 "latency_ms": metrics["e2e_ms"], "model_id": runtime.model.model_id,
                 "model_revision": completed.model_revision,
+                **getattr(runtime.model, "engine_metadata", {}),
                 "model_variant": getattr(runtime.model, "model_variant", None),
                 "adapter_attached": getattr(runtime.model, "adapter_attached", None),
                 "adapter_fingerprint": getattr(runtime.model, "adapter_fingerprint", None),
@@ -415,6 +417,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         yield "done", {"request_id": trace.request_id, "status": "error", "mode": mode.value,
                        "model_id": runtime.model.model_id, "model_revision": getattr(runtime.model, "resolved_revision", None),
                        "retrieval_backend": backend,
+                       **getattr(runtime.model, "engine_metadata", {}),
                        "metrics": metrics, "latency_ms": metrics["e2e_ms"]}
     finally:
         cancel.set()

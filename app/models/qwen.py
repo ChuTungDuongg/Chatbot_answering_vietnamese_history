@@ -9,11 +9,12 @@ import time
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from app.models.base import ModelDelta, ModelDone
+from app.models.base import ModelDelta, ModelDone, chat_prompt
 from app.models.identity import file_tree_sha
 
 
 class QwenRuntime:
+    inference_backend = "transformers"
     def __init__(self, *, model_id: str, revision: str | None = None,
                  device: str = "cpu", dtype: str = "bfloat16", cache_dir: str | None = None,
                  local_files_only: bool = False, do_sample: bool = False,
@@ -49,6 +50,26 @@ class QwenRuntime:
         self.adapter_fingerprint: str | None = None
         self._load_lock = threading.Lock()
         self._generate_lock = threading.Lock()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.model is not None
+
+    @property
+    def engine_metadata(self) -> dict[str, Any]:
+        import importlib.metadata
+
+        return {"inference_backend": self.inference_backend,
+                "inference_engine_version": importlib.metadata.version("transformers"),
+                "inference_engine_config": {"generation_serialized": True}}
+
+    async def aload(self) -> None:
+        await asyncio.to_thread(self.load)
+
+    async def aclose(self) -> None:
+        # Existing callers also own this runtime; retain the reference backend's
+        # model lifetime rather than changing CUDA eviction behavior.
+        pass
 
     @property
     def model_variant(self) -> str:
@@ -108,11 +129,8 @@ class QwenRuntime:
 
     def _prepare(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None):
         self.load()
-        template_options = {"tokenize": False, "add_generation_prompt": True,
-                            "enable_thinking": self.enable_thinking}
-        if tools:
-            template_options["tools"] = tools
-        prompt = self.tokenizer.apply_chat_template(messages, **template_options)
+        prompt = chat_prompt(self.tokenizer, messages, tools=tools,
+                             enable_thinking=self.enable_thinking)
         inputs = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
         inputs = inputs.to(self.model.get_input_embeddings().weight.device)
         return inputs, int(inputs["input_ids"].shape[-1])
@@ -210,6 +228,7 @@ class QwenRuntime:
                     output_tokens=output_tokens, max_new_tokens=max_new_tokens,
                     finish_reason=reason, hit_max_new_tokens=hit_limit,
                     truncated=hit_limit,
+                    timing_observer="transformers_generation_worker_monotonic",
                 ), time.perf_counter_ns()))
             except BaseException as exc:
                 messages_queue.put(("error", exc, time.perf_counter_ns()))

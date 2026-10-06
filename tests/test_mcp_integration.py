@@ -301,12 +301,16 @@ def test_fastapi_lifespan_discovery_capabilities_shutdown_and_hybrid_isolation(t
         def __init__(self, **kwargs):
             super().__init__(kwargs["model_id"]); self.model = None; self.adapter_path = None
         def load(self): self.model = object()
+        @property
+        def is_loaded(self): return self.model is not None
+        async def aload(self): self.load()
+        async def aclose(self): pass
     monkeypatch.setattr(module, "settings", cfg)
     monkeypatch.setattr(module, "RAGService", Service)
     monkeypatch.setattr(module, "HybridRetriever", lambda *_: FakeRetriever())
     monkeypatch.setattr(module, "AttachmentService", lambda **_: object())
     monkeypatch.setattr(module, "TemporaryCorpusRetriever", lambda **_: object())
-    monkeypatch.setattr(module, "QwenRuntime", Model)
+    monkeypatch.setattr(module, "build_model_runtime", Model)
     monkeypatch.setattr(module.MCPManager, "from_settings", lambda *_: manager)
     with TestClient(module.app) as api:
         ready = api.get("/ready").json()

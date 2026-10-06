@@ -12,7 +12,7 @@ from app.central.runtime import CentralRuntime
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
-from app.models.qwen import QwenRuntime
+from app.models.factory import build_model_runtime
 from app.mcp.manager import MCPManager
 from app.tools.policy import builtin_capabilities
 from app.rag.hybrid_runtime import HybridRuntime
@@ -67,18 +67,18 @@ async def lifespan(app: FastAPI):
                           temperature=settings.model_temperature, top_p=settings.model_top_p)
             hybrid = central = None
             if settings.enable_hybrid_mode:
-                hybrid_model = QwenRuntime(model_id=settings.hybrid_model_id,
+                hybrid_model = build_model_runtime(settings=settings, model_id=settings.hybrid_model_id,
                                            revision=settings.hybrid_model_revision,
                                            adapter_path=(settings.model_adapter_path if settings.model_variant == "sft" else None),
                                            **common)
                 hybrid = HybridRuntime(app.state.retriever, hybrid_model, temporary_retriever)
-                hybrid_model.load()
+                await hybrid_model.aload()
                 logger.info("Hybrid model ready: base=%s variant=%s adapter=%s peft_attached=%s adapter_fingerprint=%s",
                             hybrid_model.model_id, settings.model_variant.upper(),
                             hybrid_model.adapter_path,
                             hybrid_model.adapter_attached, hybrid_model.adapter_fingerprint)
             if settings.enable_central_mode:
-                central_model = QwenRuntime(model_id=settings.central_model_id,
+                central_model = build_model_runtime(settings=settings, model_id=settings.central_model_id,
                                             revision=settings.central_model_revision, **common)
                 registry = ToolRegistry()
                 registry.register(SearchHistoryTool(app.state.retriever))
@@ -98,12 +98,16 @@ async def lifespan(app: FastAPI):
                                          mcp_manager=manager, max_mcp_tools=settings.mcp_max_tools_per_request,
                                          mcp_schema_budget=settings.mcp_schema_budget_bytes)
                 if settings.runtime_loading_strategy == "eager":
-                    central_model.load()
+                    await central_model.aload()
             app.state.hybrid_runtime = hybrid
             app.state.central_runtime = central
             app.state.chat_mode_router = ChatModeRouter(hybrid=hybrid, central=central)
         yield
     finally:
+        for name in ("hybrid_runtime", "central_runtime"):
+            runtime = getattr(app.state, name, None)
+            if runtime is not None:
+                await runtime.model.aclose()
         await manager.close()
         service.shutdown()
 
@@ -152,8 +156,9 @@ async def ready():
         hybrid_model = hybrid.model if hybrid is not None else None
         central_model = central.model if central is not None else None
         state = {**state,
-                 "hybrid_loaded": bool(hybrid_model and hybrid_model.model is not None),
+                 "hybrid_loaded": bool(hybrid_model and hybrid_model.is_loaded),
                  "hybrid_model_variant": getattr(hybrid_model, "model_variant", None),
                  "hybrid_adapter_attached": getattr(hybrid_model, "adapter_attached", None),
-                 "central_loaded": bool(central_model and central_model.model is not None)}
+                 "central_loaded": bool(central_model and central_model.is_loaded),
+                 "inference_backend": settings.inference_backend}
     return state

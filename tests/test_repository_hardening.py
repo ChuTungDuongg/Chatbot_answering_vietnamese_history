@@ -12,7 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_peft_dependency_is_installed_without_training_stack():
-    lines = {line.strip() for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()}
+    def requirements(path):
+        lines = set()
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("-r "):
+                lines.update(requirements(path.parent / line[3:]))
+            else:
+                lines.add(line)
+        return lines
+    lines = requirements(ROOT / "requirements.txt")
     assert "peft==0.20.0" in lines
     assert importlib.metadata.version("peft") == "0.20.0"
     assert not any(line.startswith(("trl", "datasets", "bitsandbytes")) for line in lines)

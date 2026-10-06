@@ -1,4 +1,6 @@
 import os
+import hashlib
+import subprocess
 from pathlib import Path
 
 import modal
@@ -10,7 +12,27 @@ repo_root = Path(__file__).resolve().parent
 # Explicit shell/deployment environment variables keep precedence over .env.
 load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
 
-app = modal.App("vn-history-rag-api")
+inference_backend = os.getenv("INFERENCE_BACKEND", "transformers")
+runtime_image = os.getenv("MODAL_RUNTIME_IMAGE", inference_backend)
+if inference_backend not in {"transformers", "vllm"} or runtime_image not in {"transformers", "vllm"}:
+    raise ValueError("Inference backend and Modal runtime image must be transformers or vllm")
+if inference_backend == "vllm" and runtime_image != "vllm":
+    raise ValueError("vLLM requires MODAL_RUNTIME_IMAGE=vllm")
+app_name = os.getenv("MODAL_APP_NAME", "vn-history-rag-api")
+app = modal.App(app_name)
+try:
+    deployment_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root,
+                                               text=True, stderr=subprocess.DEVNULL).strip()
+except (OSError, subprocess.SubprocessError):
+    deployment_commit = ""
+source_digest = hashlib.sha256()
+source_files = sorted([*repo_root.glob("app/**/*.py"), repo_root / "modal_app.py",
+                       repo_root / "Dockerfile", repo_root / "Dockerfile.vllm",
+                       *repo_root.glob("requirements*.txt")])
+for source_path in source_files:
+    if source_path.is_file():
+        source_digest.update(source_path.relative_to(repo_root).as_posix().encode())
+        source_digest.update(source_path.read_bytes().replace(b"\r\n", b"\n"))
 adapter_path = "/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter"
 dense_backend = os.getenv("RETRIEVAL_DENSE_BACKEND", "faiss")
 available_backends = os.getenv("RETRIEVAL_AVAILABLE_BACKENDS", dense_backend)
@@ -50,7 +72,7 @@ if mcp_enabled and mcp_secret_name:
     runtime_secrets.append(modal.Secret.from_name(mcp_secret_name))
 
 image = modal.Image.from_dockerfile(
-    str(repo_root / "Dockerfile"),
+    str(repo_root / ("Dockerfile.vllm" if runtime_image == "vllm" else "Dockerfile")),
     context_dir=str(repo_root),
 ).env(
     {
@@ -68,6 +90,17 @@ image = modal.Image.from_dockerfile(
         "HYBRID_MODEL_ID": "Qwen/Qwen3-4B-Instruct-2507",
         "CENTRAL_MODEL_ID": "Qwen/Qwen3-8B",
         "MODEL_VARIANT": os.getenv("MODEL_VARIANT", "vanilla"),
+        "INFERENCE_BACKEND": inference_backend,
+        "MODAL_RUNTIME_IMAGE": runtime_image,
+        "MODAL_APP_NAME": app_name,
+        "MODAL_MAX_INPUTS": os.getenv("MODAL_MAX_INPUTS", "1"),
+        "MODAL_GPU_CLASS": os.getenv("MODAL_GPU_CLASS", "L4"),
+        "DEPLOYMENT_GIT_COMMIT": deployment_commit,
+        "DEPLOYMENT_SOURCE_SHA256": source_digest.hexdigest(),
+        **{key: os.environ[key] for key in (
+            "VLLM_ENABLE_PREFIX_CACHING", "VLLM_GPU_MEMORY_UTILIZATION", "VLLM_MAX_NUM_SEQS",
+            "VLLM_MAX_MODEL_LEN", "VLLM_ENFORCE_EAGER", "HYBRID_MODEL_REVISION", "CENTRAL_MODEL_REVISION")
+           if os.getenv(key)},
         "MODEL_ADAPTER_PATH": adapter_path,
         "DO_SAMPLE": "false",
         "ENABLE_THINKING": "false",
@@ -77,7 +110,7 @@ image = modal.Image.from_dockerfile(
         # Omit the default so container Settings is the single source of truth.
         **({"HYBRID_MAX_NEW_TOKENS": os.environ["HYBRID_MAX_NEW_TOKENS"]}
            if os.getenv("HYBRID_MAX_NEW_TOKENS") else {}),
-        "RUNTIME_LOADING_STRATEGY": "lazy",
+        "RUNTIME_LOADING_STRATEGY": os.getenv("RUNTIME_LOADING_STRATEGY", "lazy"),
         "ENABLE_HYBRID_MODE": os.getenv("ENABLE_HYBRID_MODE", "true"),
         "ENABLE_CENTRAL_MODE": os.getenv("ENABLE_CENTRAL_MODE", "true"),
         "CENTRAL_ENABLE_DOCUMENTS": "true",
@@ -110,7 +143,7 @@ if mcp_enabled:
 
 @app.function(
     image=image,
-    gpu="A100",
+    gpu=os.getenv("MODAL_GPU_CLASS", "L4"),
     cpu=4.0,
     memory=32768,
     timeout=600,
@@ -125,6 +158,7 @@ if mcp_enabled:
     },
     secrets=runtime_secrets,
 )
+@modal.concurrent(max_inputs=int(os.getenv("MODAL_MAX_INPUTS", "1")))
 @modal.asgi_app()
 def fastapi_app():
     from app.main import app as fastapi_application
@@ -133,7 +167,7 @@ def fastapi_app():
 
 
 @app.function(
-    image=image, gpu="A100", cpu=4.0, memory=32768, timeout=1800,
+    image=image, gpu=os.getenv("MODAL_GPU_CLASS", "L4"), cpu=4.0, memory=32768, timeout=1800,
     startup_timeout=900,
     volumes={"/artifacts": artifacts, "/hf-cache": hf_cache},
     secrets=runtime_secrets,

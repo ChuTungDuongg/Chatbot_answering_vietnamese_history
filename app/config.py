@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     qdrant_hnsw_ef: int | None = Field(default=None, ge=1)
     qdrant_timeout_seconds: float = Field(default=30.0, ge=1, le=300)
     device: Literal["cpu", "cuda"] = "cpu"
+    inference_backend: Literal["transformers", "vllm"] = "transformers"
+    vllm_enable_prefix_caching: bool = False
+    vllm_gpu_memory_utilization: float = Field(default=0.75, gt=0, lt=1)
+    vllm_max_num_seqs: int = Field(default=8, ge=1)
+    vllm_max_model_len: int | None = Field(default=None, ge=1)
+    vllm_enforce_eager: bool = False
     dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
     hybrid_model_id: str = HYBRID_MODEL_ID
     model_variant: Literal["vanilla", "sft"] = "vanilla"
@@ -110,6 +116,13 @@ class Settings(BaseSettings):
         if value != CENTRAL_MODEL_ID:
             raise ValueError(f"Central baseline requires {CENTRAL_MODEL_ID}")
         return value
+
+    @model_validator(mode="after")
+    def require_isolated_vllm(self):
+        if (self.inference_backend == "vllm" and self.is_full
+                and self.enable_hybrid_mode and self.enable_central_mode):
+            raise ValueError("vLLM requires an isolated Hybrid or Central deployment; disable the other mode")
+        return self
 
     @model_validator(mode="after")
     def require_sft_adapter(self):
