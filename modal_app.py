@@ -70,6 +70,9 @@ if "qdrant" in [name.strip() for name in available_backends.split(",")]:
         qdrant_secret_name, required_keys=["QDRANT_URL", "QDRANT_API_KEY", "QDRANT_COLLECTION"]))
 if mcp_enabled and mcp_secret_name:
     runtime_secrets.append(modal.Secret.from_name(mcp_secret_name))
+observability_secret_name = os.getenv("MODAL_OBSERVABILITY_SECRET_NAME", "").strip()
+if observability_secret_name:
+    runtime_secrets.append(modal.Secret.from_name(observability_secret_name))
 
 image = modal.Image.from_dockerfile(
     str(repo_root / ("Dockerfile.vllm" if runtime_image == "vllm" else "Dockerfile")),
@@ -139,6 +142,22 @@ if mcp_enabled:
     if not mcp_config_path.is_file():
         raise ValueError("MCP_ENABLED=true requires an existing MCP_CONFIG_PATH")
     image = image.add_local_file(str(mcp_config_path), "/etc/vn-history/mcp_servers.json", copy=True)
+
+
+# Static React assets and an SSE-preserving API reverse proxy run on cheap CPU.
+# They do not load PyTorch, model weights, Qdrant or the RAG corpus.
+frontend_image = modal.Image.from_dockerfile(
+    str(repo_root / "Dockerfile.frontend"), context_dir=str(repo_root)
+).env({"MODAL_GPU_API_URL": os.getenv("MODAL_GPU_API_URL", "")})
+
+
+@app.function(image=frontend_image, cpu=0.5, memory=512, timeout=600,
+              min_containers=0, max_containers=2)
+@modal.concurrent(max_inputs=30)
+@modal.asgi_app()
+def frontend_app():
+    from frontend_server.server import gateway
+    return gateway
 
 
 @app.function(
