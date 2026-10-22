@@ -187,7 +187,7 @@ For a persistent deployment:
 .\.venv\Scripts\python.exe -m modal deploy modal_app.py
 ```
 
-For a cloud-only frontend, deploy once to obtain the `fastapi_app` GPU URL, set `MODAL_GPU_API_URL` in the root `.env`, and redeploy. Open the `frontend_app` URL; no local Vite server is needed. The CPU gateway forwards API calls and SSE to the GPU backend. See [the full deployment and observability guide](docs/SERVING_OBSERVABILITY_MODAL_FRONTEND.md). [Modal quick start](MODAL_QUICKSTART.md) covers volume checks, Qdrant secrets, runtime smoke tests, and deployment diagnostics.
+For a cloud-only frontend, deploy once to obtain the `fastapi_app` GPU URL, set `MODAL_GPU_API_URL` in the root `.env`, and redeploy. Open the `frontend_app` URL; no local Vite server is needed. The CPU gateway forwards API calls and SSE to the GPU backend. See [the full deployment and observability guide](docs/SERVING_OBSERVABILITY_MODAL_FRONTEND.md) and [the verified implementation report](docs/OBSERVABILITY_FRONTEND_IMPLEMENTATION_REPORT.md). [Modal quick start](MODAL_QUICKSTART.md) covers volume checks, Qdrant secrets, runtime smoke tests, and deployment diagnostics.
 
 <a id="runtime-configuration"></a>
 

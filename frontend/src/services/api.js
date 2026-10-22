@@ -181,11 +181,16 @@ export async function streamChat({
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let sawStreamError = false;
+  let sawDone = false;
+  let reachedEof = false;
 
   try {
     while (!sawStreamError) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        reachedEof = true;
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const blocks = buffer.split(/\r?\n\r?\n/);
@@ -195,22 +200,31 @@ export async function streamChat({
         const parsed = parseSSEBlock(block);
         if (parsed) {
           onEvent?.(parsed);
-          if (parsed.event === "error") {
-            sawStreamError = true;
-            break;
-          }
+          sawStreamError = parsed.event === "error";
+          sawDone ||= parsed.event === "done";
+          if (sawStreamError) break;
         }
       }
     }
 
-    if (sawStreamError) {
-      await reader.cancel();
-    } else {
+    if (!sawStreamError && !sawDone) {
       buffer += decoder.decode();
       const parsed = buffer.trim() ? parseSSEBlock(buffer) : null;
-      if (parsed) onEvent?.(parsed);
+      if (parsed) {
+        onEvent?.(parsed);
+        sawStreamError = parsed.event === "error";
+        sawDone = parsed.event === "done";
+      }
+    }
+    if (!sawStreamError && !sawDone) {
+      throw new Error("Luồng phản hồi kết thúc trước khi hoàn tất.");
     }
   } finally {
+    try {
+      if (!reachedEof) await reader.cancel();
+    } catch {
+      // A fetch abort may already have closed the stream.
+    }
     reader.releaseLock();
   }
 }

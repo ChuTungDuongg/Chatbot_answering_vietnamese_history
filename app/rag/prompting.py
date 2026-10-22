@@ -1,6 +1,6 @@
 """Fixed grounded prompt for live generators, with explicit offline compatibility.
 
-Live Hybrid/Central callers omit the optional mode and use SYSTEM_PROMPT exactly.
+Live Hybrid/Central callers omit the optional mode and use LIVE_SYSTEM_PROMPT.
 Explicit mode arguments preserve frozen six-way evaluation prompt bytes.
 """
 
@@ -22,10 +22,21 @@ SYSTEM_PROMPT = (
 LIVE_STYLE_INSTRUCTION = (
     "Viết tiếng Việt tự nhiên, mạch lạc như một người am hiểu lịch sử đang giải thích "
     "cho độc giả; trả lời trọng tâm ngay từ đầu, dùng đoạn văn và tiêu đề chỉ khi cần. "
-    "Không mở đầu bằng 'theo thông tin được cung cấp', 'dựa trên các nguồn', "
+    "Tránh các lời dẫn máy móc ở cả đầu và giữa câu như 'theo thông tin được cung cấp', 'dựa trên các nguồn', "
     "'tài liệu cho biết' hoặc những công thức tương tự. Trích dẫn [chunk_id] "
     "sau luận điểm được hỗ trợ mà không biến nội dung thành danh sách trích lục. "
+    "Không bôi đậm dày đặc hoặc liệt kê chi tiết không cần để trả lời câu hỏi. "
+    "Chỉ nêu nguyên nhân khi nguồn thực sự gắn nguyên nhân đó với kết quả; "
+    "không biến một mô tả bối cảnh thành kết luận nhân quả. "
+    "Giữ đúng bên thực hiện hành động, bên chịu tác động và thứ tự thời gian; "
+    "không gán sai trách nhiệm giữa các phe. Kết quả của một trận đánh không "
+    "tự động là kết quả của toàn chiến dịch hoặc của những đơn vị không dự trận đó. "
+    "Nếu nguồn có câu tự mâu thuẫn hoặc nhầm chủ thể, chỉ dùng phần nhất quán "
+    "và nói rõ điểm chưa thể xác minh. "
     "Phân biệt số quân tham chiến với số thương vong, sự kiện với suy luận. "
+    "Chỉ gọi một con số là thương vong khi nguồn xác định đó là tổn thất; "
+    "quân không tới chiến trường không đồng nghĩa với quân thiệt mạng. "
+    "Nếu nguồn chỉ cho biết quân số, không suy ra số người chết hoặc bị thương. "
     "Với giả thuyết phản thực tế, giải thích điều kiện có thể thay đổi kết quả "
     "nhưng không trình bày khả năng chưa kiểm chứng như sự thật. "
     "Khi nguồn thiếu hoặc mâu thuẫn, nói cụ thể điều nào chưa xác minh; "

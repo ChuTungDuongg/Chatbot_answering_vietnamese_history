@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
@@ -14,7 +15,7 @@ from app.central.runtime import CentralRuntime
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
-from app.observability import serving_metrics
+from app.observability import RequestMetricsMiddleware, cache_snapshot, serving_metrics
 from app.models.factory import build_model_runtime
 from app.mcp.manager import MCPManager
 from app.tools.policy import builtin_capabilities
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version=settings.app_version,
               description="Vietnamese history: Hybrid RAG (configured Qwen3-4B variant) and Central Agent (vanilla Qwen3-8B).",
               lifespan=lifespan)
+app.add_middleware(RequestMetricsMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
                    allow_headers=["Content-Type", "Accept", "X-Client-ID"])
@@ -174,6 +176,12 @@ async def observability_summary(request: Request):
     supplied = request.headers.get("Authorization", "")
     if not expected:
         raise HTTPException(status_code=404, detail="Monitoring API is disabled")
-    if not hmac.compare_digest(supplied, f"Bearer {expected}"):
+    if not hmac.compare_digest(supplied.encode("utf-8"), f"Bearer {expected}".encode("utf-8")):
         raise HTTPException(status_code=403, detail="Forbidden")
-    return serving_metrics.snapshot()
+    summary = serving_metrics.snapshot()
+    state = getattr(getattr(request, "app", None), "state", None)
+    for mode in ("hybrid", "central"):
+        model = getattr(getattr(state, f"{mode}_runtime", None), "model", None)
+        if model is not None:
+            summary["cache"][mode] = cache_snapshot(model)
+    return JSONResponse(summary, headers={"Cache-Control": "no-store"})

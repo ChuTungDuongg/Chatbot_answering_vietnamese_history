@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from app.models.base import ModelDelta, ModelDone, chat_prompt
+from app.models.cache_metrics import CacheMetrics
 
 VLLM_VERSION = "0.23.0"
 
@@ -41,6 +42,7 @@ class VLLMRuntime:
         self.adapter_path = self.adapter_fingerprint = None
         self.resolved_revision: str | None = None
         self.engine = self.tokenizer = None
+        self._cache_observer = CacheMetrics()
         self._load_lock = asyncio.Lock()
         self._effective_config: dict[str, Any] | None = None
         self._engine_options = {"enable_prefix_caching": enable_prefix_caching,
@@ -79,6 +81,15 @@ class VLLMRuntime:
                 "inference_engine_version": version,
                 "inference_engine_config": self._effective_config}
 
+    @property
+    def cache_metrics(self) -> dict[str, Any]:
+        enabled = (self._effective_config or self._engine_options)["enable_prefix_caching"]
+        result = {"engine": "vllm", "prefix_cache_enabled": enabled}
+        if self.engine is None:
+            return {**result, "status": "not_loaded", "prefix_cache_hit_rate": None,
+                    "kv_cache_utilization": None}
+        return {**result, **self._cache_observer.snapshot()}
+
     def _initialize(self):
         if self.device != "cuda":
             raise RuntimeError("The supported vLLM runtime requires a Linux CUDA deployment")
@@ -110,7 +121,8 @@ class VLLMRuntime:
                                disable_log_stats=False, **self._engine_options)
         # V1 supports constructing outside an event loop and starts the output
         # handler on the first add_request. GPU startup stays off the API loop.
-        engine = AsyncLLM.from_engine_args(args)
+        self._cache_observer = CacheMetrics()
+        engine = AsyncLLM.from_engine_args(args, stat_loggers=[self._cache_observer.logger_factory()])
         effective = engine.vllm_config
         self._effective_config = {
             "enable_prefix_caching": effective.cache_config.enable_prefix_caching,

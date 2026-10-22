@@ -12,6 +12,11 @@ from typing import Any
 
 
 logger = logging.getLogger("app.telemetry")
+logger.setLevel(logging.INFO)
+# Modal captures stderr; keep telemetry usable when the ASGI host has not
+# configured Python logging. Reuse configured handlers to avoid duplicate logs.
+if not logger.hasHandlers():
+    logger.addHandler(logging.StreamHandler())
 _active: contextvars.ContextVar[RequestTrace | None] = contextvars.ContextVar("request_trace", default=None)
 
 

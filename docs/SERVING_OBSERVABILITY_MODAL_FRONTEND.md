@@ -12,7 +12,7 @@ flowchart LR
     GPU --> Logs["Structured Modal logs"]
 ```
 
-**Why two containers?** Serving a static page should never allocate an A100/L4. The browser calls the CPU gateway on the same origin. The CPU gateway forwards API traffic to the existing GPU web endpoint without buffering the answer stream. Both are Modal functions inside the same `modal.App`. The GPU remains configured with `min_containers=0` and can cold start when users request a chat.
+**Why two containers?** Serving a static page should never allocate an A100/L4. The browser calls the CPU gateway on the same origin. The CPU gateway forwards API traffic to the existing GPU web endpoint without buffering the answer stream. Both are Modal functions inside the same `modal.App`. The existing React bootstrap calls conversation/capability APIs and can wake the GPU. The GPU remains configured with `min_containers=0` and can cold start when users request a chat.
 
 ## Deploy to Modal (PowerShell)
 
@@ -45,10 +45,10 @@ Then open `http://localhost:8080`, test conversation create/list, uploads, and l
 
 The existing `DeveloperTrace` remains the per-request diagnostic view. The new `ServingMetrics` collector adds process-level aggregates with fixed dimensions (mode, retrieval backend, outcome) and a bounded in-memory sample window:
 
-- In-flight chat requests, request totals by outcome, and observed traffic within the sample window.
+- In-flight accepted chat executions and totals by outcome. Separate pure ASGI counters cover admission/status errors for chat, chat/stream and retrieve. Traffic counts use 300 one-second buckets independently of the last 500 latency samples per mode/backend/outcome.
 - p50/p95 of end-to-end latency, first streamed answer delta, model TTFT, retrieval, generation, planner model latency, and generated tokens/second when the underlying data exists.
 - Optional CUDA allocated/reserved/peak memory when Torch CUDA is initialized. This is **not** GPU utilization.
-- Known serving engine and whether vLLM prefix caching was configured. Actual **prefix-cache hit rate and KV-cache utilization are null** until supported by the engine. The Hugging Face weight cache must not be mistaken for a response cache or vLLM prefix cache.
+- vLLM 0.23.0 exports token-based prefix queries/hits and scheduler KV utilization through a custom stat logger. Hit rate is cumulative since cache reset, not a per-request rate. Missing data is null; KV observations older than 15 seconds are stale/null. Transformers has no equivalent cache counters. Hugging Face weight caching is separate.
 - A structured `serving_request` log for each completed, errored, or cancelled request, without prompts, answers, owner IDs, source text, or custom high-cardinality labels.
 
 The summary endpoint is disabled by default. Create a Modal secret containing `OBSERVABILITY_ADMIN_TOKEN` and configure `MODAL_OBSERVABILITY_SECRET_NAME` to that secret's name, then redeploy. To read:
@@ -64,11 +64,9 @@ For durable operational history use Modal logs and hosted function metrics:
 
 ```powershell
 modal app logs vn-history-rag-api --since 2h
-modal function metrics vn-history-rag-api/fastapi_app --group gpu --group calls --since 2h --json
-modal function metrics vn-history-rag-api/frontend_app --group cpu --group calls --since 2h --json
 ```
 
-Exact CLI function names may differ by deployed app/version; verify with `modal app info`. Modal function metrics and logs are separate from these process-local application aggregates. Do not attempt Prometheus polling of a scaled-to-zero GPU endpoint solely to keep scrapes alive; a future phase can push OTLP metrics to a managed collector for durable, multi-replica observability.
+The installed Modal 1.5.3 CLI has no function metrics subcommand. Use the Modal Dashboard for infrastructure/GPU metrics; those are separate from the process-local application aggregates. Do not attempt Prometheus polling of a scaled-to-zero GPU endpoint solely to keep scrapes alive; a future phase can push OTLP metrics to a managed collector for durable, multi-replica observability.
 
 ## Natural response style
 
@@ -90,7 +88,7 @@ npm --prefix frontend run build
 docker build -f Dockerfile.frontend -t vn-history-ui .
 ```
 
-On real Modal after deployment, test both chat modes, attachment upload, Qdrant/FAISS selection, developer trace, reconnection, cancellation, HTTP error status, and SSE streaming. Record at least a small A/B set of naturalness/accuracy/citations with frozen questions and generation settings before merging. The current branch has **not** been exercised against the account's real Modal volumes or GPU; deploying requires the user's authenticated Modal CLI and secrets.
+On real Modal after deployment, test both chat modes, attachment upload, Qdrant/FAISS selection, developer trace, reconnection, cancellation, HTTP error status, and SSE streaming. Record at least a small A/B set of naturalness/accuracy/citations with frozen questions and generation settings before merging. See [the dated implementation report](OBSERVABILITY_FRONTEND_IMPLEMENTATION_REPORT.md) for actual Docker, browser, Modal and real-model results; do not infer deployment success from local tests.
 
 ## Security / operations
 

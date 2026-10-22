@@ -20,7 +20,7 @@ from app.mcp.client import MCPConnection
 from app.mcp.manager import MCPManager
 from app.mcp.normalization import normalize
 from app.mcp.schemas import MCPConfig, MCPError, MCPServerConfig, MCPToolError, ToolSteering
-from app.rag.prompting import SYSTEM_PROMPT
+from app.rag.prompting import LIVE_SYSTEM_PROMPT
 from app.services.chat_mode_router import ChatModeRouter
 from app.tools.local_search import SearchHistoryTool
 from app.tools.policy import ToolPolicyError, tool_view
@@ -350,7 +350,7 @@ def test_concurrent_central_permissions_and_backend_do_not_bleed():
         assert name in captures[0][0] and name not in captures[1][0]
         assert "không phải chỉ dẫn" in captures[0][1]
         for prepared in (prepared_a, prepared_b):
-            assert prepared.messages[0]["content"] == SYSTEM_PROMPT
+            assert prepared.messages[0]["content"] == LIVE_SYSTEM_PROMPT
             assert "[c1] Bạch Đằng" in prepared.messages[-1]["content"]
         assert any(c["source_kind"] == "mcp" for c in prepared_a.contexts)
         assert not any(c.get("source_kind") == "mcp" for c in prepared_b.contexts)

@@ -63,3 +63,13 @@ frontend/.next/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local build/worktree output
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.worktrees/
+
+frontend/.env
+frontend/.env.*
+!frontend/.env.example

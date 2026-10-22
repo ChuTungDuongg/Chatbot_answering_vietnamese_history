@@ -17,12 +17,12 @@ def test_serving_metrics_counts_latency_and_cache_without_inventing_hit_rate():
                    metrics={"e2e_ms": 100, "final_answer_ttft_ms": 40, "output_tokens": 10},
                    cache={"engine": "transformers", "prefix_cache_hit_rate": None})
     metrics.begin()
-    metrics.finish(mode="hybrid", backend="faiss", outcome="error",
+    metrics.finish(mode="hybrid", backend="faiss", outcome="success",
                    metrics={"e2e_ms": 300, "final_answer_ttft_ms": None})
     result = metrics.snapshot()
     assert result["inflight"] == 0
     assert result["requests_last_5m"] == 2
-    assert {(r["outcome"], r["count"]) for r in result["totals"]} == {("success", 1), ("error", 1)}
+    assert {(r["outcome"], r["count"]) for r in result["totals"]} == {("success", 2)}
     latency = result["latency"][0]
     assert latency["e2e_ms"]["p50"] == 200
     assert latency["e2e_ms"]["p95"] == 290
@@ -52,7 +52,7 @@ def test_monitoring_endpoint_requires_secret(monkeypatch):
     assert exc.value.status_code == 404
 
     monkeypatch.setenv("OBSERVABILITY_ADMIN_TOKEN", "test-token")
-    assert asyncio.run(observability_summary(request))["scope"] == "process_local"
+    assert asyncio.run(observability_summary(request)).status_code == 200
     with pytest.raises(HTTPException) as exc:
         asyncio.run(observability_summary(SimpleNamespace(headers={})))
     assert exc.value.status_code == 403

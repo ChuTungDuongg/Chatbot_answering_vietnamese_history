@@ -4,13 +4,14 @@ import subprocess
 from pathlib import Path
 
 import modal
-from dotenv import load_dotenv
 
 
 repo_root = Path(__file__).resolve().parent
 # Read the repo's local settings before constructing the Modal image/client.
 # Explicit shell/deployment environment variables keep precedence over .env.
-load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
+if modal.is_local():
+    from dotenv import load_dotenv
+    load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
 
 inference_backend = os.getenv("INFERENCE_BACKEND", "transformers")
 runtime_image = os.getenv("MODAL_RUNTIME_IMAGE", inference_backend)
@@ -72,7 +73,8 @@ if mcp_enabled and mcp_secret_name:
     runtime_secrets.append(modal.Secret.from_name(mcp_secret_name))
 observability_secret_name = os.getenv("MODAL_OBSERVABILITY_SECRET_NAME", "").strip()
 if observability_secret_name:
-    runtime_secrets.append(modal.Secret.from_name(observability_secret_name))
+    runtime_secrets.append(modal.Secret.from_name(observability_secret_name,
+                                                required_keys=["OBSERVABILITY_ADMIN_TOKEN"]))
 
 image = modal.Image.from_dockerfile(
     str(repo_root / ("Dockerfile.vllm" if runtime_image == "vllm" else "Dockerfile")),
