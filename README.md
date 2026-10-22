@@ -16,7 +16,7 @@ Transformers is the default inference backend and supports Hybrid vanilla/SFT an
 ## 🧭 Start here
 
 - 💻 [Local setup](#run-locally): start with `api-only`, then enable retrieval or generation after restoring artifacts.
-- ☁️ [Modal setup](#run-on-modal): run GPU inference remotely and the frontend locally.
+- ☁️ [Modal setup](#run-on-modal): run both the CPU-hosted frontend and GPU inference backend on Modal, or use local Vite for development.
 - ⚙️ [Runtime configuration](#runtime-configuration): models, SFT, retrieval backends, and tools.
 - 📊 [Evaluation and benchmarks](#evaluation-and-benchmarks): score saved answers and measure real HTTP/SSE latency.
 - 🎓 [Training](#training): frozen SILVER data, QLoRA, and six-system comparisons.
@@ -152,7 +152,7 @@ Interactive API documentation is available at `http://127.0.0.1:8000/docs`. `/he
 
 ## ☁️ Run on Modal
 
-Modal runs the backend in Linux/CUDA while the frontend stays local. Install and authenticate the CLI in your Python environment:
+Modal runs GPU inference on Linux/CUDA and now also provides an independent CPU-hosted frontend gateway. Local Vite remains available for development. Install and authenticate the CLI in your Python environment:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install modal
@@ -187,7 +187,7 @@ For a persistent deployment:
 .\.venv\Scripts\python.exe -m modal deploy modal_app.py
 ```
 
-Use the deployment URL printed by Modal in the frontend configuration. [Modal quick start](MODAL_QUICKSTART.md) covers volume checks, Qdrant secrets, runtime smoke tests, and deployment diagnostics.
+For a cloud-only frontend, deploy once to obtain the `fastapi_app` GPU URL, set `MODAL_GPU_API_URL` in the root `.env`, and redeploy. Open the `frontend_app` URL; no local Vite server is needed. The CPU gateway forwards API calls and SSE to the GPU backend. See [the full deployment and observability guide](docs/SERVING_OBSERVABILITY_MODAL_FRONTEND.md). [Modal quick start](MODAL_QUICKSTART.md) covers volume checks, Qdrant secrets, runtime smoke tests, and deployment diagnostics.
 
 <a id="runtime-configuration"></a>
 
