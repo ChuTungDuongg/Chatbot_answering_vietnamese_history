@@ -43,3 +43,12 @@ def test_waterloo_flags_observed_unsupported_causal_summary_and_body_boilerplate
     flags = review_waterloo(answer, sources)
     assert "coalition_coordination_claim_requires_review" in flags
     assert "formulaic_phrase" in flags
+
+
+def test_waterloo_flags_prussian_absence_claim_from_real_final_capture():
+    from scripts.check_live_answer_regressions import review_waterloo
+    sources = [{"chunk_id": "wiki_vi_83457", "text": "Quân Phổ tới hỗ trợ Wellington và tấn công sườn quân Pháp."}]
+    answer = "Kết quả là quân Phổ không thể tham gia trận Waterloo do bị phân tán và mất nhiều binh sĩ [wiki_vi_83457]."
+    flags = review_waterloo(answer, sources)
+    assert "prussian_participation_claim_requires_review" in flags
+    assert "invalid_citations" not in flags  # Valid IDs alone do not prove entailment.

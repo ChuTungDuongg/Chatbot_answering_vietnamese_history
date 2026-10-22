@@ -27,6 +27,8 @@ def review_waterloo(answer: str, sources: list[dict]) -> list[str]:
         flags.append("formulaic_phrase")
     if "phối hợp không hiệu quả giữa các lực lượng liên minh" in text:
         flags.append("coalition_coordination_claim_requires_review")
+    if re.search(r"quân phổ[^.!?\n]{0,120}không thể tham gia[^.!?\n]{0,40}waterloo", text):
+        flags.append("prussian_participation_claim_requires_review")
     # Examine sentence fragments and recognize common explicit negations.
     for sentence in re.split(r"[;!?\n]|(?<=[a-zà-ỹ])\.\s", text):
         if (re.search(r"33[., ]?000|33 nghìn", sentence)

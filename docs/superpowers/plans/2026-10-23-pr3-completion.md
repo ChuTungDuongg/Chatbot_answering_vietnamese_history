@@ -14,7 +14,7 @@ Architecture: retain the GPU ASGI app and CPU gateway; repair process-local metr
 - [x] Add real HTTP streaming/upload/error/disconnect checks then repair gateway ownership and build isolation.
 - [x] Strengthen live grounding/style instructions; preserve offline prompts and test Waterloo evidence boundaries.
 - [x] Review CI, run full verification and check Docker/Modal availability.
-- [ ] Write Vietnamese report with actual results, review final diff, commit, push and update existing PR.
+- [x] Write Vietnamese report with actual results, review final diff, commit, push and update existing PR.
 
 ## Review focus and ledger
 
@@ -26,3 +26,7 @@ Ruling: keep accepted chat execution counters and HTTP admission/status counters
 
 Phase 6: User authorizes ready + squash merge only after all checks and deployment acceptance pass. Never bypass protection.
 Observed: 399 Python, 67 Node, 78 Vitest and 45 Playwright pass; Docker built and Linux gateway 8 pass. Modal CPU dotenv startup failure fixed and real PDF upload/ready verified. Initial real Waterloo samples show factual weaknesses despite empty lexical flags; prompt tightened and final live checks pending.
+
+Final gate ruling: no merge. Both final model captures completed transport but human review found a Prussian/French subject reversal and campaign-vs-battle troop-strength confusion. Added the observed contradiction to automated advisory regressions; do not claim lexical checks establish entailment. Operational deployment tests pass. CI 9aacd8e is green; final report/checker commit still requires CI.
+
+Final local complete suite: 400 passed in 59.66s. Main remote remains 2edd78f0f82db0d3fb75d0fec347e504d9584e4a; original dirty main files unchanged. PR remains draft because live factual acceptance failed.

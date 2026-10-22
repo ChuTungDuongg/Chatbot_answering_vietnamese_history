@@ -93,7 +93,7 @@ ChatStreamingResponse đóng body iterator ngay trong task đang consume, tránh
 
 ### Cache và bộ nhớ
 
-Đã đối chiếu API chính thức của vLLM 0.23.0: AsyncLLM.from_engine_args nhận stat_loggers; logger record nhận SchedulerStats. Adapter chỉ giữ số, không giữ prompt, token IDs hay nội dung response.
+Đã đối chiếu [AsyncLLM v0.23.0](https://github.com/vllm-project/vllm/blob/v0.23.0/vllm/v1/engine/async_llm.py) và [stat logger v0.23.0](https://github.com/vllm-project/vllm/blob/v0.23.0/vllm/v1/metrics/loggers.py): AsyncLLM.from_engine_args nhận stat_loggers; logger record nhận SchedulerStats. Adapter chỉ giữ số, không giữ prompt, token IDs hay nội dung response.
 
 - Prefix enabled đọc effective configuration, hoặc cấu hình yêu cầu khi model chưa load.
 - queries/hits là token counters từ scheduler. Hit rate = tổng hits / tổng queries từ lần reset cache gần nhất; mẫu số 0 trả null.
@@ -142,7 +142,8 @@ scripts/check_live_answer_regressions.py dùng lại HTTP/SSE client benchmark h
 |---|---|
 | Python baseline ban đầu | 364 passed, 7 failed, 116.65s |
 | Python full trước hai test ASGI cuối và logging | 394 passed, 109.79s |
-| Python final | 399 passed, 67.93s; gồm remote import, ASGI và live-quality regressions |
+| Python full tại commit 9aacd8e | 399 passed, 67.93s; gồm remote import, ASGI và live-quality regressions |
+| Python full cuối | 400 passed, 59.66s; 10/10 live-answer tests phát hiện được counterexample đã quan sát. Live model acceptance vẫn FAILED. |
 | Frontend node:test | 67 passed |
 | Frontend Vitest | 78 passed, 11 files |
 | ESLint | Exit 0 |
@@ -154,7 +155,7 @@ scripts/check_live_answer_regressions.py dùng lại HTTP/SSE client benchmark h
 | Docker static/health/index-cache/proxy 503 smoke | Passed; image cuối không có Torch hoặc node executable |
 | Playwright | 45 passed, 30.6s, desktop/tablet/mobile |
 | Review độc lập | Đã sửa hai lỗi ASGI được reviewer tái hiện; reviewer xác nhận không còn important/critical finding |
-| GitHub Actions | Chưa có kết quả cho commit sửa cuối; không coi local pass là CI pass |
+| GitHub Actions tại 9aacd8e | Cả 6 check của push/PR đều success: python, frontend, frontend-container; [CI run #55](https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history/actions/runs/39840163252). Kết quả cho từng commit được xem tại [Checks của PR #3](https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history/pull/3/checks). |
 
 Node test suite có cảnh báo cổng Vite HMR 24678 dùng đồng thời từ các test SSR hiện hữu; các assertion vẫn pass. Không phải lỗi của production build.
 
@@ -174,7 +175,15 @@ Node test suite có cảnh báo cổng Vite HMR 24678 dùng đồng thời từ 
 
 Deployment thật phát hiện CPU import modal_app.py bị lỗi thiếu dotenv; đã sửa chỉ load dotenv trong modal.is_local(), thêm test remote import và redeploy thành công. Docker local không tự tái hiện được lỗi này vì chạy gateway trực tiếp.
 
-Capture Waterloo ban đầu qua Central/FAISS thành công transport: client TTFT 49008 ms, E2E 75173 ms; 339 output tokens. Qua Hybrid/Qdrant: TTFT 6336 ms, E2E 66558 ms. Đây chỉ là hai smoke sample, không phải p50/p95 benchmark, không dùng để kết luận hiệu năng. Central phân biệt 33.000 là quân bị giữ ngoài Waterloo, không gọi là tử trận, nhưng có kết luận thiếu hỗ trợ về phối hợp của liên minh. Hybrid còn suy diễn từ Wavre sang toàn bộ quân Phổ. Heuristic đầu tiên không bắt hết lỗi; human review đã phát hiện, bổ sung counterexample regression và siết prompt về causal relation, đúng chủ thể/thời gian và phạm vi trận/chiến dịch. Đang chạy lại live capture sau chỉnh sửa này; chưa chấp nhận chất lượng chỉ dựa vào flags rỗng.
+Capture Waterloo ban đầu qua Central/FAISS thành công transport: client TTFT 49008 ms, E2E 75173 ms; 339 output tokens. Qua Hybrid/Qdrant: TTFT 6336 ms, E2E 66558 ms. Đây chỉ là hai smoke sample, không phải p50/p95 benchmark, không dùng để kết luận hiệu năng. Central phân biệt 33.000 là quân bị giữ ngoài Waterloo, không gọi là tử trận, nhưng có kết luận thiếu hỗ trợ về phối hợp của liên minh. Hybrid còn suy diễn từ Wavre sang toàn bộ quân Phổ. Heuristic đầu tiên không bắt hết lỗi; human review đã phát hiện, bổ sung counterexample regression và siết prompt về causal relation, đúng chủ thể/thời gian và phạm vi trận/chiến dịch. Đã chạy lại live capture và **không chấp nhận chất lượng**:
+
+- Central/FAISS sau prompt mới: transport success; TTFT 38783 ms, E2E 57014 ms. Câu trả lời nói “quân Phổ không thể tham gia trận Waterloo”, đảo sai chủ thể so với đoạn nguồn vốn nói quân Phổ giữ quân Pháp ngoài chiến trường và tới hỗ trợ Wellington. Citation ID hợp lệ nhưng nội dung không entail.
+- Hybrid/Qdrant sau prompt mới: transport success; TTFT 4336 ms, E2E 66663 ms. Câu trả lời đưa 60 vạn quân của liên minh vào quân số ngay tại Waterloo và kết luận phản thực tế quá tuyệt đối. Đây là lỗi phạm vi quân số chiến dịch/liên minh so với lực lượng dự trận.
+- Không thấy 33.000 bị gọi là toàn bộ tử trận trong các capture này, nhưng điều đó không đủ để coi factual consistency pass.
+- Đã bổ sung regression cho claim quân Phổ không tham gia; checker hiện đánh dấu capture Central cuối với prussian_participation_claim_requires_review. Flags rỗng trước đó chỉ cho thấy giới hạn của heuristic, không phải chất lượng đạt.
+- Không tiếp tục thay prompt ngẫu nhiên để tìm một output đẹp. Các chỉnh sửa prompt chưa giải quyết được lỗi semantic grounding trong khi vẫn giữ model/retrieval/config như yêu cầu. Cần điều tra riêng chất lượng context (có câu dịch sai/chủ thể không nhất quán) và kiểm chứng entailment trước khi chấp nhận thay đổi live style. Không được sửa dữ liệu frozen hoặc đổi model âm thầm để làm test qua.
+
+Đã xác minh browser abort thật sau status frame và log serving_request outcome=cancelled, e2e khoảng 739 ms, TTFT/token count null. Metadata thật xác nhận NVIDIA A100-SXM4-40GB, Torch 2.13.0, Transformers 4.57.6, GPU backend full/lazy, bật cả hai mode và max_inputs=1. Preview Modal là deployment phục vụ kiểm tra PR; không được coi là bản release đã qua acceptance.
 
 Quy trình deployment đã hỗ trợ:
 
@@ -199,7 +208,7 @@ python -m modal app logs vn-history-rag-api --since 2h
 
 Modal CLI hiện cài không có subcommand function; vì vậy đã bỏ các lệnh modal function metrics chưa được xác thực khỏi guide. Dùng Modal Dashboard cho infrastructure/GPU metrics.
 
-Static/proxy/upload readiness đã được kiểm tra trên Modal thật; acceptance về factual consistency của câu trả lời đang chờ lần kiểm tra lại. Cache counters vLLM thật trên GPU chưa được đo, vì production đang dùng Transformers. GPU thật cho vLLM optional backend cần deployment Linux CUDA riêng theo requirements-vllm.txt; không đổi production Transformers chỉ để thử cache.
+Static/proxy/upload/readiness/abort đã được kiểm tra trên Modal thật; acceptance về factual consistency của câu trả lời **FAILED** sau kiểm tra lại. Cache counters vLLM thật trên GPU chưa được đo, vì production đang dùng Transformers. GPU thật cho vLLM optional backend cần deployment Linux CUDA riêng theo requirements-vllm.txt; không đổi production Transformers chỉ để thử cache.
 
 ## 10. Giới hạn và cải tiến tiếp theo
 
@@ -211,6 +220,15 @@ Static/proxy/upload readiness đã được kiểm tra trên Modal thật; accep
 6. Theo dõi retrieval/thread cancellation: Python không thể dừng cưỡng bức một hàm native đã chạy trong to_thread; cancel flag/ngắt generation và không tiếp tục bước mới, còn hàm retrieval native đang chạy có thể phải hoàn tất.
 7. Theo dõi error sau khi response headers đã gửi bằng terminated-stream metrics/client EOF; HTTP status không thể đổi ngược.
 
-## 11. Cổng merge Phase 6
+## 11. Cổng merge Phase 6: KHÔNG MERGE
 
-Chưa merge. Còn cổng factual consistency live và CI của commit cuối. Chỉ chuyển ready và squash sau khi final Python/frontend/lint/build, CI, review và deployment validation đều đạt. Nếu bất kỳ required check chưa xong hoặc deployment chưa đạt, giữ draft và ghi blocker cụ thể vào đây.
+| Tiêu chí | Kết luận |
+|---|---|
+| Observability implementation và privacy/auth semantics | Đạt các test nêu trên; cloud numeric logs success/cancelled đã xác nhận. Ops secret chưa được cấp, endpoint cloud tắt an toàn. |
+| CPU frontend / GPU inference / cùng origin / upload / streaming | Đạt kiểm tra Docker và Modal thật. |
+| Naturalness và factual grounding live | **Chưa đạt**: Central đảo chủ thể Phổ/Pháp; Hybrid trộn quân số toàn liên minh với lực lượng tại Waterloo và suy đoán kết quả. |
+| Frozen evaluation/model/retrieval preservation | Đã xác nhận byte hashes và diff; không đổi frozen assets hoặc cấu hình model. |
+| CI | 9aacd8e xanh toàn bộ; kết quả commit cuối xem [Checks PR #3](https://github.com/ChuTungDuongg/Chatbot_answering_vietnamese_history/pull/3/checks). CI không thay thế kiểm tra semantic live. |
+| Quyết định | Giữ PR #3 draft. Không ready, không squash/merge; không thay main hoặc bypass protection. |
+
+Blocker thực sự là chất lượng semantic trên mô hình đã deploy, không phải thiếu authentication Modal, thiếu Docker hoặc test local. Unit/CI xanh chỉ chứng minh các hợp đồng và regression có thể xác định; không bảo đảm mô hình tuân thủ prompt. Cần xử lý lỗi factual grounding và chạy lại acceptance trên cả Hybrid và Central trước khi xét merge. Không có merge commit SHA để báo cáo ở thời điểm này.
