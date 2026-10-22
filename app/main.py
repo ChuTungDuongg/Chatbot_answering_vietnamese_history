@@ -1,9 +1,11 @@
 """FastAPI assembly for the configured inference modes."""
 
+import hmac
 import logging
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.conversations import router as conversations_router
@@ -12,6 +14,7 @@ from app.central.runtime import CentralRuntime
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
+from app.observability import serving_metrics
 from app.models.factory import build_model_runtime
 from app.mcp.manager import MCPManager
 from app.tools.policy import builtin_capabilities
@@ -162,3 +165,15 @@ async def ready():
                  "central_loaded": bool(central_model and central_model.is_loaded),
                  "inference_backend": settings.inference_backend}
     return state
+
+
+@app.get("/api/v1/ops/summary", include_in_schema=False)
+async def observability_summary(request: Request):
+    """Process-local aggregate metrics; unavailable unless an admin secret is provisioned."""
+    expected = os.getenv("OBSERVABILITY_ADMIN_TOKEN", "")
+    supplied = request.headers.get("Authorization", "")
+    if not expected:
+        raise HTTPException(status_code=404, detail="Monitoring API is disabled")
+    if not hmac.compare_digest(supplied, f"Bearer {expected}"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return serving_metrics.snapshot()
