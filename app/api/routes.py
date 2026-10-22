@@ -23,6 +23,7 @@ from app.services.metadata import build_baseline_metadata
 from app.schemas import (ChatRequest, ChatResponse, RetrieveRequest, RetrieveResponse,
                          RetrievalContextItem, SourceItem)
 from app.telemetry import RequestTrace, reset_request_telemetry, set_request_telemetry
+from app.observability import serving_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,12 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         loop.call_soon_threadsafe(queue.put_nowait, {**event, "request_id": trace.request_id,
                                                    "retrieval_backend": backend, "mode": mode.value})
     token = set_request_telemetry(trace)
+    serving_metrics.begin()
+    recorded = False
+    cache_state = {"engine": getattr(runtime.model, "inference_backend", "unknown"),
+                   "prefix_cache_enabled": (getattr(runtime.model, "enable_prefix_caching", None)
+                                            if getattr(runtime.model, "inference_backend", None) == "vllm" else None),
+                   "prefix_cache_hit_rate": None, "kv_cache_utilization": None}
     try:
         trace.mark("first_status_event")
         yield "status", {"stage": "request_preparation", "state": "started",
@@ -396,6 +403,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
             done["retrieval_settings"] = done["retrieval_settings"]()
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=completed.model_revision)
+        serving_metrics.finish(mode=mode.value, backend=backend, outcome="success",
+                               metrics=metrics, cache=cache_state)
+        recorded = True
         if payload.debug:
             yield "debug_trace", debug_trace
         yield "done", done
@@ -410,6 +420,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         metrics = _model_metrics(completed, trace, prepared, delta_times)
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=getattr(runtime.model, "resolved_revision", None), error=type(exc).__name__)
+        serving_metrics.finish(mode=mode.value, backend=backend, outcome="error",
+                               metrics=metrics, cache=cache_state)
+        recorded = True
         yield "status", {"stage": current_stage, "state": "failed", "message": "Không thể hoàn tất bước này",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id,
@@ -420,6 +433,10 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                        **getattr(runtime.model, "engine_metadata", {}),
                        "metrics": metrics, "latency_ms": metrics["e2e_ms"]}
     finally:
+        if not recorded:
+            serving_metrics.finish(mode=mode.value, backend=backend, outcome="cancelled",
+                                   metrics={"e2e_ms": trace.span_ms("request_received", "request_finished")},
+                                   cache=cache_state)
         cancel.set()
         for task in (prepare_task, progress_waiter):
             if task is not None and not task.done():
