@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
+
 import asyncio
+import anyio
 import json
 import logging
 import re
@@ -23,10 +26,23 @@ from app.services.metadata import build_baseline_metadata
 from app.schemas import (ChatRequest, ChatResponse, RetrieveRequest, RetrieveResponse,
                          RetrievalContextItem, SourceItem)
 from app.telemetry import RequestTrace, reset_request_telemetry, set_request_telemetry
+from app.observability import cache_snapshot, serving_metrics
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
+
+
+
+class ChatStreamingResponse(StreamingResponse):
+    async def stream_response(self, send):
+        # Close in the consuming task so request ContextVar tokens are reset
+        # in their original context on both ASGI 2.3 and 2.4 transports.
+        try:
+            await super().stream_response(send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self.body_iterator.aclose()
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -282,6 +298,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         loop.call_soon_threadsafe(queue.put_nowait, {**event, "request_id": trace.request_id,
                                                    "retrieval_backend": backend, "mode": mode.value})
     token = set_request_telemetry(trace)
+    serving_metrics.begin()
+    recorded = False
+    model_stream = None
     try:
         trace.mark("first_status_event")
         yield "status", {"stage": "request_preparation", "state": "started",
@@ -336,7 +355,8 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
         trace.mark("final_model_requested")
-        async for item in runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel):
+        model_stream = runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel)
+        async for item in model_stream:
             if cancel.is_set():
                 return
             if isinstance(item, ModelDelta):
@@ -396,6 +416,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
             done["retrieval_settings"] = done["retrieval_settings"]()
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=completed.model_revision)
+        serving_metrics.finish(mode=mode.value, backend=backend, outcome="success",
+                               metrics=metrics, cache=cache_snapshot(runtime.model))
+        recorded = True
         if payload.debug:
             yield "debug_trace", debug_trace
         yield "done", done
@@ -410,6 +433,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         metrics = _model_metrics(completed, trace, prepared, delta_times)
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
                    model_revision=getattr(runtime.model, "resolved_revision", None), error=type(exc).__name__)
+        serving_metrics.finish(mode=mode.value, backend=backend, outcome="error",
+                               metrics=metrics, cache=cache_snapshot(runtime.model))
+        recorded = True
         yield "status", {"stage": current_stage, "state": "failed", "message": "Không thể hoàn tất bước này",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id,
@@ -420,18 +446,22 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                        **getattr(runtime.model, "engine_metadata", {}),
                        "metrics": metrics, "latency_ms": metrics["e2e_ms"]}
     finally:
+        if not recorded:
+            trace.mark("request_finished")
+            serving_metrics.finish(mode=mode.value, backend=backend, outcome="cancelled",
+                                   metrics=_model_metrics(completed, trace, prepared, delta_times),
+                                   cache=cache_snapshot(runtime.model))
         cancel.set()
-        for task in (prepare_task, progress_waiter):
-            if task is not None and not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-        if monitor:
-            monitor.cancel()
-            try:
-                await monitor
-            except asyncio.CancelledError:
-                pass
-        reset_request_telemetry(token)
+        try:
+            with anyio.CancelScope(shield=True):
+                for task in (prepare_task, progress_waiter, monitor):
+                    if task is not None and not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                if model_stream is not None:
+                    await model_stream.aclose()
+        finally:
+            reset_request_telemetry(token)
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
@@ -511,12 +541,13 @@ async def chat_stream(payload: ChatRequest, request: Request, owner_id: OwnerId,
     trace = RequestTrace(str(uuid.uuid4()), mode.value)
 
     async def events() -> AsyncIterator[str]:
-        async for event, data in _execute(payload, request, owner_id, store, runtime, mode, trace,
-                                          watch_disconnect=True, tool_view=view):
-            if event == "done":
-                data = {key: value for key, value in data.items() if key != "answer"}
-            yield _sse(event, data)
+        async with aclosing(_execute(payload, request, owner_id, store, runtime, mode, trace,
+                                     watch_disconnect=True, tool_view=view)) as execution:
+            async for event, data in execution:
+                if event == "done":
+                    data = {key: value for key, value in data.items() if key != "answer"}
+                yield _sse(event, data)
 
-    return StreamingResponse(events(), media_type="text/event-stream",
+    return ChatStreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                                       "X-Request-ID": trace.request_id})

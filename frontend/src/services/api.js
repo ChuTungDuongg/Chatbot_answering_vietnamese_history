@@ -3,12 +3,6 @@ import { ChatMode } from "../config/chatModes";
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const CLIENT_ID_STORAGE_KEY = "vn-history-client-id";
 
-function ensureApiConfigured() {
-  if (!API_BASE_URL) {
-    throw new Error("VITE_API_BASE_URL chưa được cấu hình trong frontend/.env.");
-  }
-}
-
 function getClientId() {
   let clientId = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
 
@@ -46,8 +40,6 @@ async function getErrorMessage(response) {
 }
 
 async function requestJson(path, options = {}) {
-  ensureApiConfigured();
-
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: createHeaders(options.headers),
@@ -159,8 +151,6 @@ export async function streamChat({
   onEvent,
   signal,
 }) {
-  ensureApiConfigured();
-
   const normalizedQuestion = question?.trim() ?? "";
   if (!conversationId) throw new Error("conversationId is required.");
   if (!normalizedQuestion && !attachmentIds.length) throw new Error("Câu hỏi không được để trống.");
@@ -191,11 +181,16 @@ export async function streamChat({
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let sawStreamError = false;
+  let sawDone = false;
+  let reachedEof = false;
 
   try {
     while (!sawStreamError) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        reachedEof = true;
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const blocks = buffer.split(/\r?\n\r?\n/);
@@ -205,22 +200,31 @@ export async function streamChat({
         const parsed = parseSSEBlock(block);
         if (parsed) {
           onEvent?.(parsed);
-          if (parsed.event === "error") {
-            sawStreamError = true;
-            break;
-          }
+          sawStreamError = parsed.event === "error";
+          sawDone ||= parsed.event === "done";
+          if (sawStreamError) break;
         }
       }
     }
 
-    if (sawStreamError) {
-      await reader.cancel();
-    } else {
+    if (!sawStreamError && !sawDone) {
       buffer += decoder.decode();
       const parsed = buffer.trim() ? parseSSEBlock(buffer) : null;
-      if (parsed) onEvent?.(parsed);
+      if (parsed) {
+        onEvent?.(parsed);
+        sawStreamError = parsed.event === "error";
+        sawDone = parsed.event === "done";
+      }
+    }
+    if (!sawStreamError && !sawDone) {
+      throw new Error("Luồng phản hồi kết thúc trước khi hoàn tất.");
     }
   } finally {
+    try {
+      if (!reachedEof) await reader.cancel();
+    } catch {
+      // A fetch abort may already have closed the stream.
+    }
     reader.releaseLock();
   }
 }

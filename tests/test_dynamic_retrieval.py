@@ -141,9 +141,9 @@ def test_central_selected_backend_including_fallback(tmp_path, monkeypatch, fall
     assert [p.retrieval["retrieval_backend"] for p in prepared] == ["qdrant", "faiss"]
     assert prepared[0].retrieval["timings_ms"]["dense_search"] >= 0
     assert prepared[0].contexts
-    from app.rag.prompting import SYSTEM_PROMPT
+    from app.rag.prompting import LIVE_SYSTEM_PROMPT
     for answer in prepared:
-        assert answer.messages[0]["content"] == SYSTEM_PROMPT
+        assert answer.messages[0]["content"] == LIVE_SYSTEM_PROMPT
         assert all(chunk["chunk_id"] in answer.messages[-1]["content"] for chunk in answer.contexts)
 
 

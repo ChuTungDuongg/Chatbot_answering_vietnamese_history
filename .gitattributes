@@ -1,0 +1,2 @@
+evaluation/datasets/latency_v1/*.jsonl text eol=lf
+evaluation/datasets/latency_v1/manifest.json text eol=lf

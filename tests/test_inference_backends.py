@@ -48,7 +48,7 @@ def fake_vllm(monkeypatch):
             return {"input_ids": [11, 12]}
     tokenizer = Tokenizer()
     class Engine:
-        def __init__(self, args):
+        def __init__(self, args, stat_loggers=None):
             captures["loads"] += 1
             captures["args"] = args
             self.vllm_config = SimpleNamespace(
@@ -59,6 +59,7 @@ def fake_vllm(monkeypatch):
                                              enforce_eager=args.enforce_eager,
                                              generation_config=args.generation_config, quantization=None),
                 parallel_config=SimpleNamespace(tensor_parallel_size=1))
+            captures["stat_loggers"] = [factory(self.vllm_config, 0) for factory in stat_loggers or []]
         async def generate(self, prompt, params, request_id):
             captures.update(prompt_tokens=prompt["prompt_token_ids"], sampling=params, request_id=request_id)
             if captures["hang"]:
@@ -74,7 +75,8 @@ def fake_vllm(monkeypatch):
         "vllm": {"SamplingParams": lambda **kwargs: SimpleNamespace(**kwargs), "TokensPrompt": lambda **kwargs: kwargs},
         "vllm.sampling_params": {"RequestOutputKind": SimpleNamespace(DELTA="delta")},
         "vllm.engine.arg_utils": {"AsyncEngineArgs": lambda **kwargs: SimpleNamespace(**kwargs)},
-        "vllm.v1.engine.async_llm": {"AsyncLLM": SimpleNamespace(from_engine_args=lambda args: Engine(args))},
+        "vllm.v1.metrics.loggers": {"StatLoggerBase": object},
+        "vllm.v1.engine.async_llm": {"AsyncLLM": SimpleNamespace(from_engine_args=lambda args, **kwargs: Engine(args, **kwargs))},
         "transformers": {"AutoConfig": SimpleNamespace(from_pretrained=lambda *a, **kw: SimpleNamespace(_commit_hash="revision-sha")),
                          "AutoTokenizer": SimpleNamespace(from_pretrained=lambda *a, **kw: tokenizer)},
     }
@@ -180,3 +182,32 @@ def test_baseline_metadata_reports_backend_identity(monkeypatch):
     assert result["inference_backend"] == "transformers"
     assert result["inference_engine_version"]
     assert result["generation_settings"]["do_sample"] is False
+
+
+def test_vllm_cache_metrics_use_scheduler_tokens_and_reset(fake_vllm):
+    captures, _ = fake_vllm
+    runtime = VLLMRuntime(model_id=HYBRID_MODEL_ID, enable_prefix_caching=True)
+    assert runtime.cache_metrics["prefix_cache_enabled"] is True
+    assert runtime.cache_metrics["prefix_cache_hit_rate"] is None
+    assert runtime.cache_metrics["status"] == "not_loaded"
+    async def run():
+        await runtime.aload()
+        assert runtime.cache_metrics["status"] == "awaiting_stats"
+        logger = captures["stat_loggers"][0]
+        def record(queries, hits, usage, reset=False):
+            logger.record(SimpleNamespace(kv_cache_usage=usage,
+                prefix_cache_stats=SimpleNamespace(queries=queries, hits=hits, reset=reset)), None)
+        record(100, 40, .75)
+        record(50, 20, .5)
+        result = runtime.cache_metrics
+        assert result["prefix_cache_queries"] == 150
+        assert result["prefix_cache_hits"] == 60
+        assert result["prefix_cache_hit_rate"] == .4
+        assert result["kv_cache_utilization"] == .5
+        record(10, 2, 0, reset=True)
+        assert runtime.cache_metrics["prefix_cache_hit_rate"] == .2
+        assert runtime.cache_metrics["prefix_cache_queries"] == 10
+        await runtime.aclose()
+        assert runtime.cache_metrics["status"] == "not_loaded"
+        assert runtime.cache_metrics["kv_cache_utilization"] is None
+    asyncio.run(run())

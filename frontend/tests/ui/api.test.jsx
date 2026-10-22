@@ -42,3 +42,62 @@ test.each(["hybrid", "central"])("streamChat sends the %s request without respon
   expect(request.signal).toBe(controller.signal);
   expect(onEvent).toHaveBeenCalledWith({ event: "done", data: { status: "done" } });
 });
+
+test("empty API origin uses same-origin routes for REST and streaming", async () => {
+  vi.resetModules();
+  vi.stubEnv("VITE_API_BASE_URL", "");
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify([])))
+    .mockResolvedValueOnce(new Response('event: done\ndata: {"status":"done"}\n\n'));
+  vi.stubGlobal("fetch", fetchMock);
+  const { listConversations, streamChat } = await import("../../src/services/api.js");
+  await listConversations();
+  await streamChat({ conversationId: "c1", question: "History?" });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/conversations", "/api/v1/chat/stream",
+  ]);
+});
+
+test("truncated SSE is an error and callback failure cancels the network reader", async () => {
+  vi.resetModules();
+  vi.stubEnv("VITE_API_BASE_URL", "");
+  const { streamChat } = await import("../../src/services/api.js");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    new Response('event: answer_delta\ndata: {"delta":"partial"}\n\n'),
+  ));
+  await expect(streamChat({ conversationId: "c1", question: "History?" })).rejects.toThrow();
+
+  let wasCancelled = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: answer_delta\ndata: {"delta":"hello"}\n\n'));
+    },
+    cancel() { wasCancelled = true; },
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream)));
+  await expect(streamChat({ conversationId: "c1", question: "History?",
+    onEvent() { throw new Error("callback failed"); },
+  })).rejects.toThrow("callback failed");
+  expect(wasCancelled).toBe(true);
+});
+
+
+test("done frame is consumed through EOF without prematurely cancelling a valid stream", async () => {
+  vi.resetModules();
+  vi.stubEnv("VITE_API_BASE_URL", "");
+  let controller;
+  let wasCancelled = false;
+  const body = new ReadableStream({
+    start(value) { controller = value; },
+    cancel() { wasCancelled = true; },
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+  const { streamChat } = await import("../../src/services/api.js");
+  const done = streamChat({ conversationId: "c1", question: "History?" });
+  controller.enqueue(new TextEncoder().encode('event: done\ndata: {"status":"done"}\n\n'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(wasCancelled).toBe(false);
+  expect(() => controller.close()).not.toThrow();
+  await done;
+  expect(wasCancelled).toBe(false);
+});
