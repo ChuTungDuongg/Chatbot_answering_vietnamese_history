@@ -3,12 +3,6 @@ import { ChatMode } from "../config/chatModes";
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const CLIENT_ID_STORAGE_KEY = "vn-history-client-id";
 
-function ensureApiConfigured() {
-  if (!API_BASE_URL) {
-    throw new Error("VITE_API_BASE_URL chưa được cấu hình trong frontend/.env.");
-  }
-}
-
 function getClientId() {
   let clientId = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
 
@@ -46,8 +40,6 @@ async function getErrorMessage(response) {
 }
 
 async function requestJson(path, options = {}) {
-  ensureApiConfigured();
-
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: createHeaders(options.headers),
@@ -159,8 +151,6 @@ export async function streamChat({
   onEvent,
   signal,
 }) {
-  ensureApiConfigured();
-
   const normalizedQuestion = question?.trim() ?? "";
   if (!conversationId) throw new Error("conversationId is required.");
   if (!normalizedQuestion && !attachmentIds.length) throw new Error("Câu hỏi không được để trống.");
