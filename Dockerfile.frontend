@@ -1,0 +1,15 @@
+FROM node:24-bookworm-slim AS ui-builder
+WORKDIR /workspace
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci --no-audit --no-fund
+COPY frontend ./frontend
+RUN npm --prefix frontend run build
+
+FROM python:3.11-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /workspace
+RUN pip install --no-cache-dir "fastapi>=0.115,<1" "uvicorn>=0.30,<1" "httpx>=0.27,<1"
+COPY --from=ui-builder /workspace/frontend/dist /workspace/frontend_dist
+COPY frontend_server /workspace/frontend_server
+EXPOSE 8000
+CMD ["uvicorn", "frontend_server.server:gateway", "--host", "0.0.0.0", "--port", "8000"]
