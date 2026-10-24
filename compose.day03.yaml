@@ -1,0 +1,25 @@
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_ENV: development
+      APP_MODE: api-only
+      DEVICE: cpu
+    volumes:
+      - api_data:/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage  # Mới thêm
+
+volumes:
+  api_data:
+  qdrant_data:  # Mới thêm
