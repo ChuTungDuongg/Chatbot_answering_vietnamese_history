@@ -1,5 +1,6 @@
 """Frozen workload, HTTP matrix, comparison arithmetic and verified Drive transfers."""
 from argparse import Namespace
+from collections import Counter
 import copy
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,7 +11,8 @@ import threading
 import pytest
 
 from benchmarks.latency.compare import difference, execute, load_experiment, validate_invariants
-from benchmarks.latency.freeze import DEFAULT_SOURCE, ROOT, sample
+from benchmarks.latency.freeze import FIELDS, ROOT, sample
+from evaluation.schema import load_questions
 from benchmarks.latency.runner import main as legacy_main
 from tools import drive_cli
 
@@ -57,16 +59,38 @@ def test_comparison_math_labels_latency_reduction_and_throughput_increase():
     assert difference(None, 10)["absolute_difference"] is None
 
 
-def test_frozen_100_question_selection_ids_and_hash_are_reproducible():
-    data, manifest = sample(DEFAULT_SOURCE)
-    again, same = sample(DEFAULT_SOURCE)
+def test_frozen_100_question_ids_hash_and_distributions_match_manifest():
     frozen = ROOT / "evaluation/datasets/latency_v1/questions_100.jsonl"
-    assert data == again == frozen.read_bytes()
-    assert manifest == same
-    assert manifest["count"] == 100 and len(set(manifest["selected_question_ids"])) == 100
+    data = frozen.read_bytes()
+    manifest = json.loads((frozen.parent / "manifest.json").read_text(encoding="utf-8"))
+    questions = load_questions(frozen)
+    ids = [question.id for question in questions]
+    assert manifest["count"] == len(questions) == len(set(ids)) == 100
+    assert manifest["selected_question_ids"] == ids == sorted(ids)
     assert hashlib.sha256(data).hexdigest() == manifest["dataset_sha256"]
+    assert manifest["distributions"] == {
+        field: dict(Counter(str(getattr(question, field)) for question in questions))
+        for field in FIELDS
+    }
     assert len(manifest["distributions"]["category"]) == 21
     assert manifest["distributions"]["answerable"]["False"] == 1
+
+
+def test_sampling_is_reproducible_without_generated_silver_split(tmp_path):
+    source = tmp_path / "questions.jsonl"
+    rows = [{"id": f"q{i:03}", "question": f"History question {i}?",
+             "category": f"category_{i % 21}", "difficulty": ("easy", "medium", "hard")[i % 3],
+             "question_type": "chronology", "answerable": i != 0, "in_domain": True}
+            for i in range(120)]
+    source.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    data, manifest = sample(source)
+    again, same = sample(source)
+    assert data == again and manifest == same
+    assert manifest["count"] == len(set(manifest["selected_question_ids"])) == 100
+    assert hashlib.sha256(data).hexdigest() == manifest["dataset_sha256"]
+    source.write_text("".join(json.dumps(row) + "\n" for row in reversed(rows)), encoding="utf-8")
+    assert sample(source)[0] == data
+    assert sample(source, seed=2027)[0] != data
 
 
 class ExperimentHandler(BaseHTTPRequestHandler):

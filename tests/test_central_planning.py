@@ -9,7 +9,7 @@ import pytest
 from app.central.runtime import CentralRuntime
 from app.config import CENTRAL_MODEL_ID
 from app.models.base import ModelDone
-from app.rag.prompting import SYSTEM_PROMPT
+from app.rag.prompting import LIVE_SYSTEM_PROMPT
 from app.telemetry import RequestTrace
 from app.tools.local_search import SearchHistoryInput, SearchHistoryTool
 from app.tools.registry import ToolRegistry
@@ -83,7 +83,7 @@ def test_successful_explicit_plan_exits_early_and_records_real_round_metadata():
     assert row["tools_requested"] == ["search_history"]
     assert prepared.planning["total_model_ms"] == row["model_ms"]
     assert row["finished_ms"] >= row["started_ms"]
-    assert prepared.messages[0]["content"] == SYSTEM_PROMPT
+    assert prepared.messages[0]["content"] == LIVE_SYSTEM_PROMPT
     assert any(e["stage"] == "tool_selection" and e["state"] == "completed" for e in events)
 
 
@@ -107,8 +107,8 @@ def test_world_history_query_searches_external_then_fetches_grounded_page():
     assert prepared.contexts[0]["source_kind"] == "wikipedia"
     assert prepared.contexts[0]["text"].startswith("Full external evidence")
     assert "Full external evidence" in prepared.messages[-1]["content"]
-    assert prepared.messages[0]["content"] == SYSTEM_PROMPT
-    assert "không đoán" in SYSTEM_PROMPT
+    assert prepared.messages[0]["content"] == LIVE_SYSTEM_PROMPT
+    assert "không đoán" in LIVE_SYSTEM_PROMPT
 
 
 def test_world_query_hallucinated_local_call_is_rejected_without_local_fallback():
@@ -127,7 +127,7 @@ def test_world_query_without_permitted_external_sources_keeps_grounded_limitatio
     prepared = asyncio.run(CentralRuntime(model=model, tools=tools).prepare(WORLD_QUERY, 3, []))
     assert not prepared.contexts and retriever.calls == 0
     assert "Không có nguồn phù hợp" in prepared.messages[-1]["content"]
-    assert prepared.messages[0]["content"] == SYSTEM_PROMPT
+    assert prepared.messages[0]["content"] == LIVE_SYSTEM_PROMPT
 
 
 def test_vietnamese_history_still_prefers_local_corpus_and_keeps_tools_available():

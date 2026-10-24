@@ -21,7 +21,7 @@ from app.config import CENTRAL_MODEL_ID, HYBRID_MODEL_ID
 from app.models.base import ModelDelta, ModelDone
 from app.models.qwen import QwenRuntime
 from app.rag.hybrid_runtime import HybridRuntime
-from app.rag.prompting import SYSTEM_PROMPT
+from app.rag.prompting import LIVE_SYSTEM_PROMPT
 from app.rag.schemas import PreparedAnswer
 from app.schemas import ChatRequest
 from app.services.chat_mode_router import ChatModeRouter
@@ -116,7 +116,7 @@ def test_live_sse_uses_fixed_grounded_prompt_without_detail_metadata(tmp_path):
     app, store, model, retriever = _app(tmp_path)
     _, _, events = asyncio.run(_stream(app, store))
     assert all("response_mode" not in data for _, data in events)
-    assert model.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert model.messages[0] == {"role": "system", "content": LIVE_SYSTEM_PROMPT}
     assert "[c1] Bạch Đằng\nChiến thắng năm 938." in model.messages[-1]["content"]
     assert model.calls == retriever.calls == 1
 
@@ -141,7 +141,7 @@ def test_live_api_contract_has_no_response_detail_field(tmp_path, endpoint):
         assert "response_mode" not in response.json()
         assert response.json()["mode"] == "hybrid"
         assert response.json()["sources"][0]["cited"] is True
-    assert model.messages[0]["content"] == SYSTEM_PROMPT
+    assert model.messages[0]["content"] == LIVE_SYSTEM_PROMPT
 
 
 def test_only_two_modes_and_model_ids():
@@ -166,7 +166,7 @@ def test_retrieval_does_not_call_model():
     model = FakeModel(HYBRID_MODEL_ID)
     prepared = asyncio.run(HybridRuntime(retriever, model).prepare("Bạch Đằng?", 6, []))
     assert prepared.contexts[0]["chunk_id"] == "c1"
-    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert prepared.messages[0] == {"role": "system", "content": LIVE_SYSTEM_PROMPT}
     assert retriever.calls == 1
     assert model.calls == 0
 
@@ -204,7 +204,7 @@ def test_central_uses_same_history_retriever_as_tool():
     assert prepared.model_calls_before_final == 1
     assert prepared.tool_calls[0]["name"] == "search_history"
     assert prepared.contexts[0]["chunk_id"] == "c1"
-    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert prepared.messages[0] == {"role": "system", "content": LIVE_SYSTEM_PROMPT}
     assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
 
 
@@ -219,7 +219,7 @@ def test_hybrid_prompt_preserves_history_and_attachment_evidence():
     runtime = HybridRuntime(FakeRetriever(), FakeModel(HYBRID_MODEL_ID), AttachmentRetriever())
     prepared = asyncio.run(runtime.prepare("Bạch Đằng?", 3, history,
         owner_id="owner", conversation_id="chat", attachment_ids=("a1",)))
-    assert prepared.messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert prepared.messages[0] == {"role": "system", "content": LIVE_SYSTEM_PROMPT}
     assert prepared.messages[1:3] == history
     assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
     assert "[attachment:c2] Tư liệu\nNgô Quyền lãnh đạo." in prepared.messages[-1]["content"]
@@ -238,7 +238,7 @@ def test_central_fallback_still_provides_chunk_evidence():
     prepared = asyncio.run(runtime.prepare("Bạch Đằng?", 3, []))
     assert retriever.calls == 1
     assert prepared.tool_calls[0]["name"] == "search_history"
-    assert prepared.messages[0]["content"] == SYSTEM_PROMPT
+    assert prepared.messages[0]["content"] == LIVE_SYSTEM_PROMPT
     assert "[c1] Bạch Đằng\nChiến thắng năm 938." in prepared.messages[-1]["content"]
 
 

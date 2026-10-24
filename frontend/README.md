@@ -22,7 +22,7 @@ npm run dev
 
 Set `VITE_API_BASE_URL` in `frontend/.env` to the backend origin before starting Vite. `npm run dev` starts the frontend and the Modal backend. If the backend is already running, use `npm run frontend`.
 
-Vite embeds the API origin at build time. Restart Vite after changing it.
+Vite embeds the optional API origin at build time. Restart Vite after changing it. In the cloud deployment the variable is empty, so the browser calls the CPU gateway on the same origin. The gateway proxies API calls and SSE to the separate Modal GPU endpoint; see [cloud deployment and monitoring](../docs/SERVING_OBSERVABILITY_MODAL_FRONTEND.md).
 
 ## API and streaming
 
