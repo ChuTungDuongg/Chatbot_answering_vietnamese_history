@@ -1,4 +1,4 @@
-# Baseline HTTP SSE benchmark
+# HTTP/SSE benchmark và quy tắc thí nghiệm
 
 The production application can select Transformers (default) or optional vLLM
 without changing this HTTP/SSE contract. For the frozen 100-question dataset,
@@ -89,3 +89,33 @@ metadata are preserved in raw records. vLLM uses engine-core monotonic model
 timestamps where supported; queue time still appears in answer TTFT and E2E.
 
 Keep dataset hash, corpus/index hashes, exact model IDs and revisions, generation settings (`do_sample=false`, `enable_thinking=false` for the baseline), retrieval settings, hardware, server restart procedure, and load level fixed when comparing changes. Report cold and warm separately. Compare like-for-like concurrency; never mix concurrency 1 with concurrency 4 in a single headline. The included question fixture has no quality labels and is only a pipeline smoke test. Do not report its timing as representative of all Vietnamese history questions.
+
+## Ghi nhận thí nghiệm
+
+Capture the baseline before changing retrieval, models, prompts, chunking, indexes, or serving parameters. Keep the historical corpus unchanged. Each experiment changes one named variable and uses the same dataset labels, exact model revisions, generation settings, hardware, load level, and warm/cold protocol unless the changed variable is one of those fields. Save raw JSONL and metadata with every run.
+
+## Record template
+
+```text
+Experiment ID:
+Git commit:
+Hypothesis:
+Single variable changed:
+Baseline configuration:
+Experimental configuration:
+Dataset path, schema version, content hash:
+Corpus and retrieval index hashes:
+Model IDs and revisions:
+Generation and retrieval settings:
+Hardware and software versions:
+Run command and output paths:
+Runs, warmups, concurrency:
+Cold/warm restart procedure:
+Metrics before (observed n, mean, p50, p95, p99):
+Metrics after (observed n, mean, p50, p95, p99):
+Absolute delta:
+Relative delta (N/A when baseline is zero):
+Retrieval/answer/grounding/citation regression:
+Interpretation and limitations:
+Decision:
+```

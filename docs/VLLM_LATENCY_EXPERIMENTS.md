@@ -66,8 +66,7 @@ identical L4, optional image, vanilla model, eager loading, unchanged FAISS
 retrieval and container HTTP capacity 8; only its child environment is changed.
 It refuses the production app name. `--serve` creates an ephemeral dev endpoint.
 `MODAL_APP_NAME`, `MODAL_RUNTIME_IMAGE`, `MODAL_GPU_CLASS`, `MODAL_MAX_INPUTS` can
-also configure `modal deploy modal_app.py` directly. Default deployment behavior
-remains Transformers with the original app name and input capacity.
+also configure `modal deploy modal_app.py` directly. The combined application entrypoint uses Transformers and one HTTP input by default; the deployment guide sets `MODAL_GPU_CLASS=A100-40GB` explicitly for both models; see [Deployment](DEPLOYMENT.md). The helper isolates benchmark apps on L4.
 
 Hybrid L4 reference prefix caching is explicitly false, GPU utilization 0.75, max sequences
 8 and context capacity 32768. The native 262144 context failed on L4: it needed
@@ -107,7 +106,7 @@ python -m benchmarks.latency.freeze --verify
 ```
 
 A new source/seed belongs to a new version. Different frozen bytes cannot be
-overwritten. A unit test verifies exact deterministic IDs/hash.
+overwritten. Tracked workload IDs/hash/distributions are checked by tests. Reproducing selection with `--verify` also requires the original ignored 300-question source split to be restored; running the tracked 100-question workload does not require that source file.
 
 ## HTTP/SSE runner and matrix
 
@@ -179,7 +178,7 @@ tools, retrieval and final generation. vLLM ModelDone uses engine-core monotonic
 scheduled/first/last token timestamps when available; its monotonic receipt fallback
 is explicitly labeled. Queue time remains in answer TTFT/E2E. Transformers model
 timing starts after its lock; queue delay likewise remains in answer TTFT. SSE
-chunk gaps are not token intervals. See BASELINE_BENCHMARK.md for definitions.
+chunk gaps are not token intervals. See [Benchmark](BENCHMARKS.md) for definitions.
 
 ## Existing frontend integration smoke
 
@@ -188,8 +187,7 @@ streamed chat. Assert backend vLLM, multiple incremental answer_delta events and
 ModelDone. Set `VITE_API_BASE_URL=https://YOUR-VLLM-ENDPOINT.modal.run` in the
 existing ignored `frontend/.env`; start/restart `npm --prefix frontend run dev`.
 Open localhost:5173, choose Hybrid, submit a history question and verify streaming
-rendering/completion. Actual evidence is recorded in
-`VLLM_INFERENCE_LATENCY_REPORT.md`. No SSE protocol change is needed.
+rendering/completion. Save evidence with the experiment output directory. No SSE protocol change is needed.
 
 ## Google Drive and Colab
 

@@ -8,6 +8,10 @@ GOLD. This pipeline uses a separate ignored SQLite workspace at
 `evaluation/annotation/workspace_silver_v1/`. It never copies or changes
 `artifacts/corpus_v1/chunks.jsonl`.
 
+## Hai workflow tự động
+
+`auto_annotate` bên dưới dùng semantic endpoint và workspace riêng. `codex_batch` nhập record/audit theo batch cố định; không tự gọi model. Frozen V1 đã chọn 3.000 câu hỏi từ 60 batches, xem [Training và evaluation](TRAINING_AND_EVALUATION.md). Tên workspace/master có `5000` phản ánh trần thiết kế, không phải số câu của benchmark V1 đã freeze.
+
 ## Prerequisites and cost check
 
 The Corpus V1 FAISS, BM25, runtime manifest, and local E5/BGE weights must be
@@ -160,7 +164,7 @@ still mark relevance explicitly.
 
 ## Interpretation and limits
 
-The approximately 500-question set is SILVER. Corpus sampling and automatic
+The automatic pipeline target is configurable; its outputs are SILVER. Corpus sampling and automatic
 question generation can favor common titles or source styles. Automatic labels
 can inherit semantic-model and retriever bias. Exact FAISS and approximate
 Qdrant agreement only shows retrieval overlap. The 50-question audit tests
@@ -168,3 +172,50 @@ automatic annotation quality against explicit human review, while the full
 human GOLD workflow remains the reference. Keep retrieval quality, answer
 quality, latency, and load tests as separate experiments. Do not tune on final
 benchmark test labels.
+
+## Codex batch workflow
+
+### Batch contract
+
+- The general batch tool has a 5,000-record ceiling (100 batches of 50). The frozen V1 experiment stops at 60 batches / 3,000 records. Batch `n` owns IDs
+  `vn_hist_silver_{(n-1)*50+1:04d}` through `vn_hist_silver_{n*50:04d}`.
+- Each completed batch has **18 easy, 22 medium, and 10 hard** questions.
+  Difficulty reflects evidence and reasoning: an easy question asks one direct
+  fact, medium combines facts or explanation, and hard requires genuine
+  comparison, multiple sources, complex chronology, or premise correction.
+- Inspect actual Corpus V1 chunks and source metadata. Retrieval rank is not a
+  relevance label. Select only chunks that directly support the answer or
+  correct a false premise; cite only sources supporting factual claims.
+- For every record, write a first annotation and an independent verification
+  note. The audit file records exact corpus quotes, relevance decisions, and
+  which required facts each quote supports. Resolve contradictions or phrase
+  the question as a source comparison; do not silently choose one account.
+- A complete batch is immutable. If a policy change requires amendment,
+  preserve the old batch, audit, and master files under the ignored workspace's
+  `superseded/` directory before republishing the same IDs. Document the reason.
+
+### Local storage and commands
+
+The ignored workspace `evaluation/annotation/workspace_codex_5000/` contains a
+SQLite draft store and `batches/batch_01.jsonl`, etc. Each accepted record is
+saved in one SQLite transaction, so an interrupted batch resumes at the next
+stable ID. The ignored cumulative master is rebuilt from validated batches in
+deterministic order; never append to it manually.
+
+```powershell
+python -m evaluation.annotation.codex_batch status
+python -m evaluation.annotation.codex_batch complete
+python -m evaluation.annotation.codex_batch merge
+```
+
+The `add` and `revise` actions accept a JSON file with `record` and `audit`
+objects. `complete` requires exactly 50 validated records, checks IDs and
+duplicate questions across batches, writes the batch and audit atomically, and
+rebuilds the master. `merge` revalidates completed batches and rebuilds the
+master after an interrupted publication. Both validate the existing
+`evaluation.schema.Question` format. This tool reads the existing corpus lookup
+in read-only mode; it does not modify the corpus or the human GOLD workspace.
+
+The automatic labels are provisional benchmark labels. Their quality should be
+checked against a separately human-reviewed GOLD audit set before drawing
+historical accuracy conclusions.

@@ -1,8 +1,23 @@
 # Runtime planning and generation telemetry
 
-This runtime change starts from remote `main` commit
-`0500caec90cfa3a7cdd61c207d797e696a471d51`. It does not modify retrieval,
-training, models, adapters, sampling, prompt grounding or citation contracts.
+Telemetry ghi thời gian planner, tools, retrieval và final generation của từng request. Cấu hình budget ở [CONFIGURATION.md](CONFIGURATION.md); định nghĩa metric HTTP/SSE ở [BENCHMARKS.md](BENCHMARKS.md).
+
+## Serving metrics và monitoring
+
+[`app/observability.py`](../app/observability.py) giữ counters và mẫu timing trong RAM của process. Fixed dimensions là chat mode, dense backend và outcome `success/error/cancelled`. Mặc định giữ tối đa 500 latency samples cho mỗi nhóm; traffic/throughput dùng cửa sổ tối đa 300 giây với bucket 1 giây riêng. Pure ASGI counters ghi admission/status errors của chat, chat/stream và retrieve.
+
+Summary có p50/p95 của E2E, final answer TTFT, model TTFT, retrieval, generation, planning model time và tokens/s khi quan sát được. Log `serving_request` chỉ ghi field số và dimensions đã cho phép; không ghi prompt, answer, owner ID, source text hay hidden reasoning.
+
+`GET /api/v1/ops/summary` mặc định tắt (404 khi thiếu `OBSERVABILITY_ADMIN_TOKEN`), sai Bearer token trả 403; response có `Cache-Control: no-store`. Khi đã cung cấp token riêng trong admin environment:
+
+```powershell
+$headers = @{Authorization = "Bearer $env:OBSERVABILITY_ADMIN_TOKEN"}
+Invoke-RestMethod 'https://YOUR-FRONTEND-FUNCTION.modal.run/api/v1/ops/summary' -Headers $headers
+```
+
+CPU gateway chuyển Authorization tới GPU. Trên Modal, dùng `MODAL_OBSERVABILITY_SECRET_NAME` để đưa Secret vào GPU process. Metrics không durable/cluster-wide, reset khi process restart hoặc scale-to-zero; nhiều replicas chỉ trả state của process xử lý request. Không lấy trung bình percentile của replicas thành global p95. Dùng Modal logs/dashboard cho lịch sử vận hành và infrastructure metrics.
+
+CUDA memory là allocated/reserved/peak của Torch allocator trong process đã khởi tạo CUDA, không phải GPU utilization hoặc toàn bộ VRAM worker vLLM. [`CacheMetrics`](../app/models/cache_metrics.py) đọc stats vLLM 0.23.0: prefix queries/hits tính theo tokens và hit rate tích lũy từ cache reset; KV utilization quá 15 giây thành stale/null. Transformers không có counters tương đương; Hugging Face weight cache là cơ chế riêng. Missing metrics giữ null.
 
 ## Central planning
 
@@ -61,7 +76,7 @@ page replaces the same-ID search snippet without changing source/citation IDs.
 ## Completion and token budget
 
 Hybrid's only budget configuration is `settings.hybrid_max_new_tokens`:
-default 768 → **1536**, shared by vanilla and SFT. Environment overrides such as
+default **1536**, shared by vanilla and SFT. Environment overrides such as
 `HYBRID_MAX_NEW_TOKENS=1024` or `2048` work locally and on Modal. Modal forwards an
 explicit override and otherwise leaves the default to container `Settings`.
 Central remains **1536** final tokens and **256** action tokens by default.
@@ -103,4 +118,4 @@ modal run --write-result reports/runtime_telemetry/vanilla.json scripts/modal_ru
 modal run --write-result reports/runtime_telemetry/sft.json scripts/modal_runtime_telemetry_smoke.py::runtime_telemetry_smoke --variant sft --repeats 0
 ```
 
-See the task's final report for commands actually executed and measurements.
+Smoke outputs are local operational records. Keep their model/artifact identity and do not generalize a smoke measurement into a full benchmark result.

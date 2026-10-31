@@ -23,6 +23,22 @@ To validate local frozen artifacts:
 python -m evaluation.silver_v1 validate
 ```
 
+### Freeze và split policy
+
+Sau khi có đúng 60 completed batches, `python -m evaluation.silver_v1 all` thực hiện freeze, split và derive. Các action riêng `freeze`, `split`, `derive` hỗ trợ khôi phục khi dừng giữa các bước; file đã có được verify thay vì ghi đè. Marker `evaluation/annotation/workspace_codex_5000/frozen_v1.json` ngăn thêm Batch 61 vào V1. Dataset hoặc policy mới cần version/output mới.
+
+Seed 42 assigns whole groups keyed by each question's **first relevant source ID**. An evidence-free question would use its own ID as a stable fallback group. The greedy assignment balances count, difficulty, category, question type, answerability and domain while keeping primary-source groups intact. The frozen manifest, rather than the seed alone, is authoritative. No source is primary in two splits. Other sources cited by cross-source questions can occur across splits; their overlap and document overlap are measured in the leakage report. Strict grouping on every cited source is unsuitable here because the largest resulting connected component contains 1,186 questions.
+
+Train/validation/test are **benchmark and model-development splits**, independent of any UVW source partitions. Test is held out. Do not derive paraphrases, variants or other training examples from validation/test answers. Validation SFT has one row per canonical validation ID for checkpoint selection only; it never updates model weights.
+
+Split manifest lưu IDs, hashes và phân bố; leakage report lưu phần source/document overlap còn lại. SFT dùng actual chunk text theo ID, giữ thứ tự context và chỉ lấy câu trả lời/facts đã có trong canonical SILVER. Mỗi TRAIN ID có một mode gốc và tối đa một variant bổ sung; validation có một variant/ID. Các variants là cách trình bày, không phải câu hỏi lịch sử độc lập.
+
+Mechanical validation kiểm tra schema, completed batch audits, corpus IDs/text, split membership/grouping, hashes, mode assignments và SFT messages; không chứng minh mọi historical claim là đúng. `training/Dataset/` và `training/InvestigatingDataset.zip` là dữ liệu lịch sử riêng, không phải canonical SILVER hoặc SFT vừa derive.
+
+### Recorded training run
+
+The tracked [model manifest](../artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/manifest.json) records `run_best_b4_ga4_e2`: per-device train/eval batch 4, gradient accumulation 4, 2 epochs, learning rate `2e-4`, max sequence length 3072, gradient checkpointing on, packing off; LoRA rank 16, alpha 32, dropout 0.05. Evaluation/save interval is 25 steps. The selected checkpoint is `checkpoint-175`, best validation loss `0.9457685351371765`; the run ended at global step 250. These are recorded run settings, separate from the starting presets below or the live inference defaults.
+
 ### Citation-aware SFT V2 (separate derived experiment)
 
 SILVER V1 remains frozen. V2 reads the existing V1 SFT rows, the same 3,000 canonical records, the frozen split, the actual Corpus V1 chunks, and the original paired batch audits. It uses no LLM or API. Citations are actual `[chunk_id]` tokens supported by an audit `supports_fact_indices` mapping and a corpus/source check. Exact required-fact spans receive a citation immediately after the fact. A one-paragraph free-form answer can receive a paragraph-end citation only when its *single* relevant audited chunk supports every required fact. Other uncertain cases keep the V1 answer unchanged and are listed as unresolved in `stats.json`. These labels remain automatically annotated **SILVER**, not human GOLD.
@@ -47,7 +63,7 @@ The existing Drive dataset transfer copies V1 SFT and split files but does not c
 python -m training.train_qwen3 --train-file "$V2/train_sft.jsonl" --validation-file "$V2/validation_sft.jsonl" --output-dir "$ROOT/models/qwen3_4b_sft_citation_v2/run_b4_ga4_e2" --per-device-train-batch-size 4 --per-device-eval-batch-size 4 --gradient-accumulation-steps 4 --epochs 2 --learning-rate 2e-4 --max-seq-length 3072 --gradient-checkpointing --no-packing --logging-steps 5 --eval-steps 25 --save-steps 25
 ```
 
-This is a command for later use; the migration itself performs no training.
+Run V2 training as a separate experiment with its own output directory.
 
 ## 2. Mounted Google Drive layout
 
@@ -97,7 +113,7 @@ The dry run verifies SFT and split hashes/IDs and prints the effective batch and
 python -m training.train_qwen3 --train-file /content/drive/MyDrive/VN_History_LLM/datasets/sft/train_sft.jsonl --validation-file /content/drive/MyDrive/VN_History_LLM/datasets/sft/validation_sft.jsonl --output-dir /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/smoke_01 --max-train-samples 16 --max-eval-samples 8 --fast-dev-run
 ```
 
-At training time, the frozen SFT `messages` are converted in memory to a conversational `prompt` (system + user/context) and `completion` (assistant answer), for both train and validation. TRL uses the tokenizer's chat template and computes loss on the completion only (`completion_only_loss=True`, `assistant_only_loss=False`). This does not require `{% generation %}` assistant-mask markers in the tokenizer template. The trainer also uses 4-bit NF4 with double quantization, bf16 when supported (otherwise fp16), and LoRA over the attention/MLP projection modules. No special chat tokens are constructed manually, and the frozen SFT files and split artifacts remain unchanged. The GPU smoke runs one training step, then evaluates and saves at step 1 so best-model restoration is exercised. The GPU training path still needs to be verified on Colab.
+At training time, the frozen SFT `messages` are converted in memory to a conversational `prompt` (system + user/context) and `completion` (assistant answer), for both train and validation. TRL uses the tokenizer's chat template and computes loss on the completion only (`completion_only_loss=True`, `assistant_only_loss=False`). This does not require `{% generation %}` assistant-mask markers in the tokenizer template. The trainer also uses 4-bit NF4 with double quantization, bf16 when supported (otherwise fp16), and LoRA over the attention/MLP projection modules. No special chat tokens are constructed manually, and the frozen SFT files and split artifacts remain unchanged. The GPU smoke runs one training step, then evaluates and saves at step 1 so best-model restoration is exercised. Verify the GPU path on the selected training runtime before a full run.
 
 ## 4. Full training and resume
 
@@ -133,7 +149,7 @@ python -m training.merge_adapter --model-id Qwen/Qwen3-4B-Instruct-2507 --adapte
 
 ## 5. App inference modes and adapter
 
-The live app offers Hybrid RAG and Central Agent. Both final generators use the same fixed grounded `SYSTEM_PROMPT`; answer length follows the question and evidence. The UI/API has no response-detail control. Frozen SFT and offline six-way evaluation retain their historical response-mode instructions through compatibility helpers; their data, hashes and prompt strings are unchanged.
+The live app offers Hybrid RAG and Central Agent. Both final generators use shared grounded `LIVE_SYSTEM_PROMPT` (base `SYSTEM_PROMPT` plus live-only style instructions); answer length follows the question and evidence. The UI/API has no response-detail control. Frozen SFT and offline six-way evaluation retain their historical response-mode instructions through compatibility helpers; their data, hashes and prompt strings are unchanged.
 
 For a trained Hybrid 4B answer (with local Corpus V1 retrieval metadata prepared):
 
@@ -184,13 +200,13 @@ python -m evaluation.gpu_memory evaluation/reports/memory_smoke/gpu_memory.jsonl
 
 Inspect the start/max/end allocated and reserved MiB, peaks, and growth per question. A bounded plateau across these 40 questions is the acceptance signal before the longer run; if allocated memory climbs steadily, investigate retained tensors before resuming. The smoke directory has its own identity and never touches the real output directory.
 
-To resume the existing `six_way_best_b4_ga4_e2` run, keep the original paths and scientific arguments exactly as used to create it, then add `--resume`:
+Resume `six_way_best_b4_ga4_e2` only with identical adapter/model/data fingerprints; the restored backup adapter differs from the recorded run (see [Artifacts](ARTIFACTS.md)). For a compatible original run, keep the original paths and scientific arguments exactly as used to create it, then add `--resume`:
 
 ```bash
 python -u -m evaluation.six_way --test-file /content/drive/MyDrive/VN_History_LLM/datasets/splits/v1_seed42/test.jsonl --adapter-path /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter --corpus-path /content/drive/MyDrive/VN_History_LLM/corpus_v1/chunks.jsonl --retrieval-root /content/drive/MyDrive/VN_History_LLM/corpus_v1/retrieval --systems all --response-mode standard --output-dir /content/drive/MyDrive/VN_History_LLM/evaluation/reports/six_way_best_b4_ga4_e2 --seed 42 --temperature 0 --top-p 1 --max-new-tokens 768 --final-k 10 --resume
 ```
 
-The runner reads existing `predictions.jsonl` rows and generates only missing question IDs, then proceeds through the remaining systems in registry order. It does not need `--overwrite`. A source commit may differ after this runtime-only fix: `git_commit` is provenance metadata outside `identity`, so identical scientific inputs and configuration remain resumable. A different commit used for resume is added to `resume_git_commits` without replacing the original commit. Telemetry and the cleanup cadence are also outside experiment identity and do not change prompts, decoding, answers, metrics, or retrieval behavior.
+The runner reads existing `predictions.jsonl` rows and generates only missing question IDs, then proceeds through the remaining systems in registry order. It does not need `--overwrite`. A source commit may differ between resumptions: `git_commit` is provenance metadata outside `identity`, so identical scientific inputs and configuration remain resumable. A different commit used for resume is added to `resume_git_commits` without replacing the original commit. Telemetry and cleanup cadence are outside the recorded scientific identity.
 
 If you explicitly created a merged model, replace `--adapter-path ...` with `--sft-model-path /content/drive/MyDrive/VN_History_LLM/models/qwen3_4b_sft_v1/merged_01`. Vanilla systems continue to load the unmodified base ID. The merged model files are fingerprinted in the run identity.
 
@@ -198,7 +214,7 @@ Outputs: `run_manifest.json`, `retrieval_cache_{faiss,qdrant}.jsonl` with identi
 
 ## 7. Qdrant and limitations
 
-The local directory `artifacts/corpus_v1/retrieval/qdrant.partial/` is incomplete. Qdrant runs require finalized `artifacts/corpus_v1/retrieval/qdrant/manifest.json`, a matching Corpus V1 identity, remote collection/vector/HNSW configuration and exact point count. There is **no FAISS fallback**. After finalization, set `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION` in the environment (or Colab Secrets); never put the key in commands, logs, or Git. FAISS and no-RAG systems can be tested independently now.
+A `qdrant.partial/` directory cannot enable Qdrant. Runs require finalized `artifacts/corpus_v1/retrieval/qdrant/manifest.json`, a matching Corpus V1 identity, remote collection/vector/HNSW configuration and exact point count. There is **no FAISS fallback**. Set `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION` in the environment (or Colab Secrets); never put the key in commands, logs, or Git. FAISS and no-RAG systems can run independently of Qdrant.
 
 If Colab reports missing corpus/index files, mount or separately transfer the user's existing Corpus V1 artifacts; `drive_cli` intentionally transfers only the small benchmark/model/evaluation artifacts. If a full six-way run fails at startup, inspect the Qdrant manifest and collection readiness before retrying. If training runs out of VRAM, reduce per-device batch or sequence length, keep gradient checkpointing enabled, and adjust accumulation to preserve a comparable effective batch. Record any changed settings in a new run, never silently resume with different configuration.
 
