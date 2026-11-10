@@ -96,6 +96,14 @@ image = modal.Image.from_dockerfile(
         "APP_ENV": "production",
         "APP_MODE": "full",
         "AUTH_ENABLED": "true",
+        # Modal re-imports this module inside the container. Preserve the
+        # nonsecret selectors so its dependency graph matches the deploy client.
+        "MODAL_AUTH_SECRET_NAME": auth_secret_name,
+        "MODAL_OPENAI_SECRET_NAME": openai_secret_name,
+        "MODAL_QDRANT_SECRET_NAME": qdrant_secret_name,
+        "MODAL_WEB_SEARCH_SECRET_NAME": web_search_secret_name,
+        "MODAL_MCP_SECRET_NAME": mcp_secret_name,
+        "MODAL_OBSERVABILITY_SECRET_NAME": observability_secret_name,
         "DEVICE": "cuda" if local_inference_enabled else "cpu",
         "DTYPE": "bfloat16" if local_inference_enabled else "float32",
         "LOCAL_INFERENCE_ENABLED": str(local_inference_enabled).lower(),
