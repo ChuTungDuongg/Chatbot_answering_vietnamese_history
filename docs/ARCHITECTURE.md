@@ -20,6 +20,8 @@ flowchart TD
     B --> RR
     H --> Q4[Qwen3-4B vanilla hoặc PEFT SFT]
     C --> Q8[Qwen3-8B vanilla]
+    H --> O[OpenAI Responses API]
+    C --> O
     API --> DB[SQLite hội thoại / messages / attachments]
 ```
 
@@ -68,6 +70,8 @@ Backend mặc định lỗi làm startup thất bại. Backend tùy chọn lỗi
 Central mặc định tối đa 2 action rounds và 4 calls/round. Có thể kết thúc sớm theo kiểm tra của runtime. `search_history` dùng cùng retriever/backend của request; fallback chỉ chạy khi được cấp quyền và phù hợp phạm vi kho lịch sử local. Câu hỏi bên ngoài Việt Nam có thể dùng external tools được phép. Tool output là evidence không đáng tin cậy về mặt chỉ dẫn và không thay system prompt. Live Hybrid/Central dùng `LIVE_SYSTEM_PROMPT = SYSTEM_PROMPT + LIVE_STYLE_INSTRUCTION`; explicit offline response modes giữ prompt bytes đã cố định, xem [`prompting.py`](../app/rag/prompting.py).
 
 Engine mặc định là Transformers. vLLM giữ model protocol và HTTP/SSE contract, nhưng hiện yêu cầu vanilla, Linux CUDA và một chat runtime/deployment. Xem [cấu hình](CONFIGURATION.md), [Retrieval](RETRIEVAL.md), [Tools/MCP](TOOLS_AND_MCP.md) và [vLLM](VLLM_LATENCY_EXPERIMENTS.md).
+
+Provider được chọn trên từng request. OpenAI dùng chung Hybrid retrieval và Central tool registry/policy; planner nhận function calls native, giữ call ID và replay reasoning items được mã hóa cùng tool outputs cho vòng sau. Final answer vẫn dùng grounded prompt chung. SSE chỉ chuyển output text, lọc bracket references không khớp evidence, và không lưu câu trả lời chưa hoàn tất. Không tự fallback khi provider lỗi. Client OpenAI được chia sẻ và đóng trong lifespan; model/effort là giá trị riêng của request. LOCAL_INFERENCE_ENABLED=false tránh tải Qwen nhưng retrieval artifacts và models vẫn cần thiết.
 
 ## API, lưu trữ và streaming
 

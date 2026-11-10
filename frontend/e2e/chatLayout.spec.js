@@ -110,6 +110,25 @@ async function atBottom(page) {
   await expect.poll(() => page.locator(".thread-scroll").evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
 }
 
+test("OpenAI controls stay usable and request scoped across viewports", async ({ page }) => {
+  await setupChat(page, { capabilities: { providers: {
+    local: { available: true }, openai: { available: true },
+  } } });
+  const provider = page.getByLabel("Nhà cung cấp");
+  await provider.selectOption("openai");
+  await page.getByLabel("Model OpenAI").selectOption("gpt-6.1-terra");
+  await page.getByLabel("Mức reasoning").selectOption("xhigh");
+  await page.getByLabel("Token truy cập dịch vụ").fill("temporary-service-token");
+  await submit(page, 1);
+  await assertDocked(page);
+  expect(await page.evaluate(() => window.__layoutStream.requests.at(-1))).toMatchObject({
+    provider: "openai", model: "gpt-6.1-terra", reasoning_effort: "xhigh",
+  });
+  await expect(provider).toBeDisabled();
+  await page.getByRole("button", { name: "Dừng tạo câu trả lời" }).click();
+  await expect(provider).toBeEnabled();
+});
+
 test("five turns keep third-turn loading and completed response inside the viewport", async ({ page }, info) => {
   const fixture = await setupChat(page);
   for (let turn = 1; turn <= 5; turn += 1) {

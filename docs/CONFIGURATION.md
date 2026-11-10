@@ -42,6 +42,26 @@ Khi đặt cả `CORPUS_PATH` và `RETRIEVAL_ROOT`, đường dẫn runtime mặ
 
 Token budget là trần; model có thể dừng sớm bằng EOS. Live API/UI chỉ có hai chat modes, không có `response_mode`. Các giá trị `concise/standard/detailed` chỉ còn phục vụ dữ liệu và đánh giá offline đã cố định.
 
+## OpenAI Responses API
+
+OpenAI mặc định tắt. **Không mở lane này ra Internet công cộng:** X-Client-ID không phải xác thực, token chia sẻ dưới đây không thay thế hệ thống định danh người dùng. Đặt API sau gateway riêng có xác thực, TLS, giới hạn theo người dùng và hạn mức/budget bền vững dùng chung. Bộ giới hạn SQLite chỉ là lớp bổ sung cho các process trên cùng database; không bảo đảm đồng bộ giữa replicas hoặc Modal Volume. Nếu không có các bảo vệ này, giữ OPENAI_ENABLED=false.
+
+Trong môi trường nội bộ đã được bảo vệ, đặt APP_MODE=full, OPENAI_ENABLED=true, OPENAI_TRUSTED_INTERNAL_ONLY=true, OPENAI_API_KEY, và OPENAI_ACCESS_TOKEN là chuỗi ngẫu nhiên riêng dài ít nhất 32 ký tự. UI yêu cầu access token của dịch vụ, không phải OpenAI API key; token chỉ giữ trong bộ nhớ trang và gửi qua Authorization Bearer. Không lưu hai secret vào frontend bundle hoặc Git. /ready công bố khả dụng khi đủ cấu hình; không công bố secrets. Token chia sẻ phải được phân phối an toàn và xoay vòng khi lộ.
+
+| Biến | Mặc định |
+| --- | --- |
+| OPENAI_DEFAULT_MODEL | gpt-6-luna; cho phép thêm gpt-6.1-terra |
+| OPENAI_DEFAULT_REASONING_EFFORT | medium; cho phép low, medium, high, xhigh |
+| OPENAI_TIMEOUT_SECONDS | 180 |
+| OPENAI_MAX_OUTPUT_TOKENS | 25000 mỗi model call, bao gồm reasoning |
+| OPENAI_MAX_REQUESTS_PER_HOUR / OPENAI_MAX_REQUESTS_PER_DAY | 20 / 100 trên database |
+| OPENAI_MAX_CONCURRENT_REQUESTS | 2 trên database |
+| LOCAL_INFERENCE_ENABLED | true; đặt false để tránh tải Qwen |
+
+Central có thể gọi model tới số action rounds đã cấu hình cộng một lần sinh cuối; giới hạn token áp dụng cho từng lần gọi. High và Very High có thể tăng thời gian và chi phí. API trả incomplete nếu hết budget và ứng dụng không lưu answer đó. Requests dùng store=false; điều này không tự tạo bảo đảm Zero Data Retention cho tài khoản. Model access, quota và chính sách dữ liệu phải được xác minh với tài khoản OpenAI.
+
+Payload cũ mặc định local. Với OpenAI, gửi provider là openai, tùy chọn model và reasoning_effort, cùng header Authorization Bearer chứa token dịch vụ. Model/effort ngoài allowlist bị từ chối. Status stream báo đang xử lý, không hiển thị reasoning nội bộ. Khi model không khả dụng hoặc bị rate limit, thử lại hoặc chọn provider khác; không tự chuyển provider.
+
 ## Dense retrieval
 
 | Biến | Mặc định | Ý nghĩa |

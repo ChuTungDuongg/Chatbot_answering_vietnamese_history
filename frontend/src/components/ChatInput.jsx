@@ -18,6 +18,9 @@ function ChatInput({
   retrievalBackend,
   availableBackends,
   onRetrievalBackendChange,
+  provider, providers, model, reasoningEffort, accessToken,
+  onProviderChange, onModelChange, onReasoningChange, onAccessTokenChange,
+  canSubmit = true,
   toolControl,
   isRunning,
   isUploading,
@@ -41,7 +44,7 @@ function ChatInput({
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 
     event.preventDefault();
-    if (!disabled && !isRunning && !isUploading && (question.trim() || hasAttachments)) onSubmit(event);
+    if (!disabled && canSubmit && !isRunning && !isUploading && (question.trim() || hasAttachments)) onSubmit(event);
   };
 
   const handlePaste = (event) => {
@@ -110,6 +113,35 @@ function ChatInput({
         <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled || isRunning} />
         <RetrievalBackendSelector backend={retrievalBackend} available={availableBackends}
           onChange={onRetrievalBackendChange} disabled={disabled || isRunning} />
+        <label>Nhà cung cấp
+          <select aria-label="Nhà cung cấp" value={provider || ""} disabled={disabled || isRunning}
+            onChange={(event) => onProviderChange(event.target.value)}>
+            {!provider && <option value="">Không khả dụng</option>}
+            <option value="local" disabled={!providers?.local?.available}>Local Qwen</option>
+            <option value="openai" disabled={!providers?.openai?.available}>OpenAI API</option>
+          </select>
+        </label>
+        {provider === "openai" && <>
+          <label>Model
+            <select aria-label="Model OpenAI" value={model} disabled={disabled || isRunning}
+              onChange={(event) => onModelChange(event.target.value)}>
+              <option value="gpt-6-luna">GPT-6 Luna</option>
+              <option value="gpt-6.1-terra">GPT-6.1 Terra</option>
+            </select>
+          </label>
+          <label>Reasoning
+            <select aria-label="Mức reasoning" value={reasoningEffort} disabled={disabled || isRunning}
+              onChange={(event) => onReasoningChange(event.target.value)}>
+              <option value="low">Low</option><option value="medium">Medium</option>
+              <option value="high">High</option><option value="xhigh">Very High</option>
+            </select>
+          </label>
+          <label>Token truy cập dịch vụ
+            <input type="password" aria-label="Token truy cập dịch vụ" autoComplete="off"
+              value={accessToken} disabled={disabled || isRunning}
+              onChange={(event) => onAccessTokenChange(event.target.value)} />
+          </label>
+        </>}
         {mode === "central" && <ToolSteering control={toolControl} disabled={isRunning || isUploading} />}
         <button
           type="button"
@@ -137,7 +169,7 @@ function ChatInput({
         <button
           type="submit"
           className="icon-button composer-submit send-button"
-          disabled={disabled || isUploading || (!question.trim() && !hasAttachments)}
+          disabled={disabled || !canSubmit || isUploading || (!question.trim() && !hasAttachments)}
           aria-label="Gửi câu hỏi"
           title="Gửi câu hỏi"
         >

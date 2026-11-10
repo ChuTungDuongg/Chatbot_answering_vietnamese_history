@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { CHAT_MODES } from "../config/chatModes";
 
@@ -7,6 +7,7 @@ function ModeSelector({ mode, onModeChange, disabled = false }) {
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
   const optionRefs = useRef([]);
+  const requestedFocus = useRef(null);
   const listboxId = useId();
   const selected = CHAT_MODES.find((item) => item.value === mode) ?? CHAT_MODES[0];
 
@@ -24,9 +25,17 @@ function ModeSelector({ mode, onModeChange, disabled = false }) {
     optionRefs.current[normalized]?.focus();
   };
 
+  useLayoutEffect(() => {
+    if (isOpen && requestedFocus.current !== null) {
+      const index = (requestedFocus.current + CHAT_MODES.length) % CHAT_MODES.length;
+      optionRefs.current[index]?.focus();
+      requestedFocus.current = null;
+    }
+  }, [isOpen]);
+
   const openAndFocus = (index) => {
+    requestedFocus.current = index;
     setIsOpen(true);
-    requestAnimationFrame(() => focusOption(index));
   };
 
   const handleTriggerKeyDown = (event) => {

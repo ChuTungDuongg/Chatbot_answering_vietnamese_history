@@ -34,6 +34,15 @@ import { shouldShowDebugTrace } from "./services/debugTrace";
 import "./App.css";
 
 const SHOW_DEBUG_TRACE = shouldShowDebugTrace(import.meta.env);
+function preference(key, choices, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return choices.includes(value) ? value : fallback;
+  } catch { return fallback; }
+}
+function savePreference(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* Storage is optional. */ }
+}
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 840);
@@ -42,11 +51,19 @@ function App() {
   const [question, setQuestion] = useState("");
   const [conversationToDelete, setConversationToDelete] = useState(null);
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState(() => preference("inference-provider", ["local", "openai"], "local"));
+  const [model, setModel] = useState(() => preference("openai-model", ["gpt-6-luna", "gpt-6.1-terra"], "gpt-6-luna"));
+  const [reasoningEffort, setReasoningEffort] = useState(() => preference("openai-reasoning", ["low", "medium", "high", "xhigh"], "medium"));
+  const [accessToken, setAccessToken] = useState("");
   const conversationActionRef = useRef(false);
 
   const { theme, toggleTheme } = useTheme();
   const { mode: inferenceMode, setMode: setInferenceMode } = useChatMode();
   const retrieval = useRetrievalBackend();
+  const providers = retrieval.capabilities.providers ?? (retrieval.ready ? {
+    local: { available: true }, openai: { available: false },
+  } : {});
+  const provider = providers?.[selectedProvider]?.available ? selectedProvider : "";
   const toolControl = useToolSteering(retrieval.capabilities);
 
   const session = useChatSession();
@@ -74,6 +91,7 @@ function App() {
     isRunning,
     mode: inferenceMode,
     retrievalBackend: retrieval.backend,
+    provider, model, reasoningEffort, accessToken,
     steering: toolControl.payload,
     showDebugTrace: SHOW_DEBUG_TRACE,
     ensureActiveConversation,
@@ -177,7 +195,8 @@ function App() {
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
-    if ((!question.trim() && !readyAttachments.length) || !retrieval.ready || (inferenceMode === "central" && toolControl.overBudget) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
+    if ((!question.trim() && !readyAttachments.length) || !retrieval.ready || !provider ||
+      (provider === "openai" && !accessToken.trim()) || (inferenceMode === "central" && toolControl.overBudget) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
 
     const pending = question;
     setQuestion("");
@@ -205,6 +224,12 @@ function App() {
         }}
         mode={inferenceMode} onModeChange={setInferenceMode}
         retrievalBackend={retrieval.backend} availableBackends={retrieval.available} onRetrievalBackendChange={retrieval.setBackend}
+        provider={provider} providers={providers} model={model} reasoningEffort={reasoningEffort}
+        accessToken={accessToken} onAccessTokenChange={setAccessToken}
+        onProviderChange={(value) => { setSelectedProvider(value); savePreference("inference-provider", value); }}
+        onModelChange={(value) => { setModel(value); savePreference("openai-model", value); }}
+        onReasoningChange={(value) => { setReasoningEffort(value); savePreference("openai-reasoning", value); }}
+        canSubmit={!!provider && (provider !== "openai" || !!accessToken.trim())}
         toolControl={toolControl}
         isRunning={isRunning} isUploading={isUploading}
         disabled={isLoading || isDeletingConversation || !retrieval.ready || (inferenceMode === "central" && toolControl.overBudget)} hasAttachments={readyAttachments.length > 0} />

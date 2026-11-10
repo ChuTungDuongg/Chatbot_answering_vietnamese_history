@@ -136,7 +136,8 @@ export function deleteAttachment(conversationId, attachmentId, { signal } = {}) 
 export async function getRetrievalCapabilities(options = {}) {
   const ready = await requestJson("/ready", options);
   return { ...(ready.retrieval ?? { available_backends: [] }),
-    mcp: ready.mcp ?? { enabled: false, servers: [] }, tools: ready.tools ?? [], tool_policy: ready.tool_policy ?? {} };
+    mcp: ready.mcp ?? { enabled: false, servers: [] }, tools: ready.tools ?? [], tool_policy: ready.tool_policy ?? {},
+    providers: ready.providers ?? { local: { available: true }, openai: { available: false } } };
 }
 
 export async function streamChat({
@@ -145,6 +146,10 @@ export async function streamChat({
   attachmentIds = [],
   mode = ChatMode.HYBRID,
   retrievalBackend,
+  provider = "local",
+  model,
+  reasoningEffort,
+  accessToken,
   steering,
   finalK = 6,
   debug = false,
@@ -160,12 +165,14 @@ export async function streamChat({
     headers: createHeaders({
       "Content-Type": "application/json",
       Accept: "text/event-stream",
+      ...(provider === "openai" && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     }),
     body: JSON.stringify({
       conversation_id: conversationId,
       question: normalizedQuestion,
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       mode,
+      ...(provider === "openai" ? { provider, model, reasoning_effort: reasoningEffort } : {}),
       ...(retrievalBackend ? { retrieval_backend: retrievalBackend } : {}),
       ...(mode === ChatMode.CENTRAL && steering ? { steering } : {}),
       final_k: finalK,

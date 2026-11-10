@@ -37,6 +37,8 @@ class RequestTrace:
     domain_margin: float | None = None
     retrieval_skipped_due_to_ood: bool = False
     llm_calls_skipped_due_to_ood: bool = False
+    provider: str = "local"
+    reasoning_effort: str | None = None
 
     def __post_init__(self) -> None:
         self.marks_ns["request_received"] = self.started_ns
@@ -57,6 +59,7 @@ class RequestTrace:
              model_revision: str | None, error: str | None = None) -> None:
         log_event("request_trace", request_id=self.request_id, mode=self.mode,
                   timestamp=datetime.now(timezone.utc).isoformat(), model_id=model_id,
+                  provider=self.provider, reasoning_effort=self.reasoning_effort,
                   model_revision=model_revision,
                   spans_ms={key: self.offset_ms(key) for key in self.marks_ns},
                   metrics=metrics, error=error)

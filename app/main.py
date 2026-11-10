@@ -17,11 +17,13 @@ from app.chat.store import ConversationStore
 from app.config import settings
 from app.observability import RequestMetricsMiddleware, cache_snapshot, serving_metrics
 from app.models.factory import build_model_runtime
+from app.models.openai_responses import OpenAIOptions, OpenAIResponsesRuntime
 from app.mcp.manager import MCPManager
 from app.tools.policy import builtin_capabilities
 from app.rag.hybrid_runtime import HybridRuntime
 from app.rag.retrieval import HybridRetriever
 from app.services.chat_mode_router import ChatModeRouter
+from app.services.openai_access import OpenAIAccessGuard
 from app.services.rag_service import RAGService
 from app.tools.attachment_search import SearchUploadedDocumentsTool
 from app.tools.local_search import SearchHistoryTool
@@ -45,9 +47,26 @@ async def lifespan(app: FastAPI):
     app.state.hybrid_runtime = None
     app.state.central_runtime = None
     app.state.chat_mode_router = None
+    app.state.openai_client = None
+    app.state.openai_guard = None
     manager = MCPManager()
     app.state.mcp_manager = manager
     try:
+        if (settings.openai_enabled and settings.openai_trusted_internal_only and settings.openai_api_key
+                and settings.openai_api_key.get_secret_value()
+                and settings.openai_access_token
+                and len(settings.openai_access_token.get_secret_value()) >= 32
+                and not hmac.compare_digest(settings.openai_api_key.get_secret_value().encode(),
+                                            settings.openai_access_token.get_secret_value().encode())):
+            from openai import AsyncOpenAI
+            app.state.openai_client = AsyncOpenAI(
+                api_key=settings.openai_api_key.get_secret_value(),
+                timeout=settings.openai_timeout_seconds, max_retries=0)
+            app.state.openai_guard = OpenAIAccessGuard(
+                settings.openai_access_token.get_secret_value(), settings.openai_max_requests_per_hour,
+                settings.openai_max_requests_per_day, settings.openai_max_concurrent_requests,
+                database=settings.chat_database_path,
+                lease_seconds=max(7200, settings.openai_timeout_seconds * (settings.central_max_action_rounds + 1) + 600))
         service.load()
         if settings.should_load_retrieval:
             retriever = HybridRetriever(service)
@@ -70,20 +89,28 @@ async def lifespan(app: FastAPI):
                           do_sample=settings.do_sample, enable_thinking=settings.enable_thinking,
                           temperature=settings.model_temperature, top_p=settings.model_top_p)
             hybrid = central = None
+            def remote_model():
+                return OpenAIResponsesRuntime(app.state.openai_client, OpenAIOptions(
+                    settings.openai_default_model, settings.openai_default_reasoning_effort,
+                    settings.openai_max_output_tokens))
             if settings.enable_hybrid_mode:
                 hybrid_model = build_model_runtime(settings=settings, model_id=settings.hybrid_model_id,
                                            revision=settings.hybrid_model_revision,
                                            adapter_path=(settings.model_adapter_path if settings.model_variant == "sft" else None),
-                                           **common)
+                                           **common) if settings.local_inference_enabled else (
+                                               remote_model() if app.state.openai_client else None)
+            if settings.enable_hybrid_mode and hybrid_model:
                 hybrid = HybridRuntime(app.state.retriever, hybrid_model, temporary_retriever)
-                await hybrid_model.aload()
+                if settings.local_inference_enabled:
+                    await hybrid_model.aload()
                 logger.info("Hybrid model ready: base=%s variant=%s adapter=%s peft_attached=%s adapter_fingerprint=%s",
                             hybrid_model.model_id, settings.model_variant.upper(),
                             hybrid_model.adapter_path,
                             hybrid_model.adapter_attached, hybrid_model.adapter_fingerprint)
             if settings.enable_central_mode:
                 central_model = build_model_runtime(settings=settings, model_id=settings.central_model_id,
-                                            revision=settings.central_model_revision, **common)
+                                            revision=settings.central_model_revision, **common) if settings.local_inference_enabled else (
+                                                remote_model() if app.state.openai_client else None)
                 registry = ToolRegistry()
                 registry.register(SearchHistoryTool(app.state.retriever))
                 if settings.central_enable_documents:
@@ -100,8 +127,8 @@ async def lifespan(app: FastAPI):
                                          max_action_rounds=settings.central_max_action_rounds,
                                          action_max_new_tokens=settings.central_action_max_new_tokens,
                                          mcp_manager=manager, max_mcp_tools=settings.mcp_max_tools_per_request,
-                                         mcp_schema_budget=settings.mcp_schema_budget_bytes)
-                if settings.runtime_loading_strategy == "eager":
+                                         mcp_schema_budget=settings.mcp_schema_budget_bytes) if central_model else None
+                if central_model and settings.local_inference_enabled and settings.runtime_loading_strategy == "eager":
                     await central_model.aload()
             app.state.hybrid_runtime = hybrid
             app.state.central_runtime = central
@@ -113,6 +140,10 @@ async def lifespan(app: FastAPI):
             if runtime is not None:
                 await runtime.model.aclose()
         await manager.close()
+        if app.state.openai_client is not None:
+            await app.state.openai_client.close()
+        if app.state.openai_guard is not None:
+            app.state.openai_guard.close()
         service.shutdown()
 
 
@@ -122,7 +153,7 @@ app = FastAPI(title=settings.app_name, version=settings.app_version,
 app.add_middleware(RequestMetricsMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-                   allow_headers=["Content-Type", "Accept", "X-Client-ID"])
+                   allow_headers=["Content-Type", "Accept", "X-Client-ID", "Authorization"])
 app.include_router(api_router)
 app.include_router(conversations_router)
 
@@ -155,6 +186,12 @@ async def ready():
                   "tools": builtin_capabilities(central.tools) if central else [],
                   "tool_policy": {"max_mcp_tools": settings.mcp_max_tools_per_request,
                                   "schema_budget_bytes": settings.mcp_schema_budget_bytes}})
+    state["providers"] = {
+        "local": {"available": bool(settings.is_full and settings.local_inference_enabled)},
+        "openai": {"available": bool(settings.is_full and getattr(app.state, "openai_client", None)),
+                   "models": ["gpt-6-luna", "gpt-6.1-terra"],
+                   "reasoning_efforts": ["low", "medium", "high", "xhigh"]},
+    }
     if settings.is_full:
         hybrid = getattr(app.state, "hybrid_runtime", None)
         central = getattr(app.state, "central_runtime", None)

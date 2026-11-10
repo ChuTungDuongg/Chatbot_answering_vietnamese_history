@@ -14,6 +14,7 @@ if modal.is_local():
     load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
 
 inference_backend = os.getenv("INFERENCE_BACKEND", "transformers")
+local_inference_enabled = os.getenv("LOCAL_INFERENCE_ENABLED", "true").lower() == "true"
 runtime_image = os.getenv("MODAL_RUNTIME_IMAGE", inference_backend)
 if inference_backend not in {"transformers", "vllm"} or runtime_image not in {"transformers", "vllm"}:
     raise ValueError("Inference backend and Modal runtime image must be transformers or vllm")
@@ -75,6 +76,10 @@ observability_secret_name = os.getenv("MODAL_OBSERVABILITY_SECRET_NAME", "").str
 if observability_secret_name:
     runtime_secrets.append(modal.Secret.from_name(observability_secret_name,
                                                 required_keys=["OBSERVABILITY_ADMIN_TOKEN"]))
+openai_secret_name = os.getenv("MODAL_OPENAI_SECRET_NAME", "").strip()
+if openai_secret_name:
+    runtime_secrets.append(modal.Secret.from_name(
+        openai_secret_name, required_keys=["OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN"]))
 
 image = modal.Image.from_dockerfile(
     str(repo_root / ("Dockerfile.vllm" if runtime_image == "vllm" else "Dockerfile")),
@@ -83,8 +88,15 @@ image = modal.Image.from_dockerfile(
     {
         "APP_ENV": "production",
         "APP_MODE": "full",
-        "DEVICE": "cuda",
-        "DTYPE": "bfloat16",
+        "DEVICE": "cuda" if local_inference_enabled else "cpu",
+        "DTYPE": "bfloat16" if local_inference_enabled else "float32",
+        "LOCAL_INFERENCE_ENABLED": str(local_inference_enabled).lower(),
+        "OPENAI_ENABLED": os.getenv("OPENAI_ENABLED", "false"),
+        "OPENAI_TRUSTED_INTERNAL_ONLY": os.getenv("OPENAI_TRUSTED_INTERNAL_ONLY", "false"),
+        **{key: os.environ[key] for key in (
+            "OPENAI_DEFAULT_MODEL", "OPENAI_DEFAULT_REASONING_EFFORT", "OPENAI_TIMEOUT_SECONDS",
+            "OPENAI_MAX_OUTPUT_TOKENS", "OPENAI_MAX_REQUESTS_PER_HOUR",
+            "OPENAI_MAX_REQUESTS_PER_DAY", "OPENAI_MAX_CONCURRENT_REQUESTS") if os.getenv(key)},
         "ARTIFACT_ROOT": "/artifacts/corpus_v1",
         "CORPUS_PATH": "/artifacts/corpus_v1/chunks.jsonl",
         "RETRIEVAL_ROOT": "/artifacts/corpus_v1/retrieval",
@@ -164,7 +176,7 @@ def frontend_app():
 
 @app.function(
     image=image,
-    gpu=os.getenv("MODAL_GPU_CLASS", "L4"),
+    gpu=os.getenv("MODAL_GPU_CLASS", "L4") if local_inference_enabled else None,
     cpu=4.0,
     memory=32768,
     timeout=600,

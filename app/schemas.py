@@ -263,6 +263,9 @@ class ConversationDetailResponse(BaseModel):
 # ============================================================
 
 class ChatRequest(BaseModel):
+    provider: Literal["local", "openai"] = "local"
+    model: Literal["gpt-6-luna", "gpt-6.1-terra"] | None = None
+    reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
     steering: ToolSteering | None = None
     retrieval_backend: RetrievalBackend | None = None
     conversation_id: UUID
@@ -288,6 +291,8 @@ class ChatRequest(BaseModel):
     def require_text_or_attachment(self):
         if len(self.question.strip()) < 2 and not self.attachment_ids:
             raise ValueError("Câu hỏi không được để trống khi chưa có tài liệu.")
+        if self.provider == "local" and (self.model is not None or self.reasoning_effort is not None):
+            raise ValueError("Model and reasoning effort require the OpenAI provider.")
         return self
 
     @field_validator("mode", mode="before")

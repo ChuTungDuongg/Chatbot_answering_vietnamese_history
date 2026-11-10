@@ -10,7 +10,8 @@ import { getSources, normalizeConversationDetail, normalizeConversationList } fr
 import { getConversation, listConversations, streamChat } from "../services/api.js";
 
 export function useChatStream({ dispatch, activeConversationId, isRunning, isUploading,
-  attachments = [], mode, retrievalBackend, steering, showDebugTrace, ensureActiveConversation }) {
+  attachments = [], mode, retrievalBackend, provider, model, reasoningEffort, accessToken,
+  steering, showDebugTrace, ensureActiveConversation }) {
   const requestRef = useRef(null);
 
   const stop = useCallback(() => {
@@ -101,6 +102,7 @@ export function useChatStream({ dispatch, activeConversationId, isRunning, isUpl
         attachmentIds: readyAttachments.map((item) => item.id),
         mode,
         retrievalBackend,
+        provider, model, reasoningEffort, accessToken,
         ...(mode === "central" && steering ? { steering } : {}),
         finalK: 6,
         debug: showDebugTrace,

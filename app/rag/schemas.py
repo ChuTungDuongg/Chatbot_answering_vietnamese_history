@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass
 class PreparedAnswer:
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     contexts: list[dict[str, Any]] = field(default_factory=list)
     retrieval: dict[str, Any] = field(default_factory=dict)
     retrieval_ms: float | None = None

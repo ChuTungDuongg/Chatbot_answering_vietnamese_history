@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import aclosing
+from dataclasses import replace
 
 import asyncio
 import anyio
@@ -20,6 +21,9 @@ from app.api.conversations import OwnerId, StoreDependency, require_conversation
 from app.chat_modes import ChatMode, normalize_chat_mode
 from app.config import settings
 from app.models.base import ModelDelta, ModelDone
+from app.models.openai_responses import OpenAIOptions, OpenAIProviderError, OpenAIResponsesRuntime
+from app.rag.hybrid_runtime import HybridRuntime
+from app.central.runtime import CentralRuntime
 from app.rag.backends import DenseBackendError
 from app.tools.policy import ToolPolicyError
 from app.services.metadata import build_baseline_metadata
@@ -108,6 +112,36 @@ def _sources(answer: str, contexts: list[dict[str, Any]]) -> tuple[list[dict[str
     return marked, cited
 
 
+class CitationFilter:
+    """Only emit bracket references that resolve to the supplied evidence."""
+    def __init__(self, contexts):
+        self.known = {str(item["chunk_id"]) for item in contexts if item.get("chunk_id")}
+        self.known.update(source for item in contexts if (source := _source_id(item)))
+        self.pending = ""
+
+    def feed(self, text, *, final=False):
+        self.pending += text
+        output = []
+        while self.pending:
+            start = self.pending.find("[")
+            if start < 0:
+                output.append(self.pending)
+                self.pending = ""
+                break
+            output.append(self.pending[:start])
+            self.pending = self.pending[start:]
+            end = self.pending.find("]")
+            if end < 0:
+                if final or len(self.pending) > 512:
+                    self.pending = ""
+                break
+            reference = self.pending[1:end]
+            if reference in self.known:
+                output.append(self.pending[:end + 1])
+            self.pending = self.pending[end + 1:]
+        return "".join(output)
+
+
 def _debug_trace(mode: ChatMode, trace: RequestTrace, prepared: Any,
                  source_items: list[dict[str, Any]], metrics: dict[str, Any],
                  model: Any) -> dict[str, Any]:
@@ -182,6 +216,8 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
                             "planning_model_ttft_ms": planning["total_ttft_ms"],
                             "planning_input_tokens": planning["input_tokens"],
                             "planning_output_tokens": planning["output_tokens"],
+                            "planning_reasoning_tokens": planning.get("reasoning_tokens"),
+                            "planning_cached_input_tokens": planning.get("cached_input_tokens"),
                             "planning_wall_ms": planning["total_wall_ms"]})
         mcp_metrics = prepared.retrieval.get("mcp", [])
         if mcp_metrics:
@@ -209,7 +245,7 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
             "prepare_to_model_request": trace.span_ms("prompt_ready", "final_model_requested"),
             "final_model_preparation_and_queue": trace.span_ms("final_model_requested", "generation_started"),
         } if prepared.planning else {}
-    if len(delta_times_ns) > 1:
+    if len(delta_times_ns) > 1 and (not completed or completed.timing_observer != "openai_response_stream"):
         gaps = sorted((b - a) / 1e6 for a, b in zip(delta_times_ns, delta_times_ns[1:]))
         for percentile in (50, 95, 99):
             index = (len(gaps) - 1) * percentile / 100
@@ -219,14 +255,34 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
     return metrics
 
 
-def _runtime(request: Request, mode: ChatMode):
+def _runtime(request: Request, mode: ChatMode, payload: ChatRequest):
     router_instance = getattr(request.app.state, "chat_mode_router", None)
     if router_instance is None:
         raise HTTPException(status_code=503, detail="Generation runtime is not loaded; use APP_MODE=full")
     try:
-        return router_instance.runtime_for(mode)
+        runtime = router_instance.runtime_for(mode)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if payload.provider == "local":
+        if not settings.local_inference_enabled:
+            raise HTTPException(status_code=503, detail="Local inference is unavailable.")
+        return runtime
+    client = getattr(request.app.state, "openai_client", None)
+    guard = getattr(request.app.state, "openai_guard", None)
+    if not client or not guard:
+        raise HTTPException(status_code=503, detail="OpenAI inference is unavailable.")
+    if not guard.authorized(request.headers.get("Authorization", "")):
+        raise HTTPException(status_code=403, detail="OpenAI access is not authorized.")
+    model = OpenAIResponsesRuntime(client, OpenAIOptions(
+        payload.model or settings.openai_default_model,
+        payload.reasoning_effort or settings.openai_default_reasoning_effort,
+        settings.openai_max_output_tokens))
+    if mode == ChatMode.HYBRID:
+        return HybridRuntime(runtime.retriever, model, runtime.attachment_retriever)
+    return CentralRuntime(model=model, tools=runtime.tools, max_action_rounds=runtime.max_action_rounds,
+                          action_max_new_tokens=runtime.action_max_new_tokens,
+                          mcp_manager=runtime.mcp_manager, max_mcp_tools=runtime.max_mcp_tools,
+                          mcp_schema_budget=runtime.mcp_schema_budget)
 
 
 def _resolve_backend(request: Request, selected: str | None):
@@ -298,10 +354,18 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         loop.call_soon_threadsafe(queue.put_nowait, {**event, "request_id": trace.request_id,
                                                    "retrieval_backend": backend, "mode": mode.value})
     token = set_request_telemetry(trace)
+    trace.provider = payload.provider
+    trace.reasoning_effort = (runtime.model.options.reasoning_effort
+                              if payload.provider == "openai" else None)
     serving_metrics.begin()
     recorded = False
     model_stream = None
+    openai_slot = None
     try:
+        if payload.provider == "openai":
+            openai_slot = request.app.state.openai_guard.acquire()
+            if not openai_slot:
+                raise OpenAIProviderError("OpenAI request limit reached. Please retry later.", "request_limit")
         trace.mark("first_status_event")
         yield "status", {"stage": "request_preparation", "state": "started",
                          "message": "Phân tích câu hỏi...", "mode": mode.value,
@@ -350,27 +414,39 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if cancel.is_set():
             return
         current_stage = "generation"
-        yield "status", {"stage": "generation", "state": "started", "message": "Tạo câu trả lời...",
+        yield "status", {"stage": "generation", "state": "started", "message": (
+                         "Đang suy luận và tạo câu trả lời..." if payload.provider == "openai" else "Tạo câu trả lời..."),
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
         trace.mark("final_model_requested")
+        citations = CitationFilter(prepared.contexts) if payload.provider == "openai" else None
         model_stream = runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel)
         async for item in model_stream:
             if cancel.is_set():
                 return
             if isinstance(item, ModelDelta):
-                answer_parts.append(item.text)
+                visible = citations.feed(item.text) if citations else item.text
+                if not visible:
+                    continue
+                answer_parts.append(visible)
                 delta_times.append(item.produced_ns)
                 if "first_answer_delta_sent" not in trace.marks_ns:
                     trace.mark("first_answer_delta_sent")
-                yield "answer_delta", {"delta": item.text}
+                yield "answer_delta", {"delta": visible}
             else:
                 completed = item
         if cancel.is_set():
             return
         if completed is None:
             raise RuntimeError("Model generation ended without completion metadata")
+        if payload.provider == "openai":
+            completed = replace(completed, first_token_ns=delta_times[0] if delta_times else None)
+        if citations:
+            tail = citations.feed("", final=True)
+            if tail:
+                answer_parts.append(tail)
+                yield "answer_delta", {"delta": tail}
         trace.mark("generation_started", completed.started_ns)
         if completed.first_token_ns is not None:
             trace.mark("first_model_token", completed.first_token_ns)
@@ -393,23 +469,26 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         metrics = _model_metrics(completed, trace, prepared, delta_times)
         # Legacy/unknown model metadata still reports the actual request budget,
         # but never guesses a finish reason from the decoded token count.
-        metrics["max_new_tokens"] = max_tokens
+        metrics["max_new_tokens"] = completed.max_new_tokens if payload.provider == "openai" else max_tokens
         debug_trace = (_debug_trace(mode, trace, prepared, source_items, metrics, runtime.model)
                        if payload.debug else None)
+        if debug_trace is not None:
+            debug_trace["request"]["provider"] = payload.provider
         if debug_trace is not None:
             await asyncio.to_thread(store.update_message_debug_trace, owner_id, payload.conversation_id,
                                     assistant_message["id"], debug_trace)
         done = {"request_id": trace.request_id, "conversation_id": str(payload.conversation_id),
                 "message_id": str(assistant_message["id"]), "user_message_id": str(user_message["id"]),
                 "answer": answer, "status": "done", "mode": mode.value,
-                "retrieval_backend": backend,
+                "retrieval_backend": backend, "provider": payload.provider,
                 "latency_ms": metrics["e2e_ms"], "model_id": runtime.model.model_id,
                 "model_revision": completed.model_revision,
                 **getattr(runtime.model, "engine_metadata", {}),
                 "model_variant": getattr(runtime.model, "model_variant", None),
                 "adapter_attached": getattr(runtime.model, "adapter_attached", None),
                 "adapter_fingerprint": getattr(runtime.model, "adapter_fingerprint", None),
-                "generation_settings": {**runtime.model.generation_settings, "max_new_tokens": max_tokens},
+                "generation_settings": {**runtime.model.generation_settings,
+                                        "max_new_tokens": metrics["max_new_tokens"]},
                 "retrieval_settings": getattr(request.app.state.retriever, "retrieval_config", {}),
                 "metrics": metrics}
         if callable(done["retrieval_settings"]):
@@ -431,15 +510,19 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         logger.error("Chat request failed: type=%s", type(exc).__name__, extra={"request_id": trace.request_id})
         trace.mark("request_finished")
         metrics = _model_metrics(completed, trace, prepared, delta_times)
+        if isinstance(exc, OpenAIProviderError):
+            metrics.update(exc.metrics)
         trace.emit(metrics=metrics, model_id=runtime.model.model_id,
-                   model_revision=getattr(runtime.model, "resolved_revision", None), error=type(exc).__name__)
+                   model_revision=getattr(runtime.model, "resolved_revision", None),
+                   error=getattr(exc, "category", type(exc).__name__))
         serving_metrics.finish(mode=mode.value, backend=backend, outcome="error",
                                metrics=metrics, cache=cache_snapshot(runtime.model))
         recorded = True
         yield "status", {"stage": current_stage, "state": "failed", "message": "Không thể hoàn tất bước này",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
         yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id,
-                        "retrieval_backend": backend}
+                        "retrieval_backend": backend,
+                        "category": getattr(exc, "category", type(exc).__name__)}
         yield "done", {"request_id": trace.request_id, "status": "error", "mode": mode.value,
                        "model_id": runtime.model.model_id, "model_revision": getattr(runtime.model, "resolved_revision", None),
                        "retrieval_backend": backend,
@@ -461,6 +544,8 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                 if model_stream is not None:
                     await model_stream.aclose()
         finally:
+            if openai_slot:
+                request.app.state.openai_guard.release(openai_slot)
             reset_request_telemetry(token)
 
 
@@ -501,7 +586,7 @@ async def baseline_metadata(request: Request, mode: ChatMode = ChatMode.HYBRID) 
 async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
                store: StoreDependency) -> ChatResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
-    runtime = _runtime(request, mode)
+    runtime = _runtime(request, mode, payload)
     _resolve_backend(request, payload.retrieval_backend)
     view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)
@@ -521,7 +606,10 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
         elif event == "done":
             result = data
     if failure or not result or result["status"] != "done":
-        raise HTTPException(status_code=503 if failure and failure.get("type") in {"QdrantSearchError", "DenseBackendError", "DenseBackendUnavailable", "MCPToolError"} else 500,
+        error_status = (429 if failure and failure.get("category") in {"request_limit", "rate_limit"} else
+                        503 if failure and (failure.get("type") in {"QdrantSearchError", "DenseBackendError",
+                            "DenseBackendUnavailable", "MCPToolError", "OpenAIProviderError"}) else 500)
+        raise HTTPException(status_code=error_status,
                             detail=(failure or {}).get("message", "Generation failed"))
     return ChatResponse(conversation_id=payload.conversation_id, message_id=result["message_id"],
                         answer=result["answer"], status="done", mode=mode,
@@ -534,7 +622,7 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
 async def chat_stream(payload: ChatRequest, request: Request, owner_id: OwnerId,
                       store: StoreDependency) -> StreamingResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
-    runtime = _runtime(request, mode)
+    runtime = _runtime(request, mode, payload)
     _resolve_backend(request, payload.retrieval_backend)
     view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)

@@ -4,6 +4,10 @@
 
 ## Tài nguyên và cấu hình
 
+Đối với lane OpenAI nội bộ, tạo Modal Secret chứa OPENAI_API_KEY và OPENAI_ACCESS_TOKEN rồi đặt tên secret vào MODAL_OPENAI_SECRET_NAME. Đặt OPENAI_ENABLED=true và OPENAI_TRUSTED_INTERNAL_ONLY=true chỉ sau khi triển khai gateway xác thực, TLS và quota bền vững; xem [cấu hình bảo mật](CONFIGURATION.md#openai-responses-api). SQLite quota là lớp bổ sung và không bảo đảm đồng bộ giữa các Modal replicas. LOCAL_INFERENCE_ENABLED=false chọn CPU cho fastapi_app và không tải Qwen; E5/reranker và corpus vẫn phải có. Cấu hình mặc định tiếp tục dùng GPU và local model.
+
+Smoke test tùy chọn có tính phí: trong mạng nội bộ đã bảo vệ, tạo conversation như ví dụ cuối tài liệu, rồi gửi /api/v1/chat với provider là openai, model là gpt-6-luna, reasoning_effort là medium và header Authorization chứa token dịch vụ. Kiểm tra câu trả lời có nguồn, sau đó thử gpt-6.1-terra và Central với công cụ được phép. Không đưa API key OpenAI vào HTTP request từ browser. CI dùng fake responses và không yêu cầu key.
+
 | Thuộc tính | Mặc định entrypoint |
 | --- | --- |
 | App / functions | `vn-history-rag-api` / GPU `fastapi_app` và CPU `frontend_app` |

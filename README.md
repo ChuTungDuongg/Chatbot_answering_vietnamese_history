@@ -13,6 +13,8 @@ Sử Việt kết hợp truy xuất tư liệu và mô hình ngôn ngữ để h
 
 Backend dùng FastAPI; frontend dùng React/Vite. Retrieval kết hợp E5, FAISS/Qdrant, BM25S và cross-encoder reranking trên Corpus V1.
 
+Inference có thể chọn Qwen local hoặc OpenAI Responses API cho từng request, độc lập với chat mode và dense backend. OpenAI mặc định tắt và chỉ dành cho triển khai nội bộ có gateway xác thực và hạn mức dùng chung; xem [cấu hình bảo mật](docs/CONFIGURATION.md#openai-responses-api). Không đặt OpenAI API key trong trình duyệt.
+
 ## Bắt đầu
 
 - [Cài đặt và chạy local](docs/SETUP.md)

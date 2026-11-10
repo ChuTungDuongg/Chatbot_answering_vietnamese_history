@@ -18,13 +18,15 @@ class ModelDone:
     started_ns: int
     first_token_ns: int | None
     finished_ns: int
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int | None
+    output_tokens: int | None
     max_new_tokens: int | None = None
     finish_reason: str | None = None
     hit_max_new_tokens: bool | None = None
     truncated: bool | None = None
     timing_observer: str | None = None
+    reasoning_tokens: int | None = None
+    cached_input_tokens: int | None = None
 
     @property
     def metrics(self) -> dict[str, float | int | str | bool | None]:
@@ -36,16 +38,18 @@ class ModelDone:
             "generation_ms": generation_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
             "max_new_tokens": self.max_new_tokens,
             "finish_reason": self.finish_reason,
             "hit_max_new_tokens": self.hit_max_new_tokens,
             "truncated": self.truncated,
             "model_timing_observer": self.timing_observer,
-            "tokens_per_second": self.output_tokens / (generation_ms / 1000) if generation_ms > 0 else None,
+            "tokens_per_second": self.output_tokens / (generation_ms / 1000) if generation_ms > 0 and self.output_tokens is not None else None,
             "decode_tokens_per_second": (self.output_tokens - 1) / (decode_ms / 1000)
-                if decode_ms is not None and decode_ms > 0 and self.output_tokens > 1 else None,
+                if self.timing_observer != "openai_response_stream" and decode_ms is not None and decode_ms > 0 and self.output_tokens is not None and self.output_tokens > 1 else None,
             "tpot_ms": decode_ms / (self.output_tokens - 1)
-                if decode_ms is not None and self.output_tokens > 1 else None,
+                if self.timing_observer != "openai_response_stream" and decode_ms is not None and self.output_tokens is not None and self.output_tokens > 1 else None,
         }
 
 

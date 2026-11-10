@@ -41,6 +41,37 @@ test("hiển thị hội thoại đã có sau khi bootstrap", async () => {
   expect(await screen.findByRole("heading", { name: "Nhà Trần", level: 1 })).toBeInTheDocument();
 });
 
+test("provider preferences persist while the access token stays in memory", async () => {
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss"],
+    providers: { local: { available: true }, openai: { available: true } } });
+  const view = render(<App />);
+  await screen.findByRole("heading", { name: "Nhà Trần", level: 1 });
+  const provider = await screen.findByLabelText("Nhà cung cấp");
+  await waitFor(() => expect(provider).not.toBeDisabled());
+  await userEvent.selectOptions(provider, "openai");
+  await userEvent.selectOptions(screen.getByLabelText("Model OpenAI"), "gpt-6.1-terra");
+  await userEvent.selectOptions(screen.getByLabelText("Mức reasoning"), "xhigh");
+  await userEvent.type(screen.getByLabelText("Token truy cập dịch vụ"), "service-token");
+  expect(localStorage.getItem("inference-provider")).toBe("openai");
+  expect(localStorage.getItem("openai-model")).toBe("gpt-6.1-terra");
+  expect(localStorage.getItem("openai-reasoning")).toBe("xhigh");
+  expect(JSON.stringify(localStorage)).not.toContain("service-token");
+  view.unmount();
+  render(<App />);
+  expect(await screen.findByLabelText("Model OpenAI")).toHaveValue("gpt-6.1-terra");
+  expect(screen.getByLabelText("Mức reasoning")).toHaveValue("xhigh");
+  expect(screen.getByLabelText("Token truy cập dịch vụ")).toHaveValue("");
+});
+
+test("unavailable OpenAI is disabled", async () => {
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss"],
+    providers: { local: { available: true }, openai: { available: false } } });
+  render(<App />);
+  await screen.findByRole("heading", { name: "Nhà Trần", level: 1 });
+  await waitFor(() => expect(screen.getByRole("option", { name: "OpenAI API" })).toBeDisabled());
+  expect(screen.queryByLabelText("Model OpenAI")).not.toBeInTheDocument();
+});
+
 test("composer keeps inference modes and ignores stored response detail", async () => {
   window.localStorage.setItem("vn-history-response-mode", "detailed");
   const readStorage = vi.spyOn(Storage.prototype, "getItem");

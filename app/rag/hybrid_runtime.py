@@ -14,7 +14,9 @@ class HybridRuntime:
     def __init__(self, retriever: Retriever, model: Any, attachment_retriever: Any = None):
         from app.config import HYBRID_MODEL_ID
 
-        if model.model_id != HYBRID_MODEL_ID:
+        from app.models.openai_responses import OPENAI_MODELS
+        if not (model.model_id == HYBRID_MODEL_ID or
+                (getattr(model, "inference_backend", None) == "openai" and model.model_id in OPENAI_MODELS)):
             raise ValueError("Hybrid requires Qwen3-4B-Instruct-2507")
         self.retriever, self.model = retriever, model
         self.attachment_retriever = attachment_retriever

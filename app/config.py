@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     qdrant_timeout_seconds: float = Field(default=30.0, ge=1, le=300)
     device: Literal["cpu", "cuda"] = "cpu"
     inference_backend: Literal["transformers", "vllm"] = "transformers"
+    local_inference_enabled: bool = True
+    openai_enabled: bool = False
+    openai_trusted_internal_only: bool = False
+    openai_api_key: SecretStr | None = None
+    openai_access_token: SecretStr | None = None
+    openai_default_model: Literal["gpt-6-luna", "gpt-6.1-terra"] = "gpt-6-luna"
+    openai_default_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+    openai_timeout_seconds: float = Field(default=180, ge=1, le=600)
+    openai_max_output_tokens: int = Field(default=25000, ge=256, le=128000)
+    openai_max_requests_per_hour: int = Field(default=20, ge=1, le=1000)
+    openai_max_requests_per_day: int = Field(default=100, ge=1, le=10000)
+    openai_max_concurrent_requests: int = Field(default=2, ge=1, le=20)
     vllm_enable_prefix_caching: bool = False
     vllm_gpu_memory_utilization: float = Field(default=0.75, gt=0, lt=1)
     vllm_max_num_seqs: int = Field(default=8, ge=1)
@@ -119,7 +131,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_isolated_vllm(self):
-        if (self.inference_backend == "vllm" and self.is_full
+        if (self.local_inference_enabled and self.inference_backend == "vllm" and self.is_full
                 and self.enable_hybrid_mode and self.enable_central_mode):
             raise ValueError("vLLM requires an isolated Hybrid or Central deployment; disable the other mode")
         return self

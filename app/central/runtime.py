@@ -24,7 +24,9 @@ class CentralRuntime:
                  max_mcp_tools: int = 8, mcp_schema_budget: int = 16384):
         from app.config import CENTRAL_MODEL_ID
 
-        if model.model_id != CENTRAL_MODEL_ID:
+        from app.models.openai_responses import OPENAI_MODELS
+        if not (model.model_id == CENTRAL_MODEL_ID or
+                (getattr(model, "inference_backend", None) == "openai" and model.model_id in OPENAI_MODELS)):
             raise ValueError("Central must use vanilla Qwen3-8B")
         self.model = model
         self.tools = tools
@@ -85,6 +87,7 @@ class CentralRuntime:
         rounds = 0
         planning_rounds: list[dict[str, Any]] = []
         exit_reason = "max_action_rounds"
+        native = getattr(self.model, "inference_backend", None) == "openai"
 
         if trace:
             trace.mark("retrieval_started")
@@ -94,13 +97,20 @@ class CentralRuntime:
             rounds += 1
             round_started = time.perf_counter_ns()
             with stages.track("tool_selection"):
-                plan_text, plan_done = await self.model.generate(
-                    messages, tools=planner_schemas, max_new_tokens=self.action_max_new_tokens,
-                    cancel=cancel,
-                )
+                if native:
+                    parsed, native_output, plan_done = await self.model.plan(
+                        messages, tools=planner_schemas, cancel=cancel)
+                    if parsed.failures or len(parsed.tool_calls) > 4:
+                        raise RuntimeError("OpenAI returned malformed or too many tool calls.")
+                else:
+                    plan_text, plan_done = await self.model.generate(
+                        messages, tools=planner_schemas, max_new_tokens=self.action_max_new_tokens,
+                        cancel=cancel,
+                    )
             round_finished = time.perf_counter_ns()
             model_calls += 1
-            parsed = self.codec.decode(plan_text)
+            if not native:
+                parsed = self.codec.decode(plan_text)
             parse_failures += parsed.failures
             wall_ms = (round_finished - round_started) / 1e6
             model_metrics = plan_done.metrics if isinstance(plan_done, ModelDone) else {}
@@ -112,14 +122,21 @@ class CentralRuntime:
                              "preparation_and_queue_ms": max(0.0, wall_ms - model_ms) if model_ms is not None else None,
                              "input_tokens": model_metrics.get("input_tokens"),
                              "output_tokens": model_metrics.get("output_tokens"),
+                             "reasoning_tokens": model_metrics.get("reasoning_tokens"),
+                             "cached_input_tokens": model_metrics.get("cached_input_tokens"),
                              "finish_reason": model_metrics.get("finish_reason"),
                              "tools_requested": [call.name for call in parsed.tool_calls],
                              "parse_failures": parsed.failures, "early_exit": False}
             planning_rounds.append(round_metrics)
             if not parsed.tool_calls:
+                if native:
+                    messages.extend(native_output)
                 exit_reason = "planner_no_tools"
                 break
-            messages.append({"role": "assistant", "content": plan_text})
+            if native:
+                messages.extend(native_output)
+            else:
+                messages.append({"role": "assistant", "content": plan_text})
             complete_evidence = parsed.failures == 0 and len(parsed.tool_calls) <= 4
             completion_declared = (final_after_tools(parsed.content) if "<plan_status>" in parsed.content else
                                    all(call.name in controlled_tools and call.arguments.get(COMPLETION_FIELD) is True
@@ -157,12 +174,16 @@ class CentralRuntime:
                 local_evidence = local_evidence or (call.name == "search_history" and bool(chunks))
                 observation = json.dumps(output if not record.error else {"success": False, "error": record.error},
                                          ensure_ascii=False, default=str)
-                messages.append({"role": "tool", "name": call.name, "content": observation[:8000]})
+                if native:
+                    messages.append({"type": "function_call_output", "call_id": call.id,
+                                     "output": observation[:8000]})
+                else:
+                    messages.append({"role": "tool", "name": call.name, "content": observation[:8000]})
             # No implicit "nonempty result means sufficient" shortcut: the planner
             # must declare full coverage and no pending dependencies, and actual
             # outputs must be successful, usable evidence. Missing/truncated plans,
             # snippets awaiting a reader, failures and mixed-domain gaps replan.
-            if (complete_evidence and completion_declared
+            if (not native and complete_evidence and completion_declared
                     and model_metrics.get("finish_reason") != "length"
                     and (not external_required or external_evidence)
                     and (domain != "mixed" or (local_evidence and external_evidence))
@@ -195,13 +216,27 @@ class CentralRuntime:
         prompt_started = time.perf_counter_ns()
         with stages.track("prompt_preparation"):
             final_messages = build_messages(question, selected, history)
+            if native and model_calls:
+                # Keep the exact planner prefix and every returned reasoning
+                # and function item, including the last round's tool outputs.
+                # The final instruction limits claims to selected evidence.
+                final_messages = [
+                    *messages,
+                    {"role": "system", "content":
+                     "Giai đoạn chọn công cụ đã kết thúc. Bây giờ hãy trả lời người dùng; "
+                     "không tiết lộ kế hoạch hoặc lý luận nội bộ. Chỉ dùng các nguồn được "
+                     "chọn trong câu hỏi cuối, không dùng phần khác của tool output. "
+                     + final_messages[0]["content"]},
+                    final_messages[-1],
+                ]
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")
         planning = {"rounds": planning_rounds, "exit_reason": exit_reason, "domain": domain,
                     "total_wall_ms": sum(row["wall_ms"] for row in planning_rounds)}
         for name, field in (("total_model_ms", "model_ms"), ("total_ttft_ms", "ttft_ms"),
-                            ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")):
+                            ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                            ("reasoning_tokens", "reasoning_tokens"), ("cached_input_tokens", "cached_input_tokens")):
             planning[name] = (sum(row[field] for row in planning_rounds)
                               if all(row[field] is not None for row in planning_rounds) else None)
         tool_ms = sum(row["latency_ms"] for row in tool_records)
