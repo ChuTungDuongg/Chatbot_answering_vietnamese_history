@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     app_name: str = "Vietnamese History LLM API"
     app_version: str = "2.0.0"
     app_env: str = "development"
+    auth_enabled: bool = False
+    auth_password_hash: SecretStr | None = None
+    auth_session_secret: SecretStr | None = None
     app_mode: Literal["api-only", "retrieval-only", "full"] = "api-only"
     artifact_root: Path = REPO_ROOT / "artifacts" / "corpus_v1"
     corpus_path_override: Path | None = Field(default=None, validation_alias="CORPUS_PATH")
@@ -93,7 +96,8 @@ class Settings(BaseSettings):
 
     @field_validator("hybrid_model_revision", "central_model_revision", "model_cache_dir",
                      "corpus_path_override", "retrieval_root", "inference_config_path_override",
-                     "runtime_manifest_path", "model_adapter_path", mode="before")
+                     "runtime_manifest_path", "model_adapter_path", "qdrant_hnsw_ef",
+                     "vllm_max_model_len", mode="before")
     @classmethod
     def empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value

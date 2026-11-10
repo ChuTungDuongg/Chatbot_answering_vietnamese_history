@@ -4,10 +4,12 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
@@ -24,6 +26,7 @@ from app.rag.hybrid_runtime import HybridRuntime
 from app.rag.retrieval import HybridRetriever
 from app.services.chat_mode_router import ChatModeRouter
 from app.services.openai_access import OpenAIAccessGuard
+from app.security.auth import AuthManager, OwnerAuthMiddleware
 from app.services.rag_service import RAGService
 from app.tools.attachment_search import SearchUploadedDocumentsTool
 from app.tools.local_search import SearchHistoryTool
@@ -49,21 +52,30 @@ async def lifespan(app: FastAPI):
     app.state.chat_mode_router = None
     app.state.openai_client = None
     app.state.openai_guard = None
+    app.state.auth_manager = None
     manager = MCPManager()
     app.state.mcp_manager = manager
     try:
-        if (settings.openai_enabled and settings.openai_trusted_internal_only and settings.openai_api_key
+        if settings.app_env.lower() == "production" and not settings.auth_enabled:
+            raise RuntimeError("Authentication must be enabled in production")
+        if settings.auth_enabled:
+            app.state.auth_manager = AuthManager(settings)
+        legacy_openai_access = (settings.openai_trusted_internal_only
+                                and settings.openai_access_token
+                                and len(settings.openai_access_token.get_secret_value()) >= 32
+                                and settings.openai_api_key
+                                and not hmac.compare_digest(settings.openai_api_key.get_secret_value().encode(),
+                                                            settings.openai_access_token.get_secret_value().encode()))
+        if (settings.openai_enabled and (settings.auth_enabled or legacy_openai_access) and settings.openai_api_key
                 and settings.openai_api_key.get_secret_value()
-                and settings.openai_access_token
-                and len(settings.openai_access_token.get_secret_value()) >= 32
-                and not hmac.compare_digest(settings.openai_api_key.get_secret_value().encode(),
-                                            settings.openai_access_token.get_secret_value().encode())):
+                ):
             from openai import AsyncOpenAI
             app.state.openai_client = AsyncOpenAI(
                 api_key=settings.openai_api_key.get_secret_value(),
                 timeout=settings.openai_timeout_seconds, max_retries=0)
             app.state.openai_guard = OpenAIAccessGuard(
-                settings.openai_access_token.get_secret_value(), settings.openai_max_requests_per_hour,
+                settings.openai_access_token.get_secret_value() if settings.openai_access_token else "",
+                settings.openai_max_requests_per_hour,
                 settings.openai_max_requests_per_day, settings.openai_max_concurrent_requests,
                 database=settings.chat_database_path,
                 lease_seconds=max(7200, settings.openai_timeout_seconds * (settings.central_max_action_rounds + 1) + 600))
@@ -144,6 +156,8 @@ async def lifespan(app: FastAPI):
             await app.state.openai_client.close()
         if app.state.openai_guard is not None:
             app.state.openai_guard.close()
+        if app.state.auth_manager is not None:
+            app.state.auth_manager.close()
         service.shutdown()
 
 
@@ -154,12 +168,16 @@ app.add_middleware(RequestMetricsMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
                    allow_headers=["Content-Type", "Accept", "X-Client-ID", "Authorization"])
+app.add_middleware(OwnerAuthMiddleware, settings=settings)
 app.include_router(api_router)
 app.include_router(conversations_router)
 
 
 @app.get("/")
 async def root():
+    index = Path(os.getenv("FRONTEND_DIST_DIR", "/workspace/frontend_dist")) / "index.html"
+    if index.is_file():
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
     return {"service": settings.app_name, "version": settings.app_version,
             "environment": settings.app_env, "mode": settings.app_mode,
             "features": {"chat_modes": ["hybrid", "central"],
@@ -192,6 +210,7 @@ async def ready():
                    "models": ["gpt-6-luna", "gpt-6.1-terra"],
                    "reasoning_efforts": ["low", "medium", "high", "xhigh"]},
     }
+    state["authentication"] = {"enabled": settings.auth_enabled}
     if settings.is_full:
         hybrid = getattr(app.state, "hybrid_runtime", None)
         central = getattr(app.state, "central_runtime", None)
@@ -222,3 +241,20 @@ async def observability_summary(request: Request):
         if model is not None:
             summary["cache"][mode] = cache_snapshot(model)
     return JSONResponse(summary, headers={"Cache-Control": "no-store"})
+
+
+frontend_dist = Path(os.getenv("FRONTEND_DIST_DIR", "/workspace/frontend_dist")).resolve()
+app.mount("/assets", StaticFiles(directory=frontend_dist / "assets", check_dir=False), name="assets")
+
+
+@app.get("/{path:path}", include_in_schema=False)
+async def spa_fallback(path: str):
+    if path == "api" or path.startswith(("api/", "assets/")) or path in {"docs", "redoc", "openapi.json"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    candidate = (frontend_dist / path).resolve()
+    if candidate.is_relative_to(frontend_dist) and candidate.is_file():
+        return FileResponse(candidate)
+    index = frontend_dist / "index.html"
+    if index.is_file():
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+    raise HTTPException(status_code=404, detail="Frontend assets are unavailable")

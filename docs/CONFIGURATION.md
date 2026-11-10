@@ -44,9 +44,9 @@ Token budget là trần; model có thể dừng sớm bằng EOS. Live API/UI ch
 
 ## OpenAI Responses API
 
-OpenAI mặc định tắt. **Không mở lane này ra Internet công cộng:** X-Client-ID không phải xác thực, token chia sẻ dưới đây không thay thế hệ thống định danh người dùng. Đặt API sau gateway riêng có xác thực, TLS, giới hạn theo người dùng và hạn mức/budget bền vững dùng chung. Bộ giới hạn SQLite chỉ là lớp bổ sung cho các process trên cùng database; không bảo đảm đồng bộ giữa replicas hoặc Modal Volume. Nếu không có các bảo vệ này, giữ OPENAI_ENABLED=false.
+OpenAI mặc định tắt. Modal bắt buộc xác thực bằng mật khẩu; cookie phiên đã xác thực cho phép sử dụng OpenAI mà không cần nhập token dịch vụ. `X-Client-ID` chỉ phân vùng hội thoại, không xác thực. API key và token dịch vụ chỉ được giữ phía server. Quota SQLite là lớp giới hạn bổ sung; cấu hình Modal giới hạn một container và không bảo đảm quota đồng bộ giữa nhiều replicas. Không mở rộng replicas khi chưa có cơ chế quota chung.
 
-Trong môi trường nội bộ đã được bảo vệ, đặt APP_MODE=full, OPENAI_ENABLED=true, OPENAI_TRUSTED_INTERNAL_ONLY=true, OPENAI_API_KEY, và OPENAI_ACCESS_TOKEN là chuỗi ngẫu nhiên riêng dài ít nhất 32 ký tự. UI yêu cầu access token của dịch vụ, không phải OpenAI API key; token chỉ giữ trong bộ nhớ trang và gửi qua Authorization Bearer. Không lưu hai secret vào frontend bundle hoặc Git. /ready công bố khả dụng khi đủ cấu hình; không công bố secrets. Token chia sẻ phải được phân phối an toàn và xoay vòng khi lộ.
+Đặt `OPENAI_ENABLED=true` và cung cấp `OPENAI_API_KEY` qua Modal Secret `MODAL_OPENAI_SECRET_NAME`. Trường hợp tích hợp dịch vụ cũ không dùng session vẫn cần `OPENAI_TRUSTED_INTERNAL_ONLY=true` và `OPENAI_ACCESS_TOKEN` riêng trên server. Không đưa secret vào frontend, Git hoặc log. `/ready` không trả secrets.
 
 | Biến | Mặc định |
 | --- | --- |
@@ -60,7 +60,7 @@ Trong môi trường nội bộ đã được bảo vệ, đặt APP_MODE=full, 
 
 Central có thể gọi model tới số action rounds đã cấu hình cộng một lần sinh cuối; giới hạn token áp dụng cho từng lần gọi. High và Very High có thể tăng thời gian và chi phí. API trả incomplete nếu hết budget và ứng dụng không lưu answer đó. Requests dùng store=false; điều này không tự tạo bảo đảm Zero Data Retention cho tài khoản. Model access, quota và chính sách dữ liệu phải được xác minh với tài khoản OpenAI.
 
-Payload cũ mặc định local. Với OpenAI, gửi provider là openai, tùy chọn model và reasoning_effort, cùng header Authorization Bearer chứa token dịch vụ. Model/effort ngoài allowlist bị từ chối. Status stream báo đang xử lý, không hiển thị reasoning nội bộ. Khi model không khả dụng hoặc bị rate limit, thử lại hoặc chọn provider khác; không tự chuyển provider.
+Payload cũ mặc định local. Với OpenAI, gửi provider là openai, tùy chọn model và reasoning_effort, và cookie phiên đăng nhập. Model/effort ngoài allowlist bị từ chối. Status stream báo đang xử lý, không hiển thị reasoning nội bộ. Khi model không khả dụng hoặc bị rate limit, thử lại hoặc chọn provider khác; không tự chuyển provider.
 
 ## Dense retrieval
 
@@ -95,14 +95,17 @@ Payload cũ mặc định local. Với OpenAI, gửi provider là openai, tùy c
 
 vLLM hiện từ chối SFT/LoRA. Xem [vLLM](VLLM_LATENCY_EXPERIMENTS.md) và [Tools/MCP](TOOLS_AND_MCP.md) cho quy trình sử dụng. `SILVER_LLM_BASE_URL` và `SILVER_LLM_API_KEY` chỉ phục vụ [annotation offline](SILVER_BENCHMARK.md), không cấu hình model của live app.
 
-## Frontend gateway và observability
+## Xác thực và observability
 
-| Biến | Mặc định | Phạm vi |
+| Biến | Mặc định | Ý nghĩa |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | Rỗng | Frontend dùng cùng origin qua gateway; local Vite cần URL backend riêng. |
-| `VITE_SHOW_DEBUG_TRACE` | `false` trong mẫu | Bật giao diện trace khi cần. |
-| `MODAL_GPU_API_URL` | Rỗng | URL `fastapi_app` mà CPU gateway proxy tới; thiếu/sai URL trả 503. |
-| `MODAL_OBSERVABILITY_SECRET_NAME` | Không đặt | Modal Secret chứa `OBSERVABILITY_ADMIN_TOKEN`, chuyển vào GPU container. |
-| `OBSERVABILITY_ADMIN_TOKEN` | Không đặt | Token process cho `/api/v1/ops/summary`; thiếu trả 404, sai trả 403. |
+| `AUTH_ENABLED` | `false` local | Modal luôn bật; production không thể chạy khi tắt. |
+| `AUTH_PASSWORD_HASH` | Không đặt | Hash Argon2id trong Modal Secret. |
+| `AUTH_SESSION_SECRET` | Không đặt | Secret ký cookie ngẫu nhiên, ít nhất 32 byte. |
+| `MODAL_AUTH_SECRET_NAME` | `vn-history-auth` | Tên Modal Secret bắt buộc. |
+| `VITE_API_BASE_URL` | Rỗng | Frontend image dùng cùng origin. |
+| `VITE_SHOW_DEBUG_TRACE` | `false` | Hiện giao diện trace nếu bật. |
+| `MODAL_OBSERVABILITY_SECRET_NAME` | Không đặt | Secret chứa `OBSERVABILITY_ADMIN_TOKEN`. |
+| `OBSERVABILITY_ADMIN_TOKEN` | Không đặt | Token riêng cho `/api/v1/ops/summary`; vẫn bắt buộc khi đã đăng nhập. |
 
-Các biến trên được đọc bởi frontend, gateway hoặc entrypoint/API trực tiếp, không thuộc `Settings`. Đổi `VITE_*` cần restart/build lại; đổi `MODAL_GPU_API_URL` cần redeploy CPU function. Không đưa admin token vào Vite bundle. Xem [Deployment](DEPLOYMENT.md) và [Telemetry](RUNTIME_TELEMETRY.md).
+Xem [Deployment](DEPLOYMENT.md) để tạo và xoay vòng secret. Không đưa admin token vào frontend bundle.

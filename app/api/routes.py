@@ -275,7 +275,8 @@ def _runtime(request: Request, mode: ChatMode, payload: ChatRequest):
     guard = getattr(request.app.state, "openai_guard", None)
     if not client or not guard:
         raise HTTPException(status_code=503, detail="OpenAI inference is unavailable.")
-    if not guard.authorized(request.headers.get("Authorization", "")):
+    authenticated = bool(getattr(getattr(request, "state", None), "owner_authenticated", False))
+    if not authenticated and not guard.authorized(request.headers.get("Authorization", "")):
         raise HTTPException(status_code=403, detail="OpenAI access is not authorized.")
     model = OpenAIResponsesRuntime(client, OpenAIOptions(
         payload.model or settings.openai_default_model,

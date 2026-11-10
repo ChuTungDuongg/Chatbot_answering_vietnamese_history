@@ -4,7 +4,7 @@
 
 Sử Việt kết hợp truy xuất tư liệu và mô hình ngôn ngữ để hỗ trợ tìm hiểu lịch sử Việt Nam. Câu trả lời được truyền trực tiếp khi model sinh, kèm nguồn tham khảo để người dùng kiểm tra và đối chiếu.
 
-Ứng dụng hỗ trợ hội thoại, tra cứu tài liệu PDF/ảnh tải lên và lựa chọn FAISS hoặc Qdrant cho từng câu hỏi. Trên Modal, giao diện chạy ở CPU và chuyển yêu cầu tới API inference trên GPU.
+Ứng dụng hỗ trợ hội thoại, tra cứu tài liệu PDF/ảnh tải lên và lựa chọn FAISS hoặc Qdrant cho từng câu hỏi. Trên Modal, một URL HTTPS phục vụ giao diện và API sau màn hình đăng nhập bằng mật khẩu.
 
 | Chế độ | Cách hoạt động | Model |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ Sử Việt kết hợp truy xuất tư liệu và mô hình ngôn ngữ để h
 
 Backend dùng FastAPI; frontend dùng React/Vite. Retrieval kết hợp E5, FAISS/Qdrant, BM25S và cross-encoder reranking trên Corpus V1.
 
-Inference có thể chọn Qwen local hoặc OpenAI Responses API cho từng request, độc lập với chat mode và dense backend. OpenAI mặc định tắt và chỉ dành cho triển khai nội bộ có gateway xác thực và hạn mức dùng chung; xem [cấu hình bảo mật](docs/CONFIGURATION.md#openai-responses-api). Không đặt OpenAI API key trong trình duyệt.
+Inference có thể chọn Qwen local hoặc OpenAI Responses API cho từng request, độc lập với chat mode và dense backend. OpenAI mặc định tắt và được bảo vệ bằng phiên đăng nhập và hạn mức phía máy chủ; xem [cấu hình bảo mật](docs/CONFIGURATION.md#openai-responses-api). Không đặt OpenAI API key trong trình duyệt.
 
 ## Bắt đầu
 

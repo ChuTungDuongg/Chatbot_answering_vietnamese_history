@@ -5,19 +5,18 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-test("OpenAI options and access token are sent per request", async () => {
+test("OpenAI options are sent without a browser service token", async () => {
   vi.resetModules();
   const fetchMock = vi.fn().mockResolvedValue(new Response('event: done\ndata: {"status":"done"}\n\n'));
   vi.stubGlobal("fetch", fetchMock);
   const { streamChat } = await import("../../src/services/api.js");
   await streamChat({ conversationId: "c1", question: "History?", provider: "openai",
-    model: "gpt-6.1-terra", reasoningEffort: "xhigh", accessToken: "access-token" });
+    model: "gpt-6.1-terra", reasoningEffort: "xhigh" });
   const request = fetchMock.mock.calls[0][1];
   expect(JSON.parse(request.body)).toMatchObject({
     provider: "openai", model: "gpt-6.1-terra", reasoning_effort: "xhigh",
   });
-  expect(request.headers.Authorization).toBe("Bearer access-token");
-  expect(request.body).not.toContain("access-token");
+  expect(request.headers.Authorization).toBeUndefined();
 });
 
 test.each(["hybrid", "central"])("tool steering is serialized only for %s Central requests", async (mode) => {

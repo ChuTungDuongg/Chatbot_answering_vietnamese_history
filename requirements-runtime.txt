@@ -9,6 +9,8 @@ bm25s==0.3.10
 qdrant-client==1.19.1
 mcp==2.2.0
 openai==3.48.0
+argon2-cffi==25.1.0
+itsdangerous==2.2.0
 jsonschema==4.26.0
 
 uvicorn[standard]

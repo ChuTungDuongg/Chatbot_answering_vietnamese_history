@@ -1,3 +1,10 @@
+FROM node:24-bookworm-slim AS ui-builder
+WORKDIR /workspace
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci --no-audit --no-fund
+COPY frontend ./frontend
+RUN VITE_API_BASE_URL="" VITE_SHOW_DEBUG_TRACE=false npm --prefix frontend run build
+
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,6 +44,7 @@ RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /workspace/requirements.txt
 
 COPY app /workspace/app
+COPY --from=ui-builder /workspace/frontend/dist /workspace/frontend_dist
 
 EXPOSE 8000
 

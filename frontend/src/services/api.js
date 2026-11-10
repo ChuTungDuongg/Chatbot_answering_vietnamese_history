@@ -18,6 +18,10 @@ function createHeaders(headers = {}) {
   return { "X-Client-ID": getClientId(), ...headers };
 }
 
+function redirectExpiredSession(response) {
+  if (response.status === 401) window.location.assign("/login");
+}
+
 async function getErrorMessage(response) {
   const fallback = `Yêu cầu thất bại với mã ${response.status}.`;
 
@@ -45,7 +49,10 @@ async function requestJson(path, options = {}) {
     headers: createHeaders(options.headers),
   });
 
-  if (!response.ok) throw new Error(await getErrorMessage(response));
+  if (!response.ok) {
+    redirectExpiredSession(response);
+    throw new Error(await getErrorMessage(response));
+  }
   if (response.status === 204) return null;
 
   const contentType = response.headers.get("content-type") ?? "";
@@ -137,7 +144,8 @@ export async function getRetrievalCapabilities(options = {}) {
   const ready = await requestJson("/ready", options);
   return { ...(ready.retrieval ?? { available_backends: [] }),
     mcp: ready.mcp ?? { enabled: false, servers: [] }, tools: ready.tools ?? [], tool_policy: ready.tool_policy ?? {},
-    providers: ready.providers ?? { local: { available: true }, openai: { available: false } } };
+    providers: ready.providers ?? { local: { available: true }, openai: { available: false } },
+    authentication: ready.authentication ?? { enabled: false } };
 }
 
 export async function streamChat({
@@ -149,7 +157,6 @@ export async function streamChat({
   provider = "local",
   model,
   reasoningEffort,
-  accessToken,
   steering,
   finalK = 6,
   debug = false,
@@ -165,7 +172,6 @@ export async function streamChat({
     headers: createHeaders({
       "Content-Type": "application/json",
       Accept: "text/event-stream",
-      ...(provider === "openai" && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     }),
     body: JSON.stringify({
       conversation_id: conversationId,
@@ -181,7 +187,10 @@ export async function streamChat({
     signal,
   });
 
-  if (!response.ok) throw new Error(await getErrorMessage(response));
+  if (!response.ok) {
+    redirectExpiredSession(response);
+    throw new Error(await getErrorMessage(response));
+  }
   if (!response.body) throw new Error("Trình duyệt không nhận được response stream.");
 
   const reader = response.body.getReader();

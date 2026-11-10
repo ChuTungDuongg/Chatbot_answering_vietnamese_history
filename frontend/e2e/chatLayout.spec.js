@@ -118,7 +118,6 @@ test("OpenAI controls stay usable and request scoped across viewports", async ({
   await provider.selectOption("openai");
   await page.getByLabel("Model OpenAI").selectOption("gpt-6.1-terra");
   await page.getByLabel("Mức reasoning").selectOption("xhigh");
-  await page.getByLabel("Token truy cập dịch vụ").fill("temporary-service-token");
   await submit(page, 1);
   await assertDocked(page);
   expect(await page.evaluate(() => window.__layoutStream.requests.at(-1))).toMatchObject({

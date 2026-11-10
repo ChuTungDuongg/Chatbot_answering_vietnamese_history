@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập · Sử Việt</title><style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;
+background:#1c1b19;color:#f2eee8;font:15px system-ui,sans-serif;padding:24px}
+main{width:min(100%,400px);padding:36px;border:1px solid #49443f;border-radius:22px;background:#282622;box-shadow:0 20px 70px #0005}
+.brand{text-align:center;color:#dfaa91;font-weight:700;letter-spacing:.06em}.flower{font-size:34px}h1{text-align:center;font-size:25px;margin:18px 0 8px}
+p{text-align:center;color:#bdb4aa;line-height:1.6;margin:0 0 26px}label{display:block;margin-bottom:8px;color:#e3dcd4}
+.field{display:flex;border:1px solid #5b544d;border-radius:10px;overflow:hidden}.field:focus-within{border-color:#dfaa91}
+input{flex:1;min-width:0;padding:13px;border:0;background:transparent;color:inherit;font:inherit;outline:0}
+.toggle{border:0;background:transparent;color:#d3b1a2;padding:0 12px;cursor:pointer}button.submit{width:100%;margin-top:18px;padding:13px;
+border:0;border-radius:10px;background:#d79a80;color:#241b18;font:inherit;font-weight:700;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}#error{min-height:22px;margin:12px 0 0;color:#f3a5a5;text-align:left}
+</style></head><body><main><div class="brand"><div class="flower" aria-hidden="true">✿</div>SỬ VIỆT</div>
+<h1>Chào mừng trở lại</h1><p>Nhập mật khẩu để mở không gian tìm hiểu lịch sử của bạn.</p>
+<form id="login"><label for="password">Mật khẩu</label><div class="field">
+<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+<button class="toggle" id="toggle" type="button" aria-label="Hiện mật khẩu">Hiện</button></div>
+<button class="submit" id="submit" type="submit">Đăng nhập</button><p id="error" role="alert"></p></form></main>
+<script>
+const form=document.getElementById('login'), input=document.getElementById('password'),
+  toggle=document.getElementById('toggle'), button=document.getElementById('submit'), error=document.getElementById('error');
+toggle.addEventListener('click',()=>{const show=input.type==='password';input.type=show?'text':'password';
+  toggle.textContent=show?'Ẩn':'Hiện';toggle.setAttribute('aria-label',show?'Ẩn mật khẩu':'Hiện mật khẩu');});
+form.addEventListener('submit',async(event)=>{event.preventDefault();error.textContent='';button.disabled=true;
+  button.textContent='Đang đăng nhập...';try{const response=await fetch('/auth/login',{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify({password:input.value})});
+  if(response.ok){window.location.assign('/');return;}
+  error.textContent=response.status===429?'Quá nhiều lần thử. Vui lòng thử lại sau.':'Mật khẩu không đúng hoặc không thể đăng nhập.';
+  }catch{error.textContent='Không thể kết nối. Vui lòng thử lại.';}finally{button.disabled=false;button.textContent='Đăng nhập';}});
+</script></body></html>

@@ -31,11 +31,15 @@ jobs:
       - run: npm --prefix frontend test
       - run: npm run frontend:lint
       - run: npm run frontend:build
+      - run: cd frontend && npx playwright test e2e/login.spec.js
 
   frontend-container:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: docker build --check -f Dockerfile .
+      - run: docker build --check -f Dockerfile.vllm .
+      - run: docker build --target ui-builder -f Dockerfile -t vn-history-assets:ci .
       - run: docker build --check -f Dockerfile.frontend .
       - run: docker build -f Dockerfile.frontend -t vn-history-ui:ci .
       - name: CPU static and unconfigured proxy smoke

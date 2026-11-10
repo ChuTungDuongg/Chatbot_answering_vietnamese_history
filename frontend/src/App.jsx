@@ -54,7 +54,6 @@ function App() {
   const [selectedProvider, setSelectedProvider] = useState(() => preference("inference-provider", ["local", "openai"], "local"));
   const [model, setModel] = useState(() => preference("openai-model", ["gpt-6-luna", "gpt-6.1-terra"], "gpt-6-luna"));
   const [reasoningEffort, setReasoningEffort] = useState(() => preference("openai-reasoning", ["low", "medium", "high", "xhigh"], "medium"));
-  const [accessToken, setAccessToken] = useState("");
   const conversationActionRef = useRef(false);
 
   const { theme, toggleTheme } = useTheme();
@@ -91,7 +90,7 @@ function App() {
     isRunning,
     mode: inferenceMode,
     retrievalBackend: retrieval.backend,
-    provider, model, reasoningEffort, accessToken,
+    provider, model, reasoningEffort,
     steering: toolControl.payload,
     showDebugTrace: SHOW_DEBUG_TRACE,
     ensureActiveConversation,
@@ -196,7 +195,7 @@ function App() {
   const handleSubmit = async (event) => {
     event?.preventDefault();
     if ((!question.trim() && !readyAttachments.length) || !retrieval.ready || !provider ||
-      (provider === "openai" && !accessToken.trim()) || (inferenceMode === "central" && toolControl.overBudget) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
+      (inferenceMode === "central" && toolControl.overBudget) || isBusy || stream.isBusy() || uploads.isBusy() || conversationActionRef.current) return;
 
     const pending = question;
     setQuestion("");
@@ -225,11 +224,10 @@ function App() {
         mode={inferenceMode} onModeChange={setInferenceMode}
         retrievalBackend={retrieval.backend} availableBackends={retrieval.available} onRetrievalBackendChange={retrieval.setBackend}
         provider={provider} providers={providers} model={model} reasoningEffort={reasoningEffort}
-        accessToken={accessToken} onAccessTokenChange={setAccessToken}
         onProviderChange={(value) => { setSelectedProvider(value); savePreference("inference-provider", value); }}
         onModelChange={(value) => { setModel(value); savePreference("openai-model", value); }}
         onReasoningChange={(value) => { setReasoningEffort(value); savePreference("openai-reasoning", value); }}
-        canSubmit={!!provider && (provider !== "openai" || !!accessToken.trim())}
+        canSubmit={!!provider}
         toolControl={toolControl}
         isRunning={isRunning} isUploading={isUploading}
         disabled={isLoading || isDeletingConversation || !retrieval.ready || (inferenceMode === "central" && toolControl.overBudget)} hasAttachments={readyAttachments.length > 0} />
@@ -274,6 +272,11 @@ function App() {
           </div>
 
           <div className="chat-header-actions">
+            {retrieval.capabilities.authentication?.enabled && (
+              <form method="post" action="/auth/logout">
+                <button type="submit" className="composer-mode-trigger">Đăng xuất</button>
+              </form>
+            )}
             <button type="button" className="icon-button" onClick={toggleTheme} title="Đổi giao diện" aria-label={`Chuyển sang giao diện ${theme === "dark" ? "sáng" : "tối"}`}>
               {theme === "dark" ? <Sun /> : <Moon />}
             </button>

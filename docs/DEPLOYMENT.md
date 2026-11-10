@@ -1,117 +1,49 @@
-# Chạy và triển khai Modal
+# Triển khai Sử Việt trên Modal
 
-[`modal_app.py`](../modal_app.py) đọc `.env` tại root trước khi tạo cấu hình; biến môi trường terminal có ưu tiên cao hơn. Chạy lệnh từ root repository với Modal CLI trong Python environment đã cài dependencies.
+Một function ASGI `fastapi_app` phục vụ giao diện React và API tại cùng một URL HTTPS. Không cần backend URL riêng hay máy local sau khi chạy `modal deploy`. Mọi API, `/ready`, tài liệu API và giao diện đều yêu cầu phiên đăng nhập; `/health` chỉ là liveness công khai. Modal bắt buộc `AUTH_ENABLED=true`, và ứng dụng từ chối khởi động khi thiếu hoặc sai secret. Các endpoint cũ từ triển khai trước cần được xóa hoặc dừng riêng trên Modal Dashboard; deploy mới không tự xóa app cũ có tên khác.
 
-## Tài nguyên và cấu hình
+## Chuẩn bị
 
-Đối với lane OpenAI nội bộ, tạo Modal Secret chứa OPENAI_API_KEY và OPENAI_ACCESS_TOKEN rồi đặt tên secret vào MODAL_OPENAI_SECRET_NAME. Đặt OPENAI_ENABLED=true và OPENAI_TRUSTED_INTERNAL_ONLY=true chỉ sau khi triển khai gateway xác thực, TLS và quota bền vững; xem [cấu hình bảo mật](CONFIGURATION.md#openai-responses-api). SQLite quota là lớp bổ sung và không bảo đảm đồng bộ giữa các Modal replicas. LOCAL_INFERENCE_ENABLED=false chọn CPU cho fastapi_app và không tải Qwen; E5/reranker và corpus vẫn phải có. Cấu hình mặc định tiếp tục dùng GPU và local model.
+1. Đăng nhập Modal, tạo/khôi phục các Volume `vn-history-artifacts`, `vn-history-hf-cache` và `vn-history-chat-data` theo [Artifacts](ARTIFACTS.md). Corpus và index V1 phải có sẵn. SQLite hội thoại và phiên lưu trên `/data`; deployment giới hạn một container. Không chạy nhiều replicas dùng cùng SQLite trên Modal Volume.
+2. Tạo secret mật khẩu bằng lệnh sau trong PowerShell tại root repo, sau khi cài dependencies runtime và Modal CLI:
 
-Smoke test tùy chọn có tính phí: trong mạng nội bộ đã bảo vệ, tạo conversation như ví dụ cuối tài liệu, rồi gửi /api/v1/chat với provider là openai, model là gpt-6-luna, reasoning_effort là medium và header Authorization chứa token dịch vụ. Kiểm tra câu trả lời có nguồn, sau đó thử gpt-6.1-terra và Central với công cụ được phép. Không đưa API key OpenAI vào HTTP request từ browser. CI dùng fake responses và không yêu cầu key.
+   ```powershell
+   python scripts/create_modal_auth_secret.py
+   ```
 
-| Thuộc tính | Mặc định entrypoint |
-| --- | --- |
-| App / functions | `vn-history-rag-api` / GPU `fastapi_app` và CPU `frontend_app` |
-| Engine / mode | Transformers, `APP_MODE=full`, Hybrid và Central đều bật |
-| GPU / CPU / RAM | GPU qua `MODAL_GPU_CLASS`; ví dụ dưới dùng `A100-40GB` / 4 CPU / 32 GiB |
-| Container / HTTP inputs | Tối thiểu 0, tối đa 1 container; `MODAL_MAX_INPUTS=1` |
-| Timeouts | Invocation 600 s, startup 900 s |
-| Scale down | 120 s; override `CENTRAL_SCALEDOWN_WINDOW_SECONDS` |
-| Artifact Volume | `vn-history-artifacts` → `/artifacts` |
-| Model cache Volume | `vn-history-hf-cache` → `/hf-cache` |
-| Conversation Volume | `vn-history-chat-data` → `/data`, SQLite `/data/chat.sqlite3` |
-| Corpus | `/artifacts/corpus_v1/chunks.jsonl` |
-| Retrieval / runtime metadata | `/artifacts/corpus_v1/retrieval`, `/artifacts/corpus_v1/runtime` |
-| SFT adapter | `/artifacts/models/qwen3_4b_sft_v1/run_best_b4_ga4_e2/adapter` |
+   Nhập mật khẩu riêng hai lần tại prompt ẩn, tối thiểu 12 ký tự. Script tạo hash Argon2id và secret ký session ngẫu nhiên, rồi gửi trực tiếp vào Modal Secret `vn-history-auth`; không đưa mật khẩu vào lệnh, lịch sử shell, Git hoặc chat. Có thể đặt tên khác bằng `--name` và cấu hình `MODAL_AUTH_SECRET_NAME` tương ứng. Nếu đã có secret cùng tên, tạo secret tên mới để xoay vòng.
+3. Để bật OpenAI, tạo Modal Secret riêng `vn-history-openai` chứa `OPENAI_API_KEY` qua Modal Dashboard, và đặt các biến không bí mật sau trong `.env` (file này được gitignore):
 
-Artifact/cache Volumes phải có sẵn; conversation Volume có thể được tạo khi chưa có. Base weights thiếu có thể được tải về cache. Các đường dẫn, `DEVICE=cuda`, `DTYPE=bfloat16`, greedy decoding, Central budgets và một số built-in flags được entrypoint đặt trực tiếp; không phải mọi biến trong `.env` đều được chuyển vào container.
+   ```dotenv
+   OPENAI_ENABLED=true
+   MODAL_OPENAI_SECRET_NAME=vn-history-openai
+   MODAL_AUTH_SECRET_NAME=vn-history-auth
+   MODAL_GPU_CLASS=A100-40GB
+   ```
 
-Đặt `MODAL_GPU_CLASS=A100-40GB` trong `.env` cho cấu hình chạy đồng thời hai model ở hướng dẫn này; fallback trong bản main là `L4`, phù hợp các benchmark một model hơn là cấu hình combined trong ví dụ này. Benchmark helper mặc định L4 và chỉ chạy một model.
+   Chỉ nhập key trong giao diện Secret an toàn, không đưa vào code, frontend hay command line. Không cần `OPENAI_ACCESS_TOKEN` cho người dùng đã đăng nhập. OpenAI có giới hạn request, concurrency và số output token; hãy đặt budget tài khoản OpenAI phù hợp. Một số cấu hình legacy service-to-service vẫn yêu cầu token riêng; xem [cấu hình](CONFIGURATION.md#openai-responses-api).
+4. FAISS là mặc định. Để thêm Qdrant, tạo Secret chứa `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION`, chọn `RETRIEVAL_AVAILABLE_BACKENDS=faiss,qdrant` và `MODAL_QDRANT_SECRET_NAME`. Không sửa collections hiện có. Để dùng vLLM, xem [vLLM](VLLM_LATENCY_EXPERIMENTS.md): runtime hiện chỉ hỗ trợ một trong hai chat mode cùng lúc. Transformers hỗ trợ cả Hybrid và Central.
 
-CPU frontend dùng 0,5 CPU, 512 MiB, timeout 600 s, 0..2 containers và tối đa 30 inputs/container. [`Dockerfile.frontend`](../Dockerfile.frontend) build React bằng Node 24 rồi phục vụ static assets/proxy bằng Python, không chứa corpus hoặc model.
-
-Các override được hỗ trợ gồm `MODAL_APP_NAME`, `MODAL_GPU_CLASS`, `MODAL_MAX_INPUTS`, `INFERENCE_BACKEND`, `MODAL_RUNTIME_IMAGE`, `MODEL_VARIANT`, `HYBRID_MAX_NEW_TOKENS`, loading strategy, model revisions, dense backend/available backends, MCP, `MODAL_GPU_API_URL` và `MODAL_OBSERVABILITY_SECRET_NAME`. Xem entrypoint trước khi thêm override khác. `MODAL_SERVER_URL` là cấu hình Modal client tùy chọn, không phải URL API chatbot.
-
-## Chuẩn bị một lần
-
-```powershell
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-modal token new
-modal volume list --json
-modal secret list --json
-```
-
-Chỉ chạy `modal token new` khi chưa đăng nhập. Khôi phục/upload artifacts theo [Artifacts](ARTIFACTS.md) nếu Volume chưa có dữ liệu; không cần upload lại mỗi lần serve.
-
-FAISS-only không cần Qdrant Secret. Muốn bật cả hai dense backend, đặt `.env`:
-
-```dotenv
-MODAL_GPU_CLASS=A100-40GB
-RETRIEVAL_DENSE_BACKEND=faiss
-RETRIEVAL_AVAILABLE_BACKENDS=faiss,qdrant
-MODAL_QDRANT_SECRET_NAME=vn-history-qdrant
-```
-
-Secret phải tồn tại và chứa `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION`. Tạo/cập nhật Secret qua Modal với credentials riêng. Entrypoint tham chiếu Secret ngay khi chọn Qdrant trong available backends; thiếu Secret/required keys có thể chặn deploy trước khi runtime kiểm tra optional lane. Collection và manifest phải khớp V1.
-
-Đổi Hybrid vanilla/SFT bằng `MODEL_VARIANT=vanilla` hoặc `sft` rồi restart/redeploy. Entrypoint tự đặt adapter path trên Volume. Central vẫn vanilla. `HYBRID_MAX_NEW_TOKENS` được chuyển nếu override, còn mặc định lấy từ Settings. MCP mặc định tắt; xem [Tools/MCP](TOOLS_AND_MCP.md) cho config và `MODAL_MCP_SECRET_NAME`.
-
-## Development và deployment
-
-```powershell
-modal serve modal_app.py
-```
-
-Dùng URL CLI trả về; `Ctrl+C` kết thúc phiên development. Đặt URL đó vào `VITE_API_BASE_URL` của `frontend/.env` và restart Vite.
-
-Để triển khai endpoint lâu dài:
+## Deploy và sử dụng
 
 ```powershell
 modal deploy modal_app.py
 modal app logs vn-history-rag-api --since 2h
 ```
 
-Lần deploy đầu in hai endpoint. Đặt URL **GPU `fastapi_app`** vào root `.env` hoặc shell, rồi deploy lại để cấu hình gateway:
+Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. `A100-40GB` được đề xuất cho cấu hình Transformers kết hợp hai model; kiểm tra quota và giá Modal trước khi sử dụng. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` chọn CPU, không tải Qwen, nhưng vẫn cần corpus và retrieval models; chế độ đó chỉ phục vụ inference từ xa.
+
+Đăng xuất bằng nút trong giao diện. Cookie HttpOnly/Secure/SameSite=Lax hết hạn sau tối đa bảy ngày; khi hết hạn cần đăng nhập lại. Sau năm lần nhập sai, đăng nhập bị giới hạn 15 phút; giới hạn và session lưu cùng SQLite để tồn tại qua restart. Xoay mật khẩu bằng cách tạo Modal Secret mới với `python scripts/create_modal_auth_secret.py --name TEN_MOI`, đổi `MODAL_AUTH_SECRET_NAME` và deploy lại; secret ký mới vô hiệu hóa các session cũ. Sau khi kiểm tra, có thể xóa secret cũ trên Dashboard.
+
+## Kiểm tra
+
+Ở cửa sổ riêng tư chưa đăng nhập, `/` phải chuyển đến `/login`, còn `/ready`, `/api/v1/conversations`, `/docs`, `/openapi.json` phải trả 401. Kiểm tra trên Dashboard không còn endpoint cũ truy cập trực tiếp không xác thực. Đăng nhập rồi thử tạo hội thoại, Hybrid, Central, stream và Stop; thử cả Luna/Terra và reasoning với OpenAI. Các request OpenAI thực tính phí. Các model, Qdrant và GPU chỉ khả dụng khi tài khoản và tài nguyên tương ứng đã được cấu hình; lỗi model/quota được báo thay vì tự chuyển provider. Monitoring vẫn yêu cầu admin token riêng.
+
+Các lệnh chẩn đoán (GPU smoke có thể tính phí):
 
 ```powershell
-$env:MODAL_GPU_API_URL = 'https://YOUR-GPU-FUNCTION.modal.run'
-modal deploy modal_app.py
-```
-
-Mở URL **CPU `frontend_app`** để dùng UI trên cloud. `VITE_API_BASE_URL` rỗng trong image dùng same-origin `/api/v1`; không cần frontend process local. Đổi GPU URL cần redeploy frontend function. Gateway chuyển uploads, owner/auth headers, lỗi HTTP và SSE; timeout upstream trả 504, lỗi kết nối trả 502, chưa cấu hình URL trả 503.
-
-`/health` trên CPU kiểm tra gateway và `backend_configured`; nó không phải health của GPU. `/ready` trên CPU proxy tới GPU. Kiểm tra JSON readiness và một request thực tế; Central lazy có thể thêm thời gian tải model vào câu hỏi đầu.
-
-Để chạy image CPU riêng:
-
-```powershell
-docker build -f Dockerfile.frontend -t vn-history-ui .
-docker run --rm -p 8080:8000 -e MODAL_GPU_API_URL='https://YOUR-GPU-FUNCTION.modal.run' vn-history-ui
-```
-
-Serving summary tùy chọn cần Secret chứa `OBSERVABILITY_ADMIN_TOKEN`; đặt `MODAL_OBSERVABILITY_SECRET_NAME` rồi redeploy. Lấy summary bằng Bearer token từ môi trường admin, không đưa vào frontend bundle. Xem [Telemetry](RUNTIME_TELEMETRY.md).
-
-## Smoke test và kiểm tra Volume
-
-```powershell
-New-Item -ItemType Directory -Force reports/restore | Out-Null
 modal volume ls vn-history-artifacts /corpus_v1/runtime --json
 modal run --detach --write-result reports/restore/runtime_smoke.json modal_app.py::runtime_smoke --generate --central
-modal run --write-result reports/restore/qdrant_smoke.json scripts/modal_qdrant_smoke.py::qdrant_smoke
 ```
 
-GPU smoke có thể khởi tạo tài nguyên tính phí. `runtime_smoke` dùng database tạm, đọc V1 và kiểm tra retrieval/generation; Qdrant smoke kiểm tra count/schema và mẫu payload/vector. Đây là kiểm tra vận hành, không phải benchmark chất lượng hay xác minh toàn bộ remote vectors.
-
-Với endpoint đã chạy:
-
-```powershell
-$base = 'https://YOUR-ENDPOINT.modal.run'
-Invoke-RestMethod "$base/ready"
-$headers = @{'X-Client-ID'='terminal-smoke'}
-$c = Invoke-RestMethod -Method Post -Uri "$base/api/v1/conversations" -Headers $headers -ContentType 'application/json' -Body '{}'
-$body = @{conversation_id=$c.id; question='Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?'; mode='hybrid'; retrieval_backend='faiss'; final_k=3} | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$base/api/v1/chat" -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
-```
-
-Timeout client cần đủ cho cold startup và request. Đo latency dùng [HTTP/SSE benchmark](BENCHMARKS.md), không lấy thời gian tải model hoặc CLI smoke làm answer TTFT.
-
-vLLM cần image riêng và triển khai một chat mode; helper benchmark mặc định L4, tách biệt cấu hình combined đã chọn A100 ở đây. Xem [vLLM](VLLM_LATENCY_EXPERIMENTS.md).
+Không gửi mật khẩu, cookie, key hoặc secret vào logs hay ảnh chụp màn hình. Nếu deployment lỗi, kiểm tra secret bắt buộc, artifacts, quota GPU, model access và log đã loại bỏ dữ liệu nhạy cảm. `modal serve` chỉ là phiên phát triển tạm thời.

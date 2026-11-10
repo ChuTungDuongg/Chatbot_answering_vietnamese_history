@@ -28,7 +28,9 @@ try:
 except (OSError, subprocess.SubprocessError):
     deployment_commit = ""
 source_digest = hashlib.sha256()
-source_files = sorted([*repo_root.glob("app/**/*.py"), repo_root / "modal_app.py",
+source_files = sorted([*repo_root.glob("app/**/*.py"), *repo_root.glob("app/**/*.html"),
+                       *repo_root.glob("frontend/src/**/*"), repo_root / "frontend/index.html",
+                       repo_root / "frontend/package-lock.json", repo_root / "modal_app.py",
                        repo_root / "Dockerfile", repo_root / "Dockerfile.vllm",
                        *repo_root.glob("requirements*.txt")])
 for source_path in source_files:
@@ -65,6 +67,11 @@ runtime_secrets = (
     if web_search_secret_name
     else []
 )
+auth_secret_name = os.getenv("MODAL_AUTH_SECRET_NAME", "vn-history-auth").strip()
+if not auth_secret_name:
+    raise ValueError("MODAL_AUTH_SECRET_NAME must identify a configured authentication Secret")
+runtime_secrets.append(modal.Secret.from_name(
+    auth_secret_name, required_keys=["AUTH_PASSWORD_HASH", "AUTH_SESSION_SECRET"]))
 if "qdrant" in [name.strip() for name in available_backends.split(",")]:
     if not qdrant_secret_name:
         raise ValueError("Qdrant requires MODAL_QDRANT_SECRET_NAME")
@@ -79,7 +86,7 @@ if observability_secret_name:
 openai_secret_name = os.getenv("MODAL_OPENAI_SECRET_NAME", "").strip()
 if openai_secret_name:
     runtime_secrets.append(modal.Secret.from_name(
-        openai_secret_name, required_keys=["OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN"]))
+        openai_secret_name, required_keys=["OPENAI_API_KEY"]))
 
 image = modal.Image.from_dockerfile(
     str(repo_root / ("Dockerfile.vllm" if runtime_image == "vllm" else "Dockerfile")),
@@ -88,6 +95,7 @@ image = modal.Image.from_dockerfile(
     {
         "APP_ENV": "production",
         "APP_MODE": "full",
+        "AUTH_ENABLED": "true",
         "DEVICE": "cuda" if local_inference_enabled else "cpu",
         "DTYPE": "bfloat16" if local_inference_enabled else "float32",
         "LOCAL_INFERENCE_ENABLED": str(local_inference_enabled).lower(),
@@ -158,22 +166,6 @@ if mcp_enabled:
     image = image.add_local_file(str(mcp_config_path), "/etc/vn-history/mcp_servers.json", copy=True)
 
 
-# Static React assets and an SSE-preserving API reverse proxy run on cheap CPU.
-# They do not load PyTorch, model weights, Qdrant or the RAG corpus.
-frontend_image = modal.Image.from_dockerfile(
-    str(repo_root / "Dockerfile.frontend"), context_dir=str(repo_root)
-).env({"MODAL_GPU_API_URL": os.getenv("MODAL_GPU_API_URL", "")})
-
-
-@app.function(image=frontend_image, cpu=0.5, memory=512, timeout=600,
-              min_containers=0, max_containers=2)
-@modal.concurrent(max_inputs=30)
-@modal.asgi_app()
-def frontend_app():
-    from frontend_server.server import gateway
-    return gateway
-
-
 @app.function(
     image=image,
     gpu=os.getenv("MODAL_GPU_CLASS", "L4") if local_inference_enabled else None,
@@ -200,7 +192,8 @@ def fastapi_app():
 
 
 @app.function(
-    image=image, gpu=os.getenv("MODAL_GPU_CLASS", "L4"), cpu=4.0, memory=32768, timeout=1800,
+    image=image, gpu=os.getenv("MODAL_GPU_CLASS", "L4") if local_inference_enabled else None,
+    cpu=4.0, memory=32768, timeout=1800,
     startup_timeout=900,
     volumes={"/artifacts": artifacts, "/hf-cache": hf_cache},
     secrets=runtime_secrets,
@@ -223,7 +216,10 @@ def runtime_smoke(generate: bool = False, central: bool = False,
 
     if str(settings.corpus_path) != "/artifacts/corpus_v1/chunks.jsonl":
         raise RuntimeError("Modal smoke resolved a non-V1 corpus")
-    with TestClient(api) as client:
+    from app.security.auth import COOKIE_NAME
+    with TestClient(api, base_url="https://testserver") as client:
+        client.cookies.set(COOKIE_NAME, api.state.auth_manager.create_session())
+        client.headers.update({"Origin": "https://testserver"})
         ready = client.get("/ready").json()
         if not ready.get("ready") or ready.get("corpus_chunks") != 624288:
             raise RuntimeError(f"V1 readiness failed: {ready}")

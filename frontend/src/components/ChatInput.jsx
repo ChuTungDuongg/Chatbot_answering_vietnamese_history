@@ -18,8 +18,8 @@ function ChatInput({
   retrievalBackend,
   availableBackends,
   onRetrievalBackendChange,
-  provider, providers, model, reasoningEffort, accessToken,
-  onProviderChange, onModelChange, onReasoningChange, onAccessTokenChange,
+  provider, providers, model, reasoningEffort,
+  onProviderChange, onModelChange, onReasoningChange,
   canSubmit = true,
   toolControl,
   isRunning,
@@ -135,11 +135,6 @@ function ChatInput({
               <option value="low">Low</option><option value="medium">Medium</option>
               <option value="high">High</option><option value="xhigh">Very High</option>
             </select>
-          </label>
-          <label>Token truy cập dịch vụ
-            <input type="password" aria-label="Token truy cập dịch vụ" autoComplete="off"
-              value={accessToken} disabled={disabled || isRunning}
-              onChange={(event) => onAccessTokenChange(event.target.value)} />
           </label>
         </>}
         {mode === "central" && <ToolSteering control={toolControl} disabled={isRunning || isUploading} />}

@@ -4,8 +4,7 @@
 
 ```mermaid
 flowchart TD
-    UI[React / Vite] --> GW[Modal CPU frontend gateway]
-    GW --> API[Modal GPU FastAPI REST và SSE]
+    UI[React / Vite] --> API[Modal FastAPI: authentication, REST và SSE]
     LOCAL[Local Vite] --> API
     API --> H[Hybrid runtime]
     API --> C[Central runtime]
@@ -25,7 +24,7 @@ flowchart TD
     API --> DB[SQLite hội thoại / messages / attachments]
 ```
 
-Trên Modal, React build và reverse proxy ở function CPU `frontend_app`; API/model ở function GPU `fastapi_app`, cùng một Modal App. Browser gọi cùng origin; gateway chuyển `/api/v1/*` và `/ready`, giữ HTTP status và stream SSE không buffer toàn bộ answer. Mở trang tĩnh không tải model, nhưng API bootstrap của UI có thể đánh thức GPU. Local Vite vẫn có thể gọi API trực tiếp.
+Trên Modal, React được build vào image và cùng FastAPI chạy tại `fastapi_app`: một URL HTTPS, session cookie HttpOnly và kiểm tra đăng nhập phía server cho API và giao diện. SSE được truyền trực tiếp. Có thể chọn CPU cho OpenAI-only hoặc GPU cho Qwen; local Vite vẫn hỗ trợ cấu hình backend riêng.
 
 ## Trách nhiệm các thành phần
 
@@ -44,7 +43,7 @@ Trên Modal, React build và reverse proxy ở function CPU `frontend_app`; API/
 | [`app/tools/`](../app/tools/), [`app/mcp/`](../app/mcp/) | Built-in tools, request tool policy, MCP discovery/client lifecycle. |
 | [`app/chat/`](../app/chat/) | SQLite store và xử lý/tìm kiếm tài liệu upload. |
 | [`app/telemetry.py`](../app/telemetry.py), [`app/observability.py`](../app/observability.py) | Request spans, structured logs và process-local serving metrics. |
-| [`frontend_server/server.py`](../frontend_server/server.py) | Static React build và streaming API gateway CPU. |
+| [`app/security/auth.py`](../app/security/auth.py) | Xác thực chủ sở hữu, session, CSRF và giới hạn đăng nhập. |
 
 API gọi runtime; runtime gọi retriever/model/tool. Model engine không đọc index. `benchmarks/`, `evaluation/`, `training/` là các workflow offline, không chạy khi ứng dụng startup.
 
