@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from typing import Any, AsyncIterator
 
@@ -133,6 +134,9 @@ class CitationFilter:
             end = self.pending.find("]")
             if end < 0:
                 if final or len(self.pending) > 512:
+                    # Preserve prose after an unmatched bracket without
+                    # emitting something that could later form a citation.
+                    output.append(self.pending[1:])
                     self.pending = ""
                 break
             reference = self.pending[1:end]
@@ -440,13 +444,16 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
             return
         if completed is None:
             raise RuntimeError("Model generation ended without completion metadata")
-        if payload.provider == "openai":
-            completed = replace(completed, first_token_ns=delta_times[0] if delta_times else None)
         if citations:
             tail = citations.feed("", final=True)
             if tail:
                 answer_parts.append(tail)
+                delta_times.append(time.perf_counter_ns())
+                if "first_answer_delta_sent" not in trace.marks_ns:
+                    trace.mark("first_answer_delta_sent")
                 yield "answer_delta", {"delta": tail}
+        if payload.provider == "openai":
+            completed = replace(completed, first_token_ns=delta_times[0] if delta_times else None)
         trace.mark("generation_started", completed.started_ns)
         if completed.first_token_ns is not None:
             trace.mark("first_model_token", completed.first_token_ns)

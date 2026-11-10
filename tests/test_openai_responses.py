@@ -293,6 +293,7 @@ def test_citation_filter_handles_split_and_unknown_references():
     assert filt.feed("Dẫn [c") == "Dẫn "
     assert filt.feed("1], sai [made") == "[c1], sai "
     assert filt.feed("up] và [s1].") == " và [s1]."
+    assert filt.feed(" [unclosed", final=True) == " unclosed"
 
 
 @pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6.1-terra"])
