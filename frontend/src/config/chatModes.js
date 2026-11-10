@@ -7,12 +7,12 @@ export const CHAT_MODES = Object.freeze([
   Object.freeze({
     value: ChatMode.HYBRID,
     label: "Hybrid RAG",
-    description: "Truy xuất tư liệu + Qwen3-4B",
+    description: "Truy xuất tư liệu và trả lời có nguồn",
   }),
   Object.freeze({
     value: ChatMode.CENTRAL,
     label: "Central Agent",
-    description: "Qwen3-8B gọi công cụ để tìm tư liệu",
+    description: "Lập kế hoạch và dùng công cụ tìm tư liệu",
   }),
 ]);
 

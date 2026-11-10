@@ -33,6 +33,8 @@ modal app logs vn-history-rag-api --since 2h
 
 Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. `A100-40GB` được đề xuất cho cấu hình Transformers kết hợp hai model; kiểm tra quota và giá Modal trước khi sử dụng. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` chọn CPU, không tải Qwen, nhưng vẫn cần corpus và retrieval models; chế độ đó chỉ phục vụ inference từ xa.
 
+Mặc định Modal là CPU-only (`LOCAL_INFERENCE_ENABLED=false`); cần bật OpenAI và tạo secret trước khi dùng chat. Khi thực sự cần Qwen, đặt `LOCAL_INFERENCE_ENABLED=true` và `MODAL_GPU_CLASS=A100-40GB` trong `.env`, rồi deploy lại. Đổi về `false` và deploy lại để ngừng cấp GPU cho các lần khởi động tiếp theo. CPU vẫn tải E5/reranker và có chi phí tài nguyên khi hoạt động.
+
 Đăng xuất bằng nút trong giao diện. Cookie HttpOnly/Secure/SameSite=Lax hết hạn sau tối đa bảy ngày; khi hết hạn cần đăng nhập lại. Sau năm lần nhập sai, đăng nhập bị giới hạn 15 phút; giới hạn và session lưu cùng SQLite để tồn tại qua restart. Xoay mật khẩu bằng cách tạo Modal Secret mới với `python scripts/create_modal_auth_secret.py --name TEN_MOI`, đổi `MODAL_AUTH_SECRET_NAME` và deploy lại; secret ký mới vô hiệu hóa các session cũ. Sau khi kiểm tra, có thể xóa secret cũ trên Dashboard.
 
 ## Kiểm tra

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getRetrievalCapabilities } from "../services/api.js";
 import { normalizeRetrievalBackend, readRetrievalPreference, RETRIEVAL_STORAGE_KEY } from "../config/retrievalBackends.js";
 
-export function useRetrievalBackend() {
+export function useRetrievalBackend(mode) {
   const [capabilities, setCapabilities] = useState({ available_backends: [] });
   const [selected, setSelected] = useState(readRetrievalPreference);
   const [error, setError] = useState("");
@@ -18,7 +18,9 @@ export function useRetrievalBackend() {
     });
     return () => controller.abort();
   }, []);
-  const backend = normalizeRetrievalBackend(selected, capabilities);
+  const preferred = !selected && mode === "central" && capabilities.available_backends.includes("qdrant")
+    ? "qdrant" : selected;
+  const backend = normalizeRetrievalBackend(preferred, capabilities);
   useEffect(() => {
     if (backend) {
       try { window.localStorage.setItem(RETRIEVAL_STORAGE_KEY, backend); } catch { /* Storage may be blocked. */ }

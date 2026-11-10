@@ -26,8 +26,8 @@ test("mode contract exposes exactly Hybrid RAG and Central Agent", () => {
     { value: "central", label: "Central Agent" },
   ]);
   assert.deepEqual(CHAT_MODES.map((item) => item.description), [
-    "Truy xuất tư liệu + Qwen3-4B",
-    "Qwen3-8B gọi công cụ để tìm tư liệu",
+    "Truy xuất tư liệu và trả lời có nguồn",
+    "Lập kế hoạch và dùng công cụ tìm tư liệu",
   ]);
 });
 

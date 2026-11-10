@@ -141,4 +141,4 @@ class ToolRegistry:
                 },
             )
             return None, ToolCallRecord(name=name, arguments={} if provider == "mcp" else dict(arguments),
-                error="MCP tool failed" if provider == "mcp" else str(exc), provider=provider, server=server)
+                error="MCP tool failed" if provider == "mcp" else "tool_failed", provider=provider, server=server)

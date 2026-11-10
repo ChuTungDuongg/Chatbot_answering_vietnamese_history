@@ -14,7 +14,7 @@ if modal.is_local():
     load_dotenv(repo_root / ".env", override=False, encoding="utf-8")
 
 inference_backend = os.getenv("INFERENCE_BACKEND", "transformers")
-local_inference_enabled = os.getenv("LOCAL_INFERENCE_ENABLED", "true").lower() == "true"
+local_inference_enabled = os.getenv("LOCAL_INFERENCE_ENABLED", "false").lower() == "true"
 runtime_image = os.getenv("MODAL_RUNTIME_IMAGE", inference_backend)
 if inference_backend not in {"transformers", "vllm"} or runtime_image not in {"transformers", "vllm"}:
     raise ValueError("Inference backend and Modal runtime image must be transformers or vllm")
@@ -208,7 +208,8 @@ def fastapi_app():
 )
 
 def runtime_smoke(generate: bool = False, central: bool = False,
-                  question: str = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?") -> str:
+                  question: str = "Chiến thắng Bạch Đằng năm 938 có ý nghĩa gì?",
+                  retrieval_backend: str = "") -> str:
     """Exercise real V1 retrieval and optionally Hybrid/Central generation once."""
     import json
     import logging
@@ -231,21 +232,28 @@ def runtime_smoke(generate: bool = False, central: bool = False,
         ready = client.get("/ready").json()
         if not ready.get("ready") or ready.get("corpus_chunks") != 624288:
             raise RuntimeError(f"V1 readiness failed: {ready}")
-        response = client.post("/api/v1/retrieve", json={"question": question, "final_k": 3})
-        response.raise_for_status()
-        retrieval = response.json()
-        if retrieval.get("is_ood") or not retrieval.get("final_context"):
-            raise RuntimeError("Historical smoke question returned no V1 evidence")
+        options = {"retrieval_backend": retrieval_backend} if retrieval_backend else {}
+        from app.central.planning import question_domain
+        retrieval = {"skipped": "external question"}
+        if question_domain(question) != "external":
+            response = client.post("/api/v1/retrieve", json={"question": question, "final_k": 3, **options})
+            response.raise_for_status()
+            retrieval = response.json()
+            if retrieval.get("is_ood") or not retrieval.get("final_context"):
+                raise RuntimeError("Historical smoke question returned no V1 evidence")
         result = {"corpus_path": str(settings.corpus_path), "ready": ready,
                   "question": question, "retrieval": retrieval, "generation": {}}
         if generate:
             headers = {"X-Client-ID": "modal-restore-smoke"}
-            for mode in (["hybrid", "central"] if central else ["hybrid"]):
+            modes = (["central"] if question_domain(question) == "external" else
+                     ["hybrid", "central"] if central else ["hybrid"])
+            for mode in modes:
                 conversation = client.post("/api/v1/conversations", headers=headers, json={})
                 conversation.raise_for_status()
                 response = client.post("/api/v1/chat", headers=headers, json={
                     "conversation_id": conversation.json()["id"], "question": question,
-                    "mode": mode, "final_k": 3})
+                    "mode": mode, "final_k": 3, **options,
+                    "provider": "local" if settings.local_inference_enabled else "openai"})
                 if response.is_error:
                     raise RuntimeError(f"{mode} HTTP {response.status_code}: {response.text}")
                 response.raise_for_status()

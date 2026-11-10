@@ -56,7 +56,7 @@ OpenAI mặc định tắt. Modal bắt buộc xác thực bằng mật khẩu; 
 | OPENAI_MAX_OUTPUT_TOKENS | 25000 mỗi model call, bao gồm reasoning |
 | OPENAI_MAX_REQUESTS_PER_HOUR / OPENAI_MAX_REQUESTS_PER_DAY | 20 / 100 trên database |
 | OPENAI_MAX_CONCURRENT_REQUESTS | 2 trên database |
-| LOCAL_INFERENCE_ENABLED | true; đặt false để tránh tải Qwen |
+| LOCAL_INFERENCE_ENABLED | `true` trong Settings local; `.env.example` và Modal mặc định `false` để tránh tải Qwen và cấp GPU |
 
 Central có thể gọi model tới số action rounds đã cấu hình cộng một lần sinh cuối; giới hạn token áp dụng cho từng lần gọi. High và Very High có thể tăng thời gian và chi phí. API trả incomplete nếu hết budget và ứng dụng không lưu answer đó. Requests dùng store=false; điều này không tự tạo bảo đảm Zero Data Retention cho tài khoản. Model access, quota và chính sách dữ liệu phải được xác minh với tài khoản OpenAI.
 

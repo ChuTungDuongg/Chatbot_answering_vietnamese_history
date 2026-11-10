@@ -8,6 +8,7 @@ from app.rag.prompting import build_messages
 from app.rag.schemas import PreparedAnswer
 from app.rag.retriever import Retriever
 from app.rag.progress import StageProgress, ProgressCallback
+from app.security.guardrails import guard_question, safe_contexts
 
 
 class HybridRuntime:
@@ -27,6 +28,7 @@ class HybridRuntime:
                       attachment_ids: tuple[str, ...] = (),
                       retrieval_backend: str | None = None, progress: ProgressCallback | None = None,
                       **_: Any) -> PreparedAnswer:
+        guard_question(question)
         if trace:
             trace.mark("retrieval_started")
         retrieval_started = time.perf_counter_ns()
@@ -42,6 +44,7 @@ class HybridRuntime:
                     question, top_k, attachment_ids,
                 )
             contexts.extend({**chunk, "source_kind": "attachment"} for chunk in attached)
+        contexts = safe_contexts(contexts)
         retrieval_ms = (time.perf_counter_ns() - retrieval_started) / 1e6
         if trace:
             trace.mark("retrieval_finished")

@@ -71,6 +71,16 @@ test("unavailable OpenAI is disabled", async () => {
   expect(screen.queryByLabelText("Model OpenAI")).not.toBeInTheDocument();
 });
 
+test("CPU-only deployment selects OpenAI when a saved local provider is unavailable", async () => {
+  localStorage.setItem("inference-provider", "local");
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "qdrant", available_backends: ["qdrant"],
+    providers: { local: { available: false }, openai: { available: true } } });
+  render(<App />);
+  await waitFor(() => expect(screen.getByLabelText("Nhà cung cấp")).toHaveValue("openai"));
+  expect(screen.getByLabelText("Model OpenAI")).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Local Qwen" })).toBeDisabled();
+});
+
 test("composer keeps inference modes and ignores stored response detail", async () => {
   window.localStorage.setItem("vn-history-response-mode", "detailed");
   const readStorage = vi.spyOn(Storage.prototype, "getItem");

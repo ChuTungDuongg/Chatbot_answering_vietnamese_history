@@ -33,10 +33,14 @@ def question_domain(question: str) -> str:
     """Only explicit domain cues are constrained; ambiguous queries stay with the planner."""
     value = unicodedata.normalize("NFD", question.casefold())
     value = "".join(c for c in value if not unicodedata.combining(c)).replace("đ", "d")
-    vietnam = re.search(r"\b(viet nam|vietnam|vietnamese|dai viet|su viet|van lang|au lac)\b", value)
+    vietnam = re.search(r"\b(viet nam|vietnam|vietnamese|dai viet|su viet|van lang|au lac|"
+                        r"bach dang|ngo quyen|tran hung dao|nha tran|nha ly|nha le|"
+                        r"hai ba trung|quang trung|dien bien phu)\b", value)
     external = re.search(
         r"\b(the gioi|world history|global history|chien tranh lanh|cold war|"
-        r"chau au|chau my|chau phi|europe|roman empire|la ma|hy lap|"
+        r"chau au|chau my|chau phi|europe|roman empire|la ma|hy lap|ai cap co dai|"
+        r"co dai ai cap|napoleon|napoleon bonaparte|chien tranh the gioi|"
+        r"world war|the chien|cach mang phap|french revolution|"
         r"lich su (?:trung quoc|nhat ban|han quoc|anh|phap|my|nga|an do))\b", value,
     )
     if vietnam:

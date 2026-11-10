@@ -32,6 +32,7 @@ from app.schemas import (ChatRequest, ChatResponse, RetrieveRequest, RetrieveRes
                          RetrievalContextItem, SourceItem)
 from app.telemetry import RequestTrace, reset_request_telemetry, set_request_telemetry
 from app.observability import cache_snapshot, serving_metrics
+from app.security.guardrails import GuardrailError, HiddenMarkupFilter
 
 
 logger = logging.getLogger(__name__)
@@ -290,9 +291,11 @@ def _runtime(request: Request, mode: ChatMode, payload: ChatRequest):
                           mcp_schema_budget=runtime.mcp_schema_budget)
 
 
-def _resolve_backend(request: Request, selected: str | None):
+def _resolve_backend(request: Request, selected: str | None, *, prefer_qdrant: bool = False):
     service = getattr(request.app.state, "rag_service", None)
-    backend = selected or getattr(service, "default_dense_backend", settings.retrieval_dense_backend)
+    available = getattr(service, "dense_retrievers", {})
+    preferred = "qdrant" if prefer_qdrant and isinstance(available, dict) and "qdrant" in available else None
+    backend = selected or preferred or getattr(service, "default_dense_backend", settings.retrieval_dense_backend)
     if service is not None and callable(getattr(service, "get_dense_retriever", None)):
         try:
             service.get_dense_retriever(backend)
@@ -334,7 +337,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
     completed: ModelDone | None = None
     delta_times: list[int] = []
     answer_parts: list[str] = []
-    backend = _resolve_backend(request, payload.retrieval_backend)
+    backend = _resolve_backend(request, payload.retrieval_backend, prefer_qdrant=mode == ChatMode.CENTRAL)
     prepare_task = None
     progress_waiter = None
     queue: asyncio.Queue = asyncio.Queue()
@@ -381,7 +384,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                 store.list_attachments, owner_id, payload.conversation_id)
                 if item["status"] == "ready" and int(item.get("chunk_count") or 0) > 0}
             if any(value not in ready for value in requested_ids):
-                raise ValueError("Tài liệu không tồn tại, chưa đọc xong hoặc đã bị xóa.")
+                raise GuardrailError("Tài liệu không tồn tại, chưa đọc xong hoặc đã bị xóa.")
         else:
             ready = {}
         question = payload.question.strip() or "Phân tích nội dung tài liệu đính kèm."
@@ -418,6 +421,8 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         prepared = prepare_task.result()
         if cancel.is_set():
             return
+        if payload.provider == "openai" and mode == ChatMode.CENTRAL and not prepared.contexts:
+            raise GuardrailError("Không tìm được nguồn phù hợp để trả lời; hãy thử câu hỏi hoặc nguồn khác.")
         current_stage = "generation"
         yield "status", {"stage": "generation", "state": "started", "message": (
                          "Đang suy luận và tạo câu trả lời..." if payload.provider == "openai" else "Tạo câu trả lời..."),
@@ -426,12 +431,14 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
                       else settings.central_final_max_new_tokens)
         trace.mark("final_model_requested")
         citations = CitationFilter(prepared.contexts) if payload.provider == "openai" else None
+        hidden_markup = HiddenMarkupFilter() if payload.provider == "openai" else None
         model_stream = runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel)
         async for item in model_stream:
             if cancel.is_set():
                 return
             if isinstance(item, ModelDelta):
-                visible = citations.feed(item.text) if citations else item.text
+                text = hidden_markup.feed(item.text) if hidden_markup else item.text
+                visible = citations.feed(text) if citations else text
                 if not visible:
                     continue
                 answer_parts.append(visible)
@@ -446,7 +453,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if completed is None:
             raise RuntimeError("Model generation ended without completion metadata")
         if citations:
-            tail = citations.feed("", final=True)
+            tail = citations.feed(hidden_markup.feed("", final=True), final=True)
             if tail:
                 answer_parts.append(tail)
                 delta_times.append(time.perf_counter_ns())
@@ -459,13 +466,15 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if completed.first_token_ns is not None:
             trace.mark("first_model_token", completed.first_token_ns)
         trace.mark("generation_finished", completed.finished_ns)
-        yield "status", {"stage": "generation", "state": "completed", "message": "Đã tạo câu trả lời",
-                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id,
-                         "latency_ms": completed.metrics.get("generation_ms")}
         answer = "".join(answer_parts)
         if not answer.strip():
             raise RuntimeError("Model returned an empty answer")
         source_items, cited_ids = _sources(answer, prepared.contexts)
+        if payload.provider == "openai" and mode == ChatMode.CENTRAL and not cited_ids:
+            raise GuardrailError("Câu trả lời chưa có trích dẫn hợp lệ; hãy thử lại.")
+        yield "status", {"stage": "generation", "state": "completed", "message": "Đã tạo câu trả lời",
+                         "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id,
+                         "latency_ms": completed.metrics.get("generation_ms")}
         trace.mark("sources_ready")
         stored_sources = source_items
         assistant_message = await asyncio.to_thread(
@@ -528,7 +537,9 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         recorded = True
         yield "status", {"stage": current_stage, "state": "failed", "message": "Không thể hoàn tất bước này",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id}
-        yield "error", {"type": type(exc).__name__, "message": str(exc), "request_id": trace.request_id,
+        safe_message = (str(exc) if isinstance(exc, (GuardrailError, OpenAIProviderError, DenseBackendError))
+                        else "Không thể hoàn tất yêu cầu. Vui lòng thử lại.")
+        yield "error", {"type": type(exc).__name__, "message": safe_message, "request_id": trace.request_id,
                         "retrieval_backend": backend,
                         "category": getattr(exc, "category", type(exc).__name__)}
         yield "done", {"request_id": trace.request_id, "status": "error", "mode": mode.value,
@@ -595,7 +606,7 @@ async def chat(payload: ChatRequest, request: Request, owner_id: OwnerId,
                store: StoreDependency) -> ChatResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
     runtime = _runtime(request, mode, payload)
-    _resolve_backend(request, payload.retrieval_backend)
+    _resolve_backend(request, payload.retrieval_backend, prefer_qdrant=mode == ChatMode.CENTRAL)
     view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)
     trace = RequestTrace(str(uuid.uuid4()), mode.value)
@@ -631,7 +642,7 @@ async def chat_stream(payload: ChatRequest, request: Request, owner_id: OwnerId,
                       store: StoreDependency) -> StreamingResponse:
     mode = normalize_chat_mode(payload.mode, default=settings.default_inference_mode)
     runtime = _runtime(request, mode, payload)
-    _resolve_backend(request, payload.retrieval_backend)
+    _resolve_backend(request, payload.retrieval_backend, prefer_qdrant=mode == ChatMode.CENTRAL)
     view = _resolve_tools(runtime, payload, mode)
     await require_conversation(store, owner_id, payload.conversation_id)
     trace = RequestTrace(str(uuid.uuid4()), mode.value)

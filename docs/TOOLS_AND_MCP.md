@@ -13,7 +13,7 @@ Web mặc định tắt. History fallback chỉ chạy khi tool policy cho phép
 
 ## Architecture và SDK
 
-Central dùng Qwen3-8B để planning và final grounded generation.
+Central dùng provider được chọn theo request: OpenAI Responses API hoặc Qwen3-8B local cho planning và final grounded generation.
 Built-ins và MCP adapters dùng cùng registry. Một immutable `ToolView`
 lưu allowlist riêng cho mỗi request, lọc schemas trước khi planner nhận chúng;
 `ToolExecutionContext` mang backend, permissions, cancellation và telemetry riêng.

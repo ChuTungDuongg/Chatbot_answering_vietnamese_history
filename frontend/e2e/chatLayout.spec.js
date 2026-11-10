@@ -188,7 +188,7 @@ test("stream follows near-bottom readers and preserves manual scrollback", async
   await expect.poll(() => scroller.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeCloseTo(70, 0);
   await fixture.emit("answer_delta", { delta: "\n\n" + answer(3, 2) });
   await atBottom(page);
-  await scroller.evaluate((node) => { node.scrollTop = 180; });
+  await scroller.evaluate((node) => { node.scrollTop = 180; node.dispatchEvent(new Event("scroll")); });
   await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBe(180);
   for (let chunk = 0; chunk < 3; chunk += 1) {
     await fixture.emit("answer_delta", { delta: `\n\nLecture ${chunk}. ` + answer(3, 2) });

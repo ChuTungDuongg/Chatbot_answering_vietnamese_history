@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Any
@@ -16,6 +15,7 @@ from app.rag.schemas import PreparedAnswer
 from app.tools.registry import ToolCallRecord, ToolExecutionContext, ToolRegistry
 from app.tools.policy import tool_view
 from app.rag.progress import StageProgress, ProgressCallback
+from app.security.guardrails import guard_question, safe_contexts, safe_observation
 
 
 class CentralRuntime:
@@ -51,6 +51,7 @@ class CentralRuntime:
                       retrieval_backend: str | None = None, progress: ProgressCallback | None = None,
                       steering=None, tool_view=None) -> PreparedAnswer:
         cancel = cancel or threading.Event()
+        guard_question(question)
         prepare_started = time.perf_counter_ns()
         if trace:
             trace.mark("prepare_started", prepare_started)
@@ -164,16 +165,15 @@ class CentralRuntime:
                                      "error": record.error, "result_count": record.result_count,
                                      "provider": record.provider, "server": record.server,
                                      **(context.mcp_metrics[-1] if len(context.mcp_metrics) > mcp_count else {})})
-                chunks = evidence_chunks(output) if not record.error else []
+                chunks = safe_contexts(evidence_chunks(output)) if not record.error else []
                 for chunk in chunks:
                     key = str(chunk["chunk_id"])
                     if key not in contexts_by_id or call.name in {"fetch_wikipedia_page", "fetch_page"}:
                         contexts_by_id[key] = chunk
-                complete_evidence = complete_evidence and not record.error and terminal_evidence(call.name, output, view.allowed_names)
+                complete_evidence = complete_evidence and not record.error and terminal_evidence(call.name, chunks, view.allowed_names)
                 external_evidence = external_evidence or (call.name in external_names and bool(chunks))
                 local_evidence = local_evidence or (call.name == "search_history" and bool(chunks))
-                observation = json.dumps(output if not record.error else {"success": False, "error": record.error},
-                                         ensure_ascii=False, default=str)
+                observation = safe_observation(chunks, record.error)
                 if native:
                     messages.append({"type": "function_call_output", "call_id": call.id,
                                      "output": observation[:8000]})
@@ -203,7 +203,20 @@ class CentralRuntime:
             tool_records.append({"name": "search_history", "latency_ms": elapsed,
                                  "error": record.error, "result_count": record.result_count, "provider": "builtin"})
             if not record.error:
-                for chunk in evidence_chunks(output):
+                for chunk in safe_contexts(evidence_chunks(output)):
+                    contexts_by_id.setdefault(str(chunk["chunk_id"]), chunk)
+
+        # An explicit world-history question must not rely on the planner's
+        # memory when it skips the available Wikipedia search tool.
+        if (domain == "external" and "search_wikipedia" in view.allowed_names
+                and not any(item["name"] in {"search_wikipedia", "fetch_wikipedia_page"} for item in tool_records)):
+            started = time.perf_counter_ns()
+            output, record = await self.tools.call(
+                "search_wikipedia", {"query": question, "top_k": min(top_k, 10)}, context=context)
+            tool_records.append({"name": "search_wikipedia", "latency_ms": (time.perf_counter_ns() - started) / 1e6,
+                                 "error": record.error, "result_count": record.result_count, "provider": "builtin"})
+            if not record.error:
+                for chunk in safe_contexts(evidence_chunks(output)):
                     contexts_by_id.setdefault(str(chunk["chunk_id"]), chunk)
 
         if trace:

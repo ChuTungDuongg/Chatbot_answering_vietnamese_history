@@ -51,6 +51,14 @@ test("selection persists when both backends are supported", async () => {
   expect(localStorage.getItem(RETRIEVAL_STORAGE_KEY)).toBe("qdrant");
 });
 
+test("central prefers Qdrant when available and honors explicit FAISS selection", async () => {
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss", "qdrant"] });
+  const hook = renderHook(() => useRetrievalBackend("central"));
+  await waitFor(() => expect(hook.result.current.backend).toBe("qdrant"));
+  act(() => hook.result.current.setBackend("faiss"));
+  expect(hook.result.current.backend).toBe("faiss");
+});
+
 test("capability failure keeps selection unavailable", async () => {
   api.getRetrievalCapabilities.mockRejectedValue(new Error("offline"));
   const hook = renderHook(useRetrievalBackend);

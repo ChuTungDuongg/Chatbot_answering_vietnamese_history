@@ -58,11 +58,12 @@ function App() {
 
   const { theme, toggleTheme } = useTheme();
   const { mode: inferenceMode, setMode: setInferenceMode } = useChatMode();
-  const retrieval = useRetrievalBackend();
+  const retrieval = useRetrievalBackend(inferenceMode);
   const providers = retrieval.capabilities.providers ?? (retrieval.ready ? {
     local: { available: true }, openai: { available: false },
   } : {});
-  const provider = providers?.[selectedProvider]?.available ? selectedProvider : "";
+  const provider = providers?.[selectedProvider]?.available ? selectedProvider
+    : providers?.openai?.available ? "openai" : providers?.local?.available ? "local" : "";
   const toolControl = useToolSteering(retrieval.capabilities);
 
   const session = useChatSession();

@@ -88,6 +88,8 @@ Chat request có `conversation_id`, `question`, `mode`, tùy chọn `retrieval_b
 
 SSE gửi `status` theo công việc thực tế, `answer_delta` cho text model sinh, `sources`, `done` và `error` khi lỗi. Nội dung assistant được lưu bằng text đã stream; frontend đồng bộ lại từ server sau hoàn tất. Planner output không hiển thị thành answer deltas. Stop/disconnect truyền cancellation tới generation/tool đang chờ. First status và first answer token là hai mốc khác nhau; Central answer TTFT bao gồm planner/tool time.
 
+Central phân loại thận trọng các dấu hiệu chủ đề rõ ràng: lịch sử Việt Nam ưu tiên `search_history` và Qdrant khi khả dụng, lịch sử thế giới ưu tiên Wikipedia; câu hỏi mơ hồ vẫn do planner xử lý. Lựa chọn FAISS hoặc giới hạn công cụ rõ ràng của người dùng được tôn trọng. Kết quả công cụ là dữ liệu không đáng tin cậy, được giới hạn trường/độ dài và lọc một số mẫu injection trước khi đưa vào planner; source đáng ngờ bị loại. Câu trả lời Central qua OpenAI cần nguồn và citation hợp lệ mới được lưu. Kiểm tra citation xác nhận mã nguồn tồn tại, không chứng minh từng khẳng định là đúng; bộ lọc injection theo mẫu không thể phát hiện mọi cuộc tấn công. Do streaming, văn bản một phần có thể hiện trước khi validation cuối báo lỗi.
+
 SQLite mặc định ở `data/chat.sqlite3`; Modal mount `/data` để giữ hội thoại. `X-Client-ID` xác định anonymous owner scope, không phải xác thực. PDF/ảnh upload được xử lý trong scope hội thoại; OCR cần môi trường tương ứng.
 
 `/ready` trả HTTP 200 ngay cả khi JSON có `ready=false`. Trong full mode, top-level `ready` phản ánh retrieval; model state báo riêng qua `hybrid_loaded`/`central_loaded`. `model_loaded` của RAGService không đại diện Qwen. Cần đọc JSON và kiểm tra request thực tế để xác nhận khả năng trả lời.
