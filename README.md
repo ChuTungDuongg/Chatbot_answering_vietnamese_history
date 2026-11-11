@@ -15,7 +15,7 @@ Backend dùng FastAPI; frontend dùng React/Vite. Retrieval kết hợp E5, FAIS
 
 Inference có thể chọn Qwen local hoặc OpenAI Responses API cho từng request, độc lập với chat mode và dense backend. OpenAI mặc định tắt và được bảo vệ bằng phiên đăng nhập và hạn mức phía máy chủ; xem [cấu hình bảo mật](docs/CONFIGURATION.md#openai-responses-api). Không đặt OpenAI API key trong trình duyệt.
 
-Modal mặc định chạy CPU với OpenAI API; chỉ đặt `LOCAL_INFERENCE_ENABLED=true` khi muốn cấp GPU và chạy Qwen. Central ưu tiên Qdrant cho tư liệu Việt Nam và Wikipedia cho lịch sử thế giới, đồng thời tôn trọng lựa chọn nguồn/công cụ của người dùng.
+Modal hỗ trợ OpenAI API với retrieval trên CPU hoặc GPU nhỏ: giữ `LOCAL_INFERENCE_ENABLED=false` và đặt `MODAL_RETRIEVAL_GPU_CLASS=T4` để tăng tốc E5/reranker; để trống biến GPU retrieval để chạy CPU-only. Chỉ đặt `LOCAL_INFERENCE_ENABLED=true` khi muốn tải Qwen. Central ưu tiên Qdrant cho tư liệu Việt Nam và Wikipedia cho lịch sử thế giới, đồng thời tôn trọng lựa chọn nguồn/công cụ của người dùng.
 
 ## Bắt đầu
 
