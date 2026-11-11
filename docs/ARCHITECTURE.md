@@ -47,6 +47,8 @@ Trên Modal, React được build vào image và cùng FastAPI chạy tại `fas
 
 API gọi runtime; runtime gọi retriever/model/tool. Model engine không đọc index. `benchmarks/`, `evaluation/`, `training/` là các workflow offline, không chạy khi ứng dụng startup.
 
+Prompt instructions nằm trong `app/prompts/**/*.md`, load/cache theo đường dẫn package và validate trước khi khởi tạo service. Message builders giữ context/history ở Python và frozen evaluation bytes không đổi. Built-in declarations lấy từ `app/tools/definitions/tools.yaml`, kiểm tra drift với Pydantic input models trong `app/tools/builtin/*/tool.py`; `TOOL.md` phục vụ người bảo trì. Registry giữ execution/context/permissions, MCP vẫn dùng schema discovery động. Xem [Prompt và tool contracts](PROMPTS_AND_TOOLS.md) cho cây thư mục, signature và quy trình thêm tool.
+
 ## Khởi động theo APP_MODE
 
 | Mode | Thành phần |

@@ -2,6 +2,8 @@
 
 [`ToolRegistry`](../app/tools/registry.py) validate arguments và chạy tools theo request context. Context mang owner, conversation, dense backend, permissions, cancellation và telemetry; model không tự chọn scope dữ liệu.
 
+Built-in declarations lấy từ [`tools.yaml`](../app/tools/definitions/tools.yaml), đối chiếu với Pydantic ở `app/tools/builtin/*/tool.py`. Mỗi tool có `TOOL.md`; import module cũ tiếp tục hoạt động. MCP giữ schema discovery động và không đưa vào YAML. Xem [hướng dẫn thêm prompt/tool](PROMPTS_AND_TOOLS.md) và contract tests.
+
 | Built-in tool | Điều kiện | Chức năng |
 | --- | --- | --- |
 | `search_history` | Central full, khi request cho phép | Retrieval corpus dùng chung với Hybrid. |

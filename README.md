@@ -33,6 +33,7 @@ Clone repository chưa bao gồm corpus/index lớn, adapter weights hoặc mode
 | Biến môi trường, model và giới hạn | [Cấu hình](docs/CONFIGURATION.md) |
 | Corpus và tìm kiếm | [Xây corpus](docs/CORPUS_BUILD.md) · [Retrieval](docs/RETRIEVAL.md) · [Qdrant migration](docs/QDRANT_MIGRATION.md) |
 | Công cụ ngoài | [Central tools và MCP](docs/TOOLS_AND_MCP.md) |
+| Bảo trì prompt và built-in tools | [Markdown prompts và YAML tool contracts](docs/PROMPTS_AND_TOOLS.md) |
 | Training và kiểm chứng chất lượng | [Training](docs/TRAINING_AND_EVALUATION.md) · [Evaluation](docs/EVALUATION.md) |
 | Hiệu năng và vận hành | [Benchmark](docs/BENCHMARKS.md) · [Telemetry](docs/RUNTIME_TELEMETRY.md) |
 | Làm việc với mã nguồn | [Phát triển và kiểm tra](docs/DEVELOPMENT.md) |

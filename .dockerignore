@@ -69,6 +69,7 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 .worktrees/
+reports/
 
 frontend/.env
 frontend/.env.*

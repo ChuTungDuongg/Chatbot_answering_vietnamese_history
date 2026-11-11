@@ -61,11 +61,12 @@ class ToolRegistry:
     def register(self, tool: AgentTool) -> None:
         if tool.name in self._tools:
             raise ValueError(f"Tool already registered: {tool.name}")
-        self._tools[tool.name] = tool
-        self._descriptors[tool.name] = getattr(tool, "descriptor", None) or {
+        descriptor = getattr(tool, "descriptor", None) or {
             "name": tool.name, "description": tool.description,
             "input_schema": tool.input_schema.model_json_schema(), "provider": "builtin",
         }
+        self._tools[tool.name] = tool
+        self._descriptors[tool.name] = descriptor
 
     def get(self, name: str) -> AgentTool:
         try:

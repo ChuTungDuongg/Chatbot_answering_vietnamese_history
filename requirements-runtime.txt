@@ -12,6 +12,7 @@ openai==3.48.0
 argon2-cffi==25.1.0
 itsdangerous==2.2.0
 jsonschema==4.26.0
+PyYAML==6.0.3
 
 uvicorn[standard]
 pydantic==2.13.4

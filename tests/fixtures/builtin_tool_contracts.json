@@ -1,0 +1,146 @@
+{
+  "search_history": {
+    "properties": {
+      "query": {
+        "minLength": 1,
+        "title": "Query",
+        "type": "string"
+      },
+      "top_k": {
+        "default": 8,
+        "maximum": 20,
+        "minimum": 1,
+        "title": "Top K",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "SearchHistoryInput",
+    "type": "object"
+  },
+  "search_uploaded_documents": {
+    "properties": {
+      "query": {
+        "minLength": 1,
+        "title": "Query",
+        "type": "string"
+      },
+      "top_k": {
+        "default": 8,
+        "maximum": 20,
+        "minimum": 1,
+        "title": "Top K",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "SearchUploadedDocumentsInput",
+    "type": "object"
+  },
+  "search_wikipedia": {
+    "properties": {
+      "query": {
+        "minLength": 1,
+        "title": "Query",
+        "type": "string"
+      },
+      "language": {
+        "default": "vi",
+        "enum": [
+          "vi",
+          "en"
+        ],
+        "title": "Language",
+        "type": "string"
+      },
+      "top_k": {
+        "default": 5,
+        "maximum": 10,
+        "minimum": 1,
+        "title": "Top K",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "SearchWikipediaInput",
+    "type": "object"
+  },
+  "fetch_wikipedia_page": {
+    "properties": {
+      "page_id_or_title": {
+        "minLength": 1,
+        "title": "Page Id Or Title",
+        "type": "string"
+      },
+      "language": {
+        "default": "vi",
+        "enum": [
+          "vi",
+          "en"
+        ],
+        "title": "Language",
+        "type": "string"
+      },
+      "max_chars": {
+        "default": 8000,
+        "maximum": 20000,
+        "minimum": 200,
+        "title": "Max Chars",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "page_id_or_title"
+    ],
+    "title": "FetchWikipediaPageInput",
+    "type": "object"
+  },
+  "search_web": {
+    "properties": {
+      "query": {
+        "minLength": 1,
+        "title": "Query",
+        "type": "string"
+      },
+      "top_k": {
+        "default": 5,
+        "maximum": 10,
+        "minimum": 1,
+        "title": "Top K",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "SearchWebInput",
+    "type": "object"
+  },
+  "fetch_web_page": {
+    "properties": {
+      "url": {
+        "minLength": 8,
+        "title": "Url",
+        "type": "string"
+      },
+      "max_chars": {
+        "default": 8000,
+        "maximum": 20000,
+        "minimum": 200,
+        "title": "Max Chars",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "title": "FetchPageInput",
+    "type": "object"
+  }
+}

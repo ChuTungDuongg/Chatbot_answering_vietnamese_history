@@ -49,6 +49,6 @@ Playwright config quản lý frontend test server và dùng Chrome đã cài (`c
 
 Corpus/index không được rebuild trong startup, audit hay test. Dùng output riêng cho mỗi lần xây dữ liệu, lưu manifest/hash và kiểm tra trước khi thay bundle phục vụ; xem [Artifacts](ARTIFACTS.md) và [Retrieval](RETRIEVAL.md).
 
-Tool mới có Pydantic input model, `name`, `description`, `input_schema` và `run` hoặc `run_with_context`; đăng ký trong [`app/main.py`](../app/main.py). Request context mang owner/conversation/backend/permissions riêng. Kiểm tra validation, scope, kết quả và lỗi trước khi cho planner dùng. Xem [Tools và MCP](TOOLS_AND_MCP.md).
+Built-in mới có declaration trong `app/tools/definitions/tools.yaml`, Pydantic input model và implementation trong `app/tools/builtin/<name>/tool.py`, cùng `TOOL.md`. Export trong `BUILTIN_TOOL_TYPES` rồi đăng ký dependency trong [`app/main.py`](../app/main.py). Request context mang owner/conversation/backend/permissions riêng. Chạy `python -m pytest -q tests/test_tool_contracts.py` để phát hiện drift trước khi cho planner dùng. Xem [ví dụ thêm tool và prompt](PROMPTS_AND_TOOLS.md) cùng [Tools/MCP](TOOLS_AND_MCP.md); remote MCP schemas vẫn discovery động.
 
 Đo chất lượng và latency trên đúng artifacts/model revisions/hardware bằng [evaluation](EVALUATION.md) và [benchmark](BENCHMARKS.md). Kết quả unit test không thay thế các phép đo này.

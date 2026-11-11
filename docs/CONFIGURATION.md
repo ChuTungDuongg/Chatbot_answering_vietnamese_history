@@ -109,3 +109,7 @@ vLLM hiện từ chối SFT/LoRA. Xem [vLLM](VLLM_LATENCY_EXPERIMENTS.md) và [T
 | `OBSERVABILITY_ADMIN_TOKEN` | Không đặt | Token riêng cho `/api/v1/ops/summary`; vẫn bắt buộc khi đã đăng nhập. |
 
 Xem [Deployment](DEPLOYMENT.md) để tạo và xoay vòng secret. Không đưa admin token vào frontend bundle.
+
+## Prompt và built-in declarations
+
+Markdown trong `app/prompts/` và YAML `app/tools/definitions/tools.yaml` là tài nguyên đi kèm mã nguồn, không cấu hình bằng đường dẫn từ người dùng hay biến môi trường. Chỉnh file cần restart/redeploy để làm mới cache. Startup fail nếu thiếu prompt hoặc YAML/Pydantic contract lệch nhau; không cần secret mới. Giữ nguyên whitespace của frozen offline/SFT prompt. Xem [hướng dẫn bảo trì](PROMPTS_AND_TOOLS.md).

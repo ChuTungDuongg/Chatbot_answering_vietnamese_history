@@ -15,6 +15,7 @@ Tài liệu mô tả mã nguồn và cấu hình đang có trong repository. Gi�
 | Chuyển Qdrant Cloud về Docker local, resume/verify | [Qdrant migration](QDRANT_MIGRATION.md) |
 | E5, FAISS/Qdrant, BM25S, tạo và kiểm tra index | [Retrieval](RETRIEVAL.md) |
 | Công cụ Central, MCP và quyền từng request | [Tools và MCP](TOOLS_AND_MCP.md) |
+| Markdown prompts, YAML contracts và thêm built-in tool | [Prompt và tool resources](PROMPTS_AND_TOOLS.md) |
 | Nhãn câu hỏi, retrieval và các metric chất lượng | [Đánh giá](EVALUATION.md) |
 | Quy trình gán nhãn có người kiểm duyệt | [GOLD annotation](GOLD_ANNOTATION_GUIDE.md) |
 | Gán nhãn tự động và các batch SILVER | [SILVER benchmark](SILVER_BENCHMARK.md) |

@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from typing import Any
+from pydantic import BaseModel, Field
+from app.tools.declarations import BuiltinTool, builtin_description
+from app.chat.attachments import TemporaryCorpusRetriever
+from app.tools.registry import ToolExecutionContext
+
+
+class SearchUploadedDocumentsInput(BaseModel):
+    query: str = Field(..., min_length=1)
+    top_k: int = Field(default=8, ge=1, le=20)
+
+
+class SearchUploadedDocumentsTool(BuiltinTool):
+    name = "search_uploaded_documents"
+    description = builtin_description("search_uploaded_documents")
+    input_schema = SearchUploadedDocumentsInput
+
+    def __init__(self, retriever: TemporaryCorpusRetriever):
+        self.retriever = retriever
+
+    def run(self, arguments: SearchUploadedDocumentsInput) -> list[dict[str, Any]]:
+        raise RuntimeError("Uploaded-document search requires conversation context.")
+
+    def run_with_context(
+        self,
+        arguments: SearchUploadedDocumentsInput,
+        context: ToolExecutionContext,
+    ) -> list[dict[str, Any]]:
+        if not context.owner_id or not context.conversation_id:
+            raise RuntimeError("Uploaded-document search requires owner and conversation context.")
+
+        chunks = self.retriever.retrieve(
+            owner_id=context.owner_id,
+            conversation_id=context.conversation_id,
+            question=arguments.query,
+            top_k=arguments.top_k,
+            **({"attachment_ids": context.attachment_ids} if context.attachment_ids is not None else {}),
+        )
+
+        return [
+            {
+                **chunk,
+                "source_kind": "attachment",
+            }
+            for chunk in chunks
+        ]

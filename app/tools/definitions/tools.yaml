@@ -1,0 +1,150 @@
+version: 1
+tools:
+- name: search_history
+  description: Search the local Vietnamese history corpus for grounded source chunks. Prefer this for
+    Vietnamese history, including local events and figures. Do not assume it covers unrelated world history;
+    use permitted external sources for those questions.
+  parameters:
+    properties:
+      query:
+        minLength: 1
+        title: Query
+        type: string
+        description: Historical question or evidence retrieval query.
+      top_k:
+        default: 8
+        maximum: 20
+        minimum: 1
+        title: Top K
+        type: integer
+        description: Maximum number of results to return.
+    required:
+    - query
+    title: SearchHistoryInput
+    type: object
+- name: search_uploaded_documents
+  description: Search PDF and image documents uploaded to the current conversation. Use for questions
+    about an attached file or when uploaded evidence may help. Do not use without an authorized owner
+    and conversation, or to access another conversation.
+  parameters:
+    properties:
+      query:
+        minLength: 1
+        title: Query
+        type: string
+        description: Historical question or evidence retrieval query.
+      top_k:
+        default: 8
+        maximum: 20
+        minimum: 1
+        title: Top K
+        type: integer
+        description: Maximum number of results to return.
+    required:
+    - query
+    title: SearchUploadedDocumentsInput
+    type: object
+- name: search_wikipedia
+  description: Search Vietnamese Wikipedia first, or English Wikipedia when language='en'. Returns stable
+    wikipedia evidence IDs and snippets only. Use for world history or evidence beyond the local corpus.
+    Do not treat snippets as a full article; use fetch_wikipedia_page when detailed evidence is needed.
+  parameters:
+    properties:
+      query:
+        minLength: 1
+        title: Query
+        type: string
+        description: Historical question or evidence retrieval query.
+      language:
+        default: vi
+        enum:
+        - vi
+        - en
+        title: Language
+        type: string
+        description: Wikipedia language edition; prefer Vietnamese, with English as fallback.
+      top_k:
+        default: 5
+        maximum: 10
+        minimum: 1
+        title: Top K
+        type: integer
+        description: Maximum number of results to return.
+    required:
+    - query
+    title: SearchWikipediaInput
+    type: object
+- name: fetch_wikipedia_page
+  description: Fetch one bounded plain-text Wikipedia page by page ID or exact title. Use language='vi'
+    first and language='en' only as fallback. Use to read an identified page for detailed evidence. Do
+    not use as a general search query or to fetch arbitrary websites.
+  parameters:
+    properties:
+      page_id_or_title:
+        minLength: 1
+        title: Page Id Or Title
+        type: string
+        description: Numeric Wikipedia page ID or exact page title in the selected language.
+      language:
+        default: vi
+        enum:
+        - vi
+        - en
+        title: Language
+        type: string
+        description: Wikipedia language edition; prefer Vietnamese, with English as fallback.
+      max_chars:
+        default: 8000
+        maximum: 20000
+        minimum: 200
+        title: Max Chars
+        type: integer
+        description: Maximum extracted text characters to return.
+    required:
+    - page_id_or_title
+    title: FetchWikipediaPageInput
+    type: object
+- name: search_web
+  description: Search external web evidence when configured. Defaults to local-only no-op. Use when permitted
+    external sources are needed beyond the history corpus or Wikipedia. Do not assume a provider is configured
+    or that search results alone prove a claim.
+  parameters:
+    properties:
+      query:
+        minLength: 1
+        title: Query
+        type: string
+        description: Historical question or evidence retrieval query.
+      top_k:
+        default: 5
+        maximum: 10
+        minimum: 1
+        title: Top K
+        type: integer
+        description: Maximum number of results to return.
+    required:
+    - query
+    title: SearchWebInput
+    type: object
+- name: fetch_web_page
+  description: Fetch and extract visible text from a web page URL. Use to read a specific source page
+    identified during research. Do not use as a search engine or assume every URL returns a supported
+    text content type.
+  parameters:
+    properties:
+      url:
+        minLength: 8
+        title: Url
+        type: string
+        description: URL of the specific web source page to read.
+      max_chars:
+        default: 8000
+        maximum: 20000
+        minimum: 200
+        title: Max Chars
+        type: integer
+        description: Maximum extracted text characters to return.
+    required:
+    - url
+    title: FetchPageInput
+    type: object

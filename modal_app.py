@@ -29,6 +29,7 @@ except (OSError, subprocess.SubprocessError):
     deployment_commit = ""
 source_digest = hashlib.sha256()
 source_files = sorted([*repo_root.glob("app/**/*.py"), *repo_root.glob("app/**/*.html"),
+                       *repo_root.glob("app/**/*.md"), *repo_root.glob("app/**/*.yaml"),
                        *repo_root.glob("frontend/src/**/*"), repo_root / "frontend/index.html",
                        repo_root / "frontend/package-lock.json", repo_root / "modal_app.py",
                        repo_root / "Dockerfile", repo_root / "Dockerfile.vllm",

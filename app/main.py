@@ -34,6 +34,8 @@ from app.tools.page_fetcher import FetchPageTool
 from app.tools.registry import ToolRegistry
 from app.tools.web_search import SearchWebTool, build_web_search_provider
 from app.tools.wikipedia import FetchWikipediaPageTool, SearchWikipediaTool
+from app.prompts.loader import validate_prompt_resources
+from app.tools.declarations import validate_builtin_contracts
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_prompt_resources()
+    validate_builtin_contracts()
     service = RAGService()
     store = ConversationStore(settings.chat_database_path)
     app.state.rag_service = service

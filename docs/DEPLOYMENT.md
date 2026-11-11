@@ -1,5 +1,7 @@
 # Triển khai Sử Việt trên Modal
 
+Markdown trong `app/prompts/` và YAML `app/tools/definitions/` đi kèm `COPY app` trong cả hai backend image. Modal source digest theo dõi `.md`/`.yaml`; sau khi sửa tài nguyên cần redeploy để làm mới cache. Startup validate prompt và tool contracts trước khi tải artifacts/model; không cần secret mới. Image frontend-only không cần các file này. Xem [Prompt và tool contracts](PROMPTS_AND_TOOLS.md).
+
 Một function ASGI `fastapi_app` phục vụ giao diện React và API tại cùng một URL HTTPS. Không cần backend URL riêng hay máy local sau khi chạy `modal deploy`. Mọi API, `/ready`, tài liệu API và giao diện đều yêu cầu phiên đăng nhập; `/health` chỉ là liveness công khai. Modal bắt buộc `AUTH_ENABLED=true`, và ứng dụng từ chối khởi động khi thiếu hoặc sai secret. Các endpoint cũ từ triển khai trước cần được xóa hoặc dừng riêng trên Modal Dashboard; deploy mới không tự xóa app cũ có tên khác.
 
 ## Chuẩn bị
