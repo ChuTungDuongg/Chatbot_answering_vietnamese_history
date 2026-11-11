@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import modal
+from app.modal_resources import resolve_modal_resources
 
 
 repo_root = Path(__file__).resolve().parent
@@ -15,6 +16,9 @@ if modal.is_local():
 
 inference_backend = os.getenv("INFERENCE_BACKEND", "transformers")
 local_inference_enabled = os.getenv("LOCAL_INFERENCE_ENABLED", "false").lower() == "true"
+retrieval_gpu_class = os.getenv("MODAL_RETRIEVAL_GPU_CLASS", "").strip()
+resources = resolve_modal_resources(local_inference_enabled,
+    local_gpu=os.getenv("MODAL_GPU_CLASS", "L4"), retrieval_gpu=retrieval_gpu_class)
 runtime_image = os.getenv("MODAL_RUNTIME_IMAGE", inference_backend)
 if inference_backend not in {"transformers", "vllm"} or runtime_image not in {"transformers", "vllm"}:
     raise ValueError("Inference backend and Modal runtime image must be transformers or vllm")
@@ -105,8 +109,9 @@ image = modal.Image.from_dockerfile(
         "MODAL_WEB_SEARCH_SECRET_NAME": web_search_secret_name,
         "MODAL_MCP_SECRET_NAME": mcp_secret_name,
         "MODAL_OBSERVABILITY_SECRET_NAME": observability_secret_name,
-        "DEVICE": "cuda" if local_inference_enabled else "cpu",
-        "DTYPE": "bfloat16" if local_inference_enabled else "float32",
+        "MODAL_RETRIEVAL_GPU_CLASS": retrieval_gpu_class,
+        "DEVICE": resources.device,
+        "DTYPE": resources.dtype,
         "LOCAL_INFERENCE_ENABLED": str(local_inference_enabled).lower(),
         "OPENAI_ENABLED": os.getenv("OPENAI_ENABLED", "false"),
         "OPENAI_TRUSTED_INTERNAL_ONLY": os.getenv("OPENAI_TRUSTED_INTERNAL_ONLY", "false"),
@@ -177,7 +182,7 @@ if mcp_enabled:
 
 @app.function(
     image=image,
-    gpu=os.getenv("MODAL_GPU_CLASS", "L4") if local_inference_enabled else None,
+    gpu=resources.gpu,
     cpu=4.0,
     memory=32768,
     timeout=600,
@@ -201,7 +206,7 @@ def fastapi_app():
 
 
 @app.function(
-    image=image, gpu=os.getenv("MODAL_GPU_CLASS", "L4") if local_inference_enabled else None,
+    image=image, gpu=resources.gpu,
     cpu=4.0, memory=32768, timeout=1800,
     startup_timeout=900,
     volumes={"/artifacts": artifacts, "/hf-cache": hf_cache},
@@ -262,5 +267,16 @@ def runtime_smoke(generate: bool = False, central: bool = False,
                 if not answer.get("answer"):
                     raise RuntimeError(f"{mode} returned an empty answer")
                 result["generation"][mode] = answer
-        print(f"PASS V1 runtime: corpus={settings.corpus_path}; backend={settings.retrieval_dense_backend}; chunks=624288; generation={list(result['generation'])}")
+        import torch
+        service = api.state.rag_service
+        result["hardware"] = {
+            "local_inference_enabled": settings.local_inference_enabled,
+            "embedding_device": str(service.embedder.device),
+            "reranker_device": str(next(service.reranker.model.parameters()).device),
+            "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "gpu_total_bytes": torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None,
+            "gpu_peak_allocated_bytes": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
+        }
+        print(f"PASS V1 runtime: corpus={settings.corpus_path}; chunks=624288; generation={list(result['generation'])}")
+        print("Hardware: " + json.dumps(result["hardware"]))
         return json.dumps(result, ensure_ascii=False, indent=2)

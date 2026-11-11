@@ -420,7 +420,8 @@ def test_official_sdk_central_tool_continuation_without_network():
                for item in captured[1]["input"])
 
 
-def test_remote_only_startup_does_not_build_local_model(monkeypatch, tmp_path):
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_remote_only_startup_does_not_build_local_model(monkeypatch, tmp_path, device):
     import sys
     from app import main
     from app.config import Settings
@@ -429,7 +430,7 @@ def test_remote_only_startup_does_not_build_local_model(monkeypatch, tmp_path):
             self.closed = False
         async def close(self):
             self.closed = True
-    settings = Settings(_env_file=None, app_mode="full", enable_central_mode=False,
+    settings = Settings(_env_file=None, app_mode="full", enable_central_mode=False, device=device,
                         local_inference_enabled=False, openai_enabled=True,
                         openai_trusted_internal_only=True, openai_api_key="sdk-key",
                         openai_access_token="x" * 32, chat_database_path=tmp_path / "chat.sqlite3")

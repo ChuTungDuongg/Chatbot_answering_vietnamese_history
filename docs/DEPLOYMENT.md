@@ -20,7 +20,8 @@ Một function ASGI `fastapi_app` phục vụ giao diện React và API tại c�
    OPENAI_ENABLED=true
    MODAL_OPENAI_SECRET_NAME=vn-history-openai
    MODAL_AUTH_SECRET_NAME=vn-history-auth
-   MODAL_GPU_CLASS=A100-40GB
+   LOCAL_INFERENCE_ENABLED=false
+   MODAL_RETRIEVAL_GPU_CLASS=T4
    ```
 
    Chỉ nhập key trong giao diện Secret an toàn, không đưa vào code, frontend hay command line. Không cần `OPENAI_ACCESS_TOKEN` cho người dùng đã đăng nhập. OpenAI có giới hạn request, concurrency và số output token; hãy đặt budget tài khoản OpenAI phù hợp. Một số cấu hình legacy service-to-service vẫn yêu cầu token riêng; xem [cấu hình](CONFIGURATION.md#openai-responses-api).
@@ -33,9 +34,9 @@ modal deploy modal_app.py
 modal app logs vn-history-rag-api --since 2h
 ```
 
-Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. `A100-40GB` được đề xuất cho cấu hình Transformers kết hợp hai model; kiểm tra quota và giá Modal trước khi sử dụng. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` chọn CPU, không tải Qwen, nhưng vẫn cần corpus và retrieval models; chế độ đó chỉ phục vụ inference từ xa.
+Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` không tải Qwen; E5/reranker vẫn cần corpus và chạy trên CPU hoặc GPU theo cấu hình riêng.
 
-Mặc định Modal là CPU-only (`LOCAL_INFERENCE_ENABLED=false`); cần bật OpenAI và tạo secret trước khi dùng chat. Khi thực sự cần Qwen, đặt `LOCAL_INFERENCE_ENABLED=true` và `MODAL_GPU_CLASS=A100-40GB` trong `.env`, rồi deploy lại. Đổi về `false` và deploy lại để ngừng cấp GPU cho các lần khởi động tiếp theo. CPU vẫn tải E5/reranker và có chi phí tài nguyên khi hoạt động.
+Mặc định Modal là CPU-only khi `LOCAL_INFERENCE_ENABLED=false` và `MODAL_RETRIEVAL_GPU_CLASS` rỗng. Để tăng tốc E5 và reranker mà vẫn dùng OpenAI cho câu trả lời, giữ `LOCAL_INFERENCE_ENABLED=false`, đặt `MODAL_RETRIEVAL_GPU_CLASS=T4` (hoặc `L4`) và deploy lại. T4 dùng retrieval float32; không yêu cầu bfloat16. Xóa giá trị này và deploy lại để trở về CPU-only. Khi cần chạy Qwen, đặt `LOCAL_INFERENCE_ENABLED=true` và `MODAL_GPU_CLASS=A100-40GB`; cấu hình GPU cho Qwen có ưu tiên hơn GPU retrieval. Tất cả cấu hình đều scale-to-zero và cần secret đăng nhập. `MODAL_GPU_CLASS` không được dùng khi Qwen bị tắt.
 
 Đăng xuất bằng nút trong giao diện. Cookie HttpOnly/Secure/SameSite=Lax hết hạn sau tối đa bảy ngày; khi hết hạn cần đăng nhập lại. Sau năm lần nhập sai, đăng nhập bị giới hạn 15 phút; giới hạn và session lưu cùng SQLite để tồn tại qua restart. Xoay mật khẩu bằng cách tạo Modal Secret mới với `python scripts/create_modal_auth_secret.py --name TEN_MOI`, đổi `MODAL_AUTH_SECRET_NAME` và deploy lại; secret ký mới vô hiệu hóa các session cũ. Sau khi kiểm tra, có thể xóa secret cũ trên Dashboard.
 
