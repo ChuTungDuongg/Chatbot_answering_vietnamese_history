@@ -1,0 +1,1 @@
+Independently assess whether the supplied supporting text answers or corrects the question. Return answerable, in_domain, sufficient booleans, supported_chunk_ids (list), reason. A retrieval miss does not make a history question out of domain.

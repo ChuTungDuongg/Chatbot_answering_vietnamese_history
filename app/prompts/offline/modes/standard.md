@@ -1,0 +1,1 @@
+Trả lời rõ ràng với mức độ chi tiết vừa phải; nêu đủ các sự kiện cần thiết.

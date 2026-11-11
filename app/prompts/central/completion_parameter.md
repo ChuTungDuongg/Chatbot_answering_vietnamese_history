@@ -1,0 +1,1 @@
+Planner control only; true declares these successful tool results sufficient for the entire question with no pending tool dependency. False or omitted keeps planning. The runtime strips this field before tool execution.

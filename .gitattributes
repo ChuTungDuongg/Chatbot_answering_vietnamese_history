@@ -1,2 +1,5 @@
 evaluation/datasets/latency_v1/*.jsonl text eol=lf
 evaluation/datasets/latency_v1/manifest.json text eol=lf
+# Prompt composition boundaries intentionally contain trailing spaces.
+app/prompts/**/*.md text eol=lf whitespace=-blank-at-eol
+app/tools/definitions/*.yaml text eol=lf

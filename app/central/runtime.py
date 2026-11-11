@@ -8,6 +8,7 @@ from typing import Any
 
 from app.models.tool_calls import HermesFunctionCallCodec
 from app.models.base import ModelDone
+from app.prompts.loader import load_prompt
 from app.central.planning import (PLANNER_INSTRUCTION, evidence_chunks, final_after_tools,
                                   question_domain, terminal_evidence, planner_tool_schemas, COMPLETION_FIELD)
 from app.rag.prompting import build_messages
@@ -16,6 +17,10 @@ from app.tools.registry import ToolCallRecord, ToolExecutionContext, ToolRegistr
 from app.tools.policy import tool_view
 from app.rag.progress import StageProgress, ProgressCallback
 from app.security.guardrails import guard_question, safe_contexts, safe_observation
+
+
+EXTERNAL_DOMAIN_INSTRUCTION = load_prompt("central/external_domain")
+GROUNDED_FINAL_INSTRUCTION = load_prompt("central/grounded_final")
 
 
 class CentralRuntime:
@@ -69,7 +74,7 @@ class CentralRuntime:
             "content": PLANNER_INSTRUCTION,
         }]
         if domain == "external":
-            messages[0]["content"] += " Câu hỏi hiện tại ở ngoài corpus Việt Nam; cần bằng chứng bên ngoài được phép."
+            messages[0]["content"] += EXTERNAL_DOMAIN_INSTRUCTION
         messages.extend({"role": item["role"], "content": str(item.get("content") or "")[:1500]}
                         for item in history[-4:] if item.get("role") in {"user", "assistant"})
         messages.append({"role": "user", "content": question})
@@ -236,9 +241,7 @@ class CentralRuntime:
                 final_messages = [
                     *messages,
                     {"role": "system", "content":
-                     "Giai đoạn chọn công cụ đã kết thúc. Bây giờ hãy trả lời người dùng; "
-                     "không tiết lộ kế hoạch hoặc lý luận nội bộ. Chỉ dùng các nguồn được "
-                     "chọn trong câu hỏi cuối, không dùng phần khác của tool output. "
+                     GROUNDED_FINAL_INSTRUCTION
                      + final_messages[0]["content"]},
                     final_messages[-1],
                 ]

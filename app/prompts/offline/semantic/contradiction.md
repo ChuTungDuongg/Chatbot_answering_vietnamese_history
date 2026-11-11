@@ -1,0 +1,1 @@
+Check supplied sources for materially conflicting historical claims. Return contradiction_detected (boolean), contradicting_chunk_ids (list), contradiction_notes. Do not treat different wording alone as a conflict.

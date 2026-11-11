@@ -1,0 +1,1 @@
+ Câu hỏi hiện tại ở ngoài corpus Việt Nam; cần bằng chứng bên ngoài được phép.

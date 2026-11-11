@@ -1,0 +1,1 @@
+Using ONLY supplied verified evidence, return silver_answer, required_facts (list of objects: fact, supporting_chunk_ids, supporting_source_ids, confidence), candidate_citation_source_ids (list), factual_paragraph_indices (list). Each fact must be atomic. For unanswerable questions explain the limitation.

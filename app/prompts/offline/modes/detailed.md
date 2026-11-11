@@ -1,0 +1,1 @@
+Trả lời chi tiết khi chứng cứ cho phép; giải thích quan hệ, trình tự hoặc bối cảnh cần thiết, không suy đoán.

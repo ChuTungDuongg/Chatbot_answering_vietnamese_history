@@ -1,0 +1,1 @@
+Trả lời ngắn gọn, trực tiếp; giữ đủ các sự kiện cần thiết, không thêm chi tiết thừa.

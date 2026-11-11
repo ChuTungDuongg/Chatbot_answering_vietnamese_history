@@ -1,0 +1,1 @@
+Giai đoạn chọn công cụ đã kết thúc. Bây giờ hãy trả lời người dùng; không tiết lộ kế hoạch hoặc lý luận nội bộ. Chỉ dùng các nguồn được chọn trong câu hỏi cuối, không dùng phần khác của tool output. 

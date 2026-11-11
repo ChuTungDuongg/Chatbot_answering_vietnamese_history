@@ -1,0 +1,1 @@
+For EVERY supplied chunk return decisions (list of chunk_id, decision, confidence, reason). Decision is relevant, not_relevant or uncertain. Judge actual text and nearby context; ignore retrieval rank as a relevance label. Also return answerable and in_domain booleans.
