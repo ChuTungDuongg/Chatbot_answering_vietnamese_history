@@ -29,6 +29,32 @@ Một function ASGI `fastapi_app` phục vụ giao diện React và API tại c�
 
 ## Deploy và sử dụng
 
+### Chạy gắn với terminal: Ctrl+C dừng app
+
+Sau khi cấu hình `.env` và Modal Secrets, dùng PowerShell:
+
+```powershell
+$env:LOCAL_INFERENCE_ENABLED = 'false'
+$env:MODAL_RETRIEVAL_GPU_CLASS = 'T4'
+$env:OPENAI_ENABLED = 'true'
+$env:CENTRAL_OPENAI_PLANNING_REASONING_EFFORT = 'low'
+& '.\.venv\Scripts\python.exe' scripts/modal_session.py
+```
+
+Script deploy cùng `modal_app.py`, giữ URL ổn định, resolve App ID trong environment đã chọn rồi follow logs. Nhấn **Ctrl+C** để dừng log process và gọi `modal app stop APP_ID --yes`. Chờ thông báo xác nhận dừng rồi đóng terminal/tắt máy. App và running containers bị dừng; named Volumes, hội thoại và Secrets không bị xóa. Muốn mở lại, chạy lại script để deploy. Không mở hai controller cho cùng app.
+
+Nếu đã deploy và chỉ muốn Ctrl+C điều khiển app hiện tại, không cần build/deploy lại:
+
+```powershell
+& '.\.venv\Scripts\python.exe' scripts/modal_session.py --attach
+```
+
+`--name` chọn app khác và `--env` chọn Modal environment; mặc định đọc `MODAL_APP_NAME`, `MODAL_ENVIRONMENT`/active profile. Controller chỉ tự động stop bằng exact App ID sau lookup. Ctrl+C giữa deploy cũng cố resolve và stop ID đó; nếu lookup không thành công, script exit nonzero và yêu cầu kiểm tra Dashboard/stop thủ công, không tự dừng theo tên có thể đã đổi sang deployment khác. Deploy thất bại bình thường không dừng deployment cũ. Lỗi follow logs kết thúc controller và có bước stop; nếu không xác nhận được stop, script exit nonzero và in lệnh để chủ ứng dụng chạy thủ công.
+
+Không bảo đảm cleanup khi force-kill process, đóng cưỡng bức cửa sổ, mất điện hoặc mất mạng. Khi gặp tình huống đó, kiểm tra Dashboard hoặc chạy `python -m modal app stop vn-history-rag-api --yes`. Chỉ `modal app logs --follow` hoặc `modal deploy --stream-logs` tự nó không gắn vòng đời deployment với Ctrl+C. Xem [Modal app stop](https://modal.com/docs/cli/latest/app#modal-app-stop).
+
+### Deployment độc lập với terminal
+
 ```powershell
 modal deploy modal_app.py
 modal app logs vn-history-rag-api --since 2h
@@ -43,6 +69,8 @@ OPENAI_ENABLED=true CENTRAL_MAX_ACTION_ROUNDS=4 \
 ```
 
 Lệnh dùng lại Modal Secrets đã cấu hình; không truyền API key/mật khẩu trên command line. Trên Linux/macOS thay đường dẫn Python bằng `.venv/bin/python`. Deploy khởi động lại app đã stop với URL ổn định. Central v2 budgets được chuyển từ settings vào image env; `.env` cũ có `CENTRAL_MAX_ACTION_ROUNDS=2` vẫn override default bốn rounds, nên cập nhật hoặc đặt biến như trên. Không có secret mới, không đổi Volumes hay Qdrant collections. Xem [configuration](CONFIGURATION.md) và [giới hạn Central](AGENTIC_RAG_V2.md).
+
+Planner OpenAI mặc định dùng `CENTRAL_OPENAI_PLANNING_REASONING_EFFORT=low` cho việc chọn tool; UI reasoning của final answer không thay đổi. Đặt `inherit` nếu muốn planner cũng dùng effort của request. Cấu hình mới có hiệu lực sau redeploy; `--attach` chỉ điều khiển deployment đang tồn tại.
 
 Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` không tải Qwen; E5/reranker vẫn cần corpus và chạy trên CPU hoặc GPU theo cấu hình riêng.
 
