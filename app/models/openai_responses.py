@@ -199,14 +199,16 @@ class OpenAIResponsesRuntime:
             async for item in events:
                 yield item if isinstance(item, ModelDelta) else item[1]
 
-    async def plan(self, messages, *, tools, cancel, max_output_tokens=None):
+    async def plan(self, messages, *, tools, cancel, max_output_tokens=None, reasoning_effort=None):
         """Return native calls and replayable output, including encrypted reasoning."""
         result = None
         # A request-local adapter enforces the remaining planning output budget;
         # the shared client and final-answer adapter are never mutated.
         from dataclasses import replace
-        runtime = self if max_output_tokens is None else OpenAIResponsesRuntime(
-            self.client, replace(self.options, max_output_tokens=min(self.options.max_output_tokens, max_output_tokens)))
+        runtime = OpenAIResponsesRuntime(self.client, replace(self.options,
+            reasoning_effort=self.options.reasoning_effort if reasoning_effort is None else reasoning_effort,
+            max_output_tokens=(self.options.max_output_tokens if max_output_tokens is None
+                               else min(self.options.max_output_tokens, max_output_tokens))))
         async with aclosing(runtime._run(messages, cancel, tools=tools)) as events:
             async for item in events:
                 if not isinstance(item, ModelDelta):

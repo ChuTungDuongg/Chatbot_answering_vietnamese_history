@@ -1,6 +1,6 @@
 {
   "baseline_commit": "d8bc36a51ee5d158b95c1eb2cb863dcd431deb16",
-  "source_sha256": "f4b0180810fd40beb0a72afe6b91998be42977c02fa7c73026c39e274740df95",
+  "source_sha256": "20ab35e35ca5f3023bf3bb3dda8494f8ec2ebff4c80ad3ae6d8f49ebebe6b3fa",
   "repeats": 5,
   "measurement": "Scripted decisions, simulated usage, measured mock wall time; baseline Central planning/runtime only, shared current adapters/registry/citation filter; no live LLM quality or USD estimate.",
   "usd_cost": null,
@@ -26,8 +26,8 @@
           "planner_input_chars": 2036,
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
-          "planning_wall_ms": 14.283,
-          "wall_ms": 30.878
+          "planning_wall_ms": 14.953,
+          "wall_ms": 31.124
         },
         {
           "id": "wikipedia_chain",
@@ -48,8 +48,8 @@
           "planner_input_chars": 6505,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.6,
-          "wall_ms": 61.553
+          "planning_wall_ms": 30.386,
+          "wall_ms": 62.968
         },
         {
           "id": "independent_searches",
@@ -70,8 +70,8 @@
           "planner_input_chars": 2797,
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
-          "planning_wall_ms": 12.841,
-          "wall_ms": 45.15
+          "planning_wall_ms": 14.214,
+          "wall_ms": 47.006
         },
         {
           "id": "three_campaigns",
@@ -92,8 +92,8 @@
           "planner_input_chars": 4533,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 30.422,
-          "wall_ms": 61.96
+          "planning_wall_ms": 31.373,
+          "wall_ms": 63.81
         },
         {
           "id": "empty_then_refine",
@@ -114,8 +114,8 @@
           "planner_input_chars": 4347,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.769,
-          "wall_ms": 60.678
+          "planning_wall_ms": 30.712,
+          "wall_ms": 63.428
         },
         {
           "id": "speculative_reader",
@@ -136,8 +136,8 @@
           "planner_input_chars": 6990,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 30.111,
-          "wall_ms": 76.791
+          "planning_wall_ms": 30.445,
+          "wall_ms": 79.004
         },
         {
           "id": "repeated_search",
@@ -158,8 +158,8 @@
           "planner_input_chars": 4525,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.491,
-          "wall_ms": 60.758
+          "planning_wall_ms": 30.939,
+          "wall_ms": 63.535
         },
         {
           "id": "native_simple_fact",
@@ -180,8 +180,8 @@
           "planner_input_chars": 5154,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.712,
-          "wall_ms": 45.401
+          "planning_wall_ms": 31.139,
+          "wall_ms": 47.44
         },
         {
           "id": "native_malformed_recovery",
@@ -203,7 +203,7 @@
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
           "planning_wall_ms": null,
-          "wall_ms": 14.444
+          "wall_ms": 15.64
         }
       ],
       "summary": {
@@ -235,11 +235,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 1,
-          "planner_input_chars": 4024,
+          "planner_input_chars": 4620,
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
-          "planning_wall_ms": 14.517,
-          "wall_ms": 30.507
+          "planning_wall_ms": 15.172,
+          "wall_ms": 32.03
         },
         {
           "id": "wikipedia_chain",
@@ -257,11 +257,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 2,
-          "planner_input_chars": 11261,
+          "planner_input_chars": 12453,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 28.263,
-          "wall_ms": 59.844
+          "planning_wall_ms": 30.352,
+          "wall_ms": 63.076
         },
         {
           "id": "independent_searches",
@@ -279,11 +279,11 @@
           "excess_calls": 0,
           "parallel_batches": 1,
           "model_calls": 1,
-          "planner_input_chars": 5175,
+          "planner_input_chars": 5771,
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
-          "planning_wall_ms": 13.069,
-          "wall_ms": 29.151
+          "planning_wall_ms": 14.634,
+          "wall_ms": 30.701
         },
         {
           "id": "three_campaigns",
@@ -301,11 +301,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 3,
-          "planner_input_chars": 13349,
+          "planner_input_chars": 15137,
           "simulated_input_tokens": 300,
           "simulated_output_tokens": 60,
-          "planning_wall_ms": 45.463,
-          "wall_ms": 92.614
+          "planning_wall_ms": 46.866,
+          "wall_ms": 95.892
         },
         {
           "id": "empty_then_refine",
@@ -323,11 +323,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 2,
-          "planner_input_chars": 8323,
+          "planner_input_chars": 9515,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 30.021,
-          "wall_ms": 61.443
+          "planning_wall_ms": 31.166,
+          "wall_ms": 63.778
         },
         {
           "id": "speculative_reader",
@@ -345,11 +345,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 2,
-          "planner_input_chars": 11575,
+          "planner_input_chars": 12767,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 28.46,
-          "wall_ms": 61.147
+          "planning_wall_ms": 30.483,
+          "wall_ms": 63.165
         },
         {
           "id": "repeated_search",
@@ -367,11 +367,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 2,
-          "planner_input_chars": 8501,
+          "planner_input_chars": 9693,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.958,
-          "wall_ms": 46.181
+          "planning_wall_ms": 30.822,
+          "wall_ms": 47.395
         },
         {
           "id": "native_simple_fact",
@@ -389,11 +389,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 1,
-          "planner_input_chars": 4505,
+          "planner_input_chars": 5101,
           "simulated_input_tokens": 100,
           "simulated_output_tokens": 20,
-          "planning_wall_ms": 14.383,
-          "wall_ms": 30.329
+          "planning_wall_ms": 14.639,
+          "wall_ms": 30.977
         },
         {
           "id": "native_malformed_recovery",
@@ -411,11 +411,11 @@
           "excess_calls": 0,
           "parallel_batches": 0,
           "model_calls": 2,
-          "planner_input_chars": 9568,
+          "planner_input_chars": 10760,
           "simulated_input_tokens": 200,
           "simulated_output_tokens": 40,
-          "planning_wall_ms": 29.166,
-          "wall_ms": 45.33
+          "planning_wall_ms": 30.92,
+          "wall_ms": 47.616
         }
       ],
       "summary": {

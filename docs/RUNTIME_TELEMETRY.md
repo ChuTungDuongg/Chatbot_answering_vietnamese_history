@@ -39,6 +39,11 @@ Central v2 adds `planning.tool_wall_ms`, `parallel_batches`, `tools_executed`,
 Per-round records include execution modes, admitted call count, error categories,
 evidence count and replan reason. Tool records carry original call ID, round,
 batch, sequential/parallel/rejected mode and latency without arguments.
+Each planning round also records its actual `reasoning_effort`. The summary
+exposes `planning.reasoning_effort` and `planning.final_reasoning_effort`;
+flat metrics include `planning_reasoning_effort`. Request-level `reasoning_effort`
+continues to mean final-answer effort. This distinguishes a low-effort planner
+from an xhigh final answer without mislabeling token measurements.
 `performance.tool_execution_ms` remains the sum of individual call latencies;
 `tool_wall_ms` is elapsed scheduler time. The pre-final timing partition uses wall
 time to avoid double-counting overlapping calls. Replanning counts transitions

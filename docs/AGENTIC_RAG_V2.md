@@ -23,6 +23,31 @@ Planner nhận observations của rounds trước để tự sửa query, đổi
 
 Default tăng từ hai lên bốn rounds: đủ cho search → fetch → query bổ sung → fetch. Một câu factual có completion hợp lệ vẫn chỉ planner → retrieval → final, cho cả local và OpenAI. Không có LLM call bổ sung để đánh giá sufficiency. Đây là đánh giá của planner được chặn bởi kiểm tra backend; không phải chứng minh ngữ nghĩa mọi subquestion đã được trả lời.
 
+### Planning latency và reasoning theo giai đoạn
+
+Một trace production gần nhất với Central/Luna/xhigh đo 99,52 giây E2E, gồm 54,69 giây planning, 22,99 giây tool wall và 21,77 giây final generation; tổng năm model calls, bốn planning rounds. Trace không lưu câu hỏi nên không khẳng định đây chính xác là câu Napoleon/Waterloo/Hitler của owner. Đây là một quan sát, không phải p50/p95 hay baseline A/B.
+
+Để giảm phần planning, `CENTRAL_OPENAI_PLANNING_REASONING_EFFORT` mặc định `low`, tách khỏi final reasoning của request. Ví dụ UI Very High vẫn gửi `xhigh` cho final generation; planner chọn tools bằng `low`. `inherit` khôi phục semantics cũ, hoặc cấu hình medium/high/xhigh cho planner nếu evaluation cần độ suy luận cao hơn. Các options được clone immutable theo call, giữ client chung; không đổi model, provider, output ceilings hoặc final context. Trace ghi effort thật của từng stage. Local Qwen vẫn dùng action settings cũ.
+
+Live prompt yêu cầu gom independent subquestions trong cùng round, đọc các page IDs thực đã quan sát ở round kế, và khai báo completion trên lượt đọc cuối khi đủ evidence. Test cho câu so sánh Waterloo/Napoleon/Hitler chạy hai searches song song, sau đó ba readers song song và dừng sau hai rounds, vẫn giữ mọi native call ID và provenance. Đây là tool/LLM fixtures; chưa chứng minh live planner sẽ luôn chọn đúng sequence đó.
+
+Không hạ reasoning của final answer, không cắt rounds hoặc evidence trong deployment để đạt một con số latency giả. Very High vẫn có chi phí thời gian cho final generation. OpenAI Docs mô tả [low effort cho planning/tool use](https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort) và [parallelize các bước độc lập](https://developers.openai.com/api/docs/guides/latency-optimization#parallelize).
+
+Một cặp thử API thật local với câu Napoleon/Waterloo/Hitler, cùng prompt/harness mới, cùng final xhigh, Wiki tools và history rỗng có kết quả dưới đây. Dữ liệu số và giới hạn đầy đủ nằm trong [`latency_sample.json`](../evaluation/agentic/latency_sample.json); không lưu answer, private reasoning, keys hoặc API request IDs.
+
+| Một cặp live local | Planner inherit/xhigh | Planner low |
+| --- | ---: | ---: |
+| Planning wall | 21,40s | 7,63s |
+| Tool wall | 3,79s | 5,71s |
+| Final generation | 24,60s | 19,21s |
+| E2E | 49,85s | 32,56s |
+| Planning rounds | 3 | 4 |
+| Planning reasoning tokens thực | 729 | 0 |
+| Valid cited source IDs | 4 | 4 |
+| Stop reason | total_tool_budget | max_action_rounds |
+
+Benchmark được giới hạn tám tool executions (deployment mặc định 12), planning 8k output tokens và 10k output/call để khống chế paid usage; cả hai vòng nghiên cứu chạm giới hạn và final prompt được qualify. Provider trả completed không có nghĩa nhiệm vụ nghiên cứu đã đủ evidence. Citation ID membership không đánh giá tính đúng lịch sử. Thứ tự thử inherit rồi low, warm caches, network local và final output khác nhau đều ảnh hưởng kết quả; không coi mức giảm E2E của một cặp là causal speedup, p50/p95 hay bằng chứng chất lượng tương đương. Cần redeploy và đo nhiều câu warm/cold với budget production. `inherit` hoặc medium/high vẫn có thể phù hợp hơn khi cần planner suy luận sâu.
+
 ## Scheduler và dependency
 
 `app/central/execution.py` tạo executor riêng cho mỗi request. Planner có thể gắn optional `__central_independent=true` cho call không phụ thuộc call khác trong round. Flag chỉ có trên bản copy planner schema, được strip trước execution. Backend chỉ batch nếu tool còn có `ToolExecutionPolicy(read_only=True, parallel_safe=True)`. Nhiều calls tự nó không tạo quyền chạy song song.

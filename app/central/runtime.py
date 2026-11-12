@@ -32,10 +32,14 @@ EXECUTION_LIMIT_INSTRUCTION = load_prompt("central/execution_limit")
 class CentralRuntime:
     def __init__(self, *, model: Any, tools: ToolRegistry, max_action_rounds: int = 4,
                  action_max_new_tokens: int = 256, mcp_manager=None,
-                 max_mcp_tools: int = 8, mcp_schema_budget: int = 16384, limits: AgentLimits | None = None):
+                 max_mcp_tools: int = 8, mcp_schema_budget: int = 16384, limits: AgentLimits | None = None,
+                 planning_reasoning_effort: str = "low"):
         from app.config import CENTRAL_MODEL_ID
 
-        from app.models.openai_responses import OPENAI_MODELS
+        from app.models.openai_responses import OPENAI_MODELS, REASONING_EFFORTS
+        if planning_reasoning_effort not in REASONING_EFFORTS | {"inherit"}:
+            raise ValueError("Unsupported Central planning reasoning effort")
+        self.planning_reasoning_effort = planning_reasoning_effort
         if not (model.model_id == CENTRAL_MODEL_ID or
                 (getattr(model, "inference_backend", None) == "openai" and model.model_id in OPENAI_MODELS)):
             raise ValueError("Central must use vanilla Qwen3-8B")
@@ -109,6 +113,9 @@ class CentralRuntime:
         planning_rounds: list[dict[str, Any]] = []
         exit_reason = "max_action_rounds"
         native = getattr(self.model, "inference_backend", None) == "openai"
+        final_effort = self.model.options.reasoning_effort if native else None
+        planner_effort = (final_effort if self.planning_reasoning_effort == "inherit"
+                          else self.planning_reasoning_effort) if native else None
 
         def ingest(outcomes, *, append_outputs=True):
             nonlocal retrieval_ms, observation_chars, observation_error_chars, observation_exhausted
@@ -182,7 +189,7 @@ class CentralRuntime:
                     if native:
                         parsed, native_output, plan_done = await bounded_wait(self.model.plan(
                             messages, tools=planner_schemas, cancel=planning_cancel,
-                            max_output_tokens=remaining_tokens), cancel=cancel,
+                            max_output_tokens=remaining_tokens, reasoning_effort=planner_effort), cancel=cancel,
                             deadline=executor.deadline, on_abort=planning_cancel.set)
                     else:
                         plan_text, plan_done = await bounded_wait(self.model.generate(
@@ -195,6 +202,7 @@ class CentralRuntime:
                     "wall_ms": (time.perf_counter_ns() - round_started) / 1e6,
                     "model_ms": None, "ttft_ms": None, "input_tokens": None, "output_tokens": None,
                     "reasoning_tokens": None, "cached_input_tokens": None, "early_exit": False,
+                    "reasoning_effort": planner_effort,
                     "tools_requested": [], "error": "execution_deadline"})
                 exit_reason = "execution_deadline"
                 break
@@ -209,6 +217,7 @@ class CentralRuntime:
             output_tokens += model_metrics.get("output_tokens") or 0
             input_tokens += model_metrics.get("input_tokens") or 0
             round_metrics = {"round": rounds, "wall_ms": wall_ms,
+                             "reasoning_effort": planner_effort,
                              "started_ms": (round_started - (trace.started_ns if trace else prepare_started)) / 1e6,
                              "finished_ms": (round_finished - (trace.started_ns if trace else prepare_started)) / 1e6,
                              "model_ms": model_ms, "ttft_ms": model_metrics.get("model_ttft_ms"),
@@ -323,6 +332,7 @@ class CentralRuntime:
         if trace:
             trace.mark("prompt_ready")
         planning = {"rounds": planning_rounds, "exit_reason": exit_reason, "domain": domain,
+                    "reasoning_effort": planner_effort, "final_reasoning_effort": final_effort,
                     "total_wall_ms": sum(row["wall_ms"] for row in planning_rounds),
                     "tools_executed": executor.calls, "repeats_avoided": executor.repeats_avoided,
                     "tool_wall_ms": executor.wall_ms, "observation_chars": observation_chars,

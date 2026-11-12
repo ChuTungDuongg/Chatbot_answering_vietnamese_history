@@ -224,6 +224,7 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
                             "planning_reasoning_tokens": planning.get("reasoning_tokens"),
                             "planning_cached_input_tokens": planning.get("cached_input_tokens"),
                             "planning_wall_ms": planning["total_wall_ms"]})
+            metrics["planning_reasoning_effort"] = planning.get("reasoning_effort")
         mcp_metrics = prepared.retrieval.get("mcp", [])
         if mcp_metrics:
             metrics["mcp_tool_ms"] = sum(item["mcp_tool_ms"] for item in mcp_metrics)
@@ -292,6 +293,7 @@ def _runtime(request: Request, mode: ChatMode, payload: ChatRequest):
     if mode == ChatMode.HYBRID:
         return HybridRuntime(runtime.retriever, model, runtime.attachment_retriever)
     return CentralRuntime(model=model, tools=runtime.tools, max_action_rounds=runtime.max_action_rounds,
+                          planning_reasoning_effort=runtime.planning_reasoning_effort,
                           limits=runtime.limits,
                           action_max_new_tokens=runtime.action_max_new_tokens,
                           mcp_manager=runtime.mcp_manager, max_mcp_tools=runtime.max_mcp_tools,

@@ -1,0 +1,161 @@
+{
+  "measurement": "One live owner-local A/B using official OpenAI Responses and Wikipedia tools; no Modal containers. Ordered inherit then low.",
+  "reported_at": "2026-11-12T05:48:57.435364+00:00",
+  "question": "Vì sao Napoleon thua ở trận Waterloo? Napoleon có giống Hitler không?",
+  "settings": {
+    "model": "gpt-6-luna",
+    "final_reasoning_effort": "xhigh",
+    "max_action_rounds": 4,
+    "max_total_tool_calls": 8,
+    "max_planning_output_tokens": 8000,
+    "max_planning_input_tokens": 60000,
+    "per_response_max_output_tokens": 10000,
+    "history": [],
+    "available_tools": [
+      "search_wikipedia",
+      "fetch_wikipedia_page"
+    ]
+  },
+  "limitations": [
+    "One sample pair, not p50/p95 or a causal speedup estimate.",
+    "Same updated prompt/harness for both runs; compares planning effort only.",
+    "Local network and empty history differ from production; tools capped8 versus production default12.",
+    "Both research loops reached a budget limit; completed refers to final API response, not confirmed research sufficiency.",
+    "Citations were checked for source-ID membership only; historical claims and task completeness were not independently graded.",
+    "Second run may benefit from warm caches; final xhigh output length/reasoning varies.",
+    "No USD cost estimate and no production latency guarantee."
+  ],
+  "results": [
+    {
+      "planning_policy": "inherit",
+      "final_effort": "xhigh",
+      "model": "gpt-6-luna",
+      "planning_ms": 21401.997000000003,
+      "tool_ms": 3787.0037,
+      "planning_rounds": 3,
+      "planning_output_tokens": 1297,
+      "planning_reasoning_tokens": 729,
+      "exit_reason": "total_tool_budget",
+      "parallel_batches": 3,
+      "sources": 6,
+      "tools": [
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 649.4696
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 636.6161
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 1043.6152
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 1479.7604
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 688.8729
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 542.8682
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 624.7663
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 1656.1599
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": "total_tool_budget",
+          "ms": 0
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": "round_tool_budget",
+          "ms": 0
+        }
+      ],
+      "generation_ms": 24595.4095,
+      "final_output_tokens": 2210,
+      "final_reasoning_tokens": 1725,
+      "valid_citations": 4,
+      "answer_chars": 1698,
+      "e2e_ms": 49853.59590000007,
+      "provider_response_status": "completed",
+      "research_sufficiency_confirmed": false
+    },
+    {
+      "planning_policy": "low",
+      "final_effort": "xhigh",
+      "model": "gpt-6-luna",
+      "planning_ms": 7629.5458,
+      "tool_ms": 5706.9696,
+      "planning_rounds": 4,
+      "planning_output_tokens": 323,
+      "planning_reasoning_tokens": 0,
+      "exit_reason": "max_action_rounds",
+      "parallel_batches": 0,
+      "sources": 6,
+      "tools": [
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 488.8779
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 613.7457
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 1339.829
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 691.5926
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 1073.6396
+        },
+        {
+          "name": "fetch_wikipedia_page",
+          "error": null,
+          "ms": 753.5365
+        },
+        {
+          "name": "search_wikipedia",
+          "error": null,
+          "ms": 744.3344
+        }
+      ],
+      "generation_ms": 19208.9879,
+      "final_output_tokens": 1642,
+      "final_reasoning_tokens": 1256,
+      "valid_citations": 4,
+      "answer_chars": 1388,
+      "e2e_ms": 32563.084399997024,
+      "provider_response_status": "completed",
+      "research_sufficiency_confirmed": false
+    }
+  ]
+}

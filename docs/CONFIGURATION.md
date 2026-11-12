@@ -39,6 +39,7 @@ Khi đặt cả `CORPUS_PATH` và `RETRIEVAL_ROOT`, đường dẫn runtime mặ
 | `CENTRAL_ACTION_MAX_NEW_TOKENS` | `256` | Budget mỗi lần planner sinh action. |
 | `CENTRAL_FINAL_MAX_NEW_TOKENS` | `1536` | Budget câu trả lời cuối. |
 | `CENTRAL_MAX_ACTION_ROUNDS` | `4` | Cho phép `0..8`; completion hợp lệ có thể dừng sau round đầu. |
+| `CENTRAL_OPENAI_PLANNING_REASONING_EFFORT` | `low` | Reasoning riêng cho planner OpenAI: low/medium/high/xhigh; `inherit` dùng effort request như trước. Final answer luôn giữ effort đã chọn. Không áp dụng cho local Qwen. |
 | `CENTRAL_MAX_TOOL_CALLS_PER_ROUND` | `4` | Calls được thực thi tối đa mỗi round (1..16). |
 | `CENTRAL_MAX_TOTAL_TOOL_CALLS` | `12` | Tổng calls được thực thi mỗi request (1..64). |
 | `CENTRAL_MAX_IDENTICAL_TOOL_CALLS` | `1` | Repeat limit với arguments đã normalize (1..3). |

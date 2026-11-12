@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     central_action_max_new_tokens: int = Field(default=256, ge=1)
     central_final_max_new_tokens: int = Field(default=1536, ge=1)
     central_max_action_rounds: int = Field(default=4, ge=0, le=8)
+    central_openai_planning_reasoning_effort: Literal["inherit", "low", "medium", "high", "xhigh"] = "low"
     central_max_tool_calls_per_round: int = Field(default=4, ge=1, le=16)
     central_max_total_tool_calls: int = Field(default=12, ge=1, le=64)
     central_max_identical_tool_calls: int = Field(default=1, ge=1, le=3)

@@ -141,6 +141,7 @@ async def lifespan(app: FastAPI):
                     registry.register(FetchPageTool())
                 manager.register(registry)
                 central = CentralRuntime(model=central_model, tools=registry,
+                                         planning_reasoning_effort=settings.central_openai_planning_reasoning_effort,
                                          limits=AgentLimits.from_settings(settings),
                                          max_action_rounds=settings.central_max_action_rounds,
                                          action_max_new_tokens=settings.central_action_max_new_tokens,
