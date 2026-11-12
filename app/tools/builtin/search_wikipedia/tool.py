@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 from app.tools.declarations import BuiltinTool, builtin_description
+from app.tools.registry import ToolExecutionPolicy
 from app.tools.wikipedia_client import _request_json, _clean_text
 
 
@@ -13,6 +14,7 @@ class SearchWikipediaInput(BaseModel):
 
 
 class SearchWikipediaTool(BuiltinTool):
+    execution_policy = ToolExecutionPolicy(read_only=True, parallel_safe=True)
     name = "search_wikipedia"
     description = builtin_description("search_wikipedia")
     input_schema = SearchWikipediaInput

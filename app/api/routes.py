@@ -233,6 +233,12 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
         metrics["tool_calls"] = len(prepared.tool_calls)
         metrics["tool_call_types"] = [item["name"] for item in prepared.tool_calls]
         metrics["tool_execution_ms"] = sum(item["latency_ms"] for item in prepared.tool_calls)
+        metrics["tool_wall_ms"] = prepared.planning.get("tool_wall_ms", metrics["tool_execution_ms"])
+        if prepared.planning:
+            metrics.update({"parallel_tool_batches": prepared.planning.get("parallel_batches", 0),
+                            "repeated_calls_avoided": prepared.planning.get("repeats_avoided", 0),
+                            "replanning_events": prepared.planning.get("replanning_events", 0),
+                            "agent_exit_reason": prepared.planning.get("exit_reason")})
         metrics["tool_parse_failures"] = prepared.tool_parse_failures
         metrics["action_rounds"] = prepared.action_rounds
         metrics["time_until_final_generation_ms"] = trace.offset_ms("generation_started")
@@ -243,9 +249,9 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
         metrics["pre_final_breakdown_ms"] = {
             "request_preparation": trace.offset_ms("prepare_started"),
             "planning": planner_wall_ms,
-            "tools": metrics["tool_execution_ms"],
+            "tools": metrics["tool_wall_ms"],
             "prompt_build": prepared.prompt_build_ms,
-            "orchestration": max(0.0, prepare_ms - planner_wall_ms - metrics["tool_execution_ms"]
+            "orchestration": max(0.0, prepare_ms - planner_wall_ms - metrics["tool_wall_ms"]
                                  - (prepared.prompt_build_ms or 0.0)) if prepare_ms is not None else None,
             "prepare_to_model_request": trace.span_ms("prompt_ready", "final_model_requested"),
             "final_model_preparation_and_queue": trace.span_ms("final_model_requested", "generation_started"),
@@ -286,6 +292,7 @@ def _runtime(request: Request, mode: ChatMode, payload: ChatRequest):
     if mode == ChatMode.HYBRID:
         return HybridRuntime(runtime.retriever, model, runtime.attachment_retriever)
     return CentralRuntime(model=model, tools=runtime.tools, max_action_rounds=runtime.max_action_rounds,
+                          limits=runtime.limits,
                           action_max_new_tokens=runtime.action_max_new_tokens,
                           mcp_manager=runtime.mcp_manager, max_mcp_tools=runtime.max_mcp_tools,
                           mcp_schema_budget=runtime.mcp_schema_budget)
@@ -430,7 +437,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         max_tokens = (settings.hybrid_max_new_tokens if mode == ChatMode.HYBRID
                       else settings.central_final_max_new_tokens)
         trace.mark("final_model_requested")
-        citations = CitationFilter(prepared.contexts) if payload.provider == "openai" else None
+        citations = CitationFilter(prepared.contexts) if payload.provider == "openai" or mode == ChatMode.CENTRAL else None
         hidden_markup = HiddenMarkupFilter() if payload.provider == "openai" else None
         model_stream = runtime.model.stream(prepared.messages, max_new_tokens=max_tokens, cancel=cancel)
         async for item in model_stream:
@@ -453,7 +460,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if completed is None:
             raise RuntimeError("Model generation ended without completion metadata")
         if citations:
-            tail = citations.feed(hidden_markup.feed("", final=True), final=True)
+            tail = citations.feed(hidden_markup.feed("", final=True) if hidden_markup else "", final=True)
             if tail:
                 answer_parts.append(tail)
                 delta_times.append(time.perf_counter_ns())
@@ -470,7 +477,7 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         if not answer.strip():
             raise RuntimeError("Model returned an empty answer")
         source_items, cited_ids = _sources(answer, prepared.contexts)
-        if payload.provider == "openai" and mode == ChatMode.CENTRAL and not cited_ids:
+        if mode == ChatMode.CENTRAL and not cited_ids:
             raise GuardrailError("Câu trả lời chưa có trích dẫn hợp lệ; hãy thử lại.")
         yield "status", {"stage": "generation", "state": "completed", "message": "Đã tạo câu trả lời",
                          "mode": mode.value, "retrieval_backend": backend, "request_id": trace.request_id,

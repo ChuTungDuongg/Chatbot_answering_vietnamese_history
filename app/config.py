@@ -70,7 +70,17 @@ class Settings(BaseSettings):
     hybrid_max_new_tokens: int = Field(default=1536, ge=1)
     central_action_max_new_tokens: int = Field(default=256, ge=1)
     central_final_max_new_tokens: int = Field(default=1536, ge=1)
-    central_max_action_rounds: int = Field(default=2, ge=0, le=8)
+    central_max_action_rounds: int = Field(default=4, ge=0, le=8)
+    central_max_tool_calls_per_round: int = Field(default=4, ge=1, le=16)
+    central_max_total_tool_calls: int = Field(default=12, ge=1, le=64)
+    central_max_identical_tool_calls: int = Field(default=1, ge=1, le=3)
+    central_max_parallel_tool_calls: int = Field(default=3, ge=1, le=8)
+    central_execution_deadline_seconds: float = Field(default=180, ge=1, le=600)
+    central_tool_timeout_seconds: float = Field(default=30, ge=.1, le=300)
+    central_max_observation_chars: int = Field(default=8000, ge=256, le=16000)
+    central_max_total_observation_chars: int = Field(default=48000, ge=256, le=128000)
+    central_max_planning_output_tokens: int = Field(default=40000, ge=256, le=128000)
+    central_max_planning_input_tokens: int = Field(default=120000, ge=1024, le=1000000)
     enable_hybrid_mode: bool = True
     enable_central_mode: bool = True
     default_inference_mode: ChatMode = ChatMode.HYBRID
@@ -88,6 +98,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8",
                                       extra="ignore", populate_by_name=True)
+
+    @model_validator(mode="after")
+    def require_consistent_agent_observation_budget(self):
+        if self.central_max_total_observation_chars < self.central_max_observation_chars:
+            raise ValueError("CENTRAL_MAX_TOTAL_OBSERVATION_CHARS must cover one observation")
+        return self
 
     @field_validator("default_inference_mode", mode="before")
     @classmethod

@@ -106,7 +106,8 @@ def test_native_calls_keep_ids_and_replay_reasoning_without_executing_malformed(
     runtime = OpenAIResponsesRuntime(client, OpenAIOptions())
     parsed, replay, _ = run(runtime.plan([], tools=[{"function": {"name": "search_history",
         "description": "Search", "parameters": {"type": "object"}}}], cancel=threading.Event()))
-    assert [(call.id, call.arguments) for call in parsed.tool_calls] == [("c1", {"query": "Hue"})]
+    assert [(call.id, call.arguments) for call in parsed.tool_calls] == [("c1", {"query": "Hue"}), ("c2", {})]
+    assert parsed.tool_calls[1].error == "invalid_arguments"  # Retained for its correlated error output.
     assert parsed.failures == 1 and replay == output
     assert client.requests[0]["tools"][0]["type"] == "function"
 

@@ -11,6 +11,7 @@ class DecodedFunctionCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    error: str | None = None
 
 
 @dataclass(frozen=True)

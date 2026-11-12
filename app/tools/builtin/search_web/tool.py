@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, Field
 from app.tools.declarations import BuiltinTool, builtin_description
+from app.tools.registry import ToolExecutionPolicy
 from app.tools.web_providers import WebSearchProvider, LocalOnlyWebProvider
 
 
@@ -12,6 +13,7 @@ class SearchWebInput(BaseModel):
 
 
 class SearchWebTool(BuiltinTool):
+    execution_policy = ToolExecutionPolicy(read_only=True, parallel_safe=True)
     name = "search_web"
     description = builtin_description("search_web")
     input_schema = SearchWebInput

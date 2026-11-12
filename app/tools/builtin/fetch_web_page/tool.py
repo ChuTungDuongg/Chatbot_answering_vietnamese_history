@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 from app.tools.declarations import BuiltinTool, builtin_description
+from app.tools.registry import ToolExecutionPolicy
 import re
 import urllib.request
 from html.parser import HTMLParser
@@ -35,6 +36,7 @@ class FetchPageInput(BaseModel):
 
 
 class FetchPageTool(BuiltinTool):
+    execution_policy = ToolExecutionPolicy(read_only=True, parallel_safe=True)
     name = "fetch_web_page"
     description = builtin_description("fetch_web_page")
     input_schema = FetchPageInput

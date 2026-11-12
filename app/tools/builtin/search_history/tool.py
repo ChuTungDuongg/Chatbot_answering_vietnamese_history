@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, Field
 from app.tools.declarations import BuiltinTool, builtin_description
+from app.tools.registry import ToolExecutionPolicy
 from app.rag.retriever import Retriever
 from app.rag.backends import DenseBackendError
 from app.tools.registry import ToolExecutionContext
@@ -14,6 +15,7 @@ class SearchHistoryInput(BaseModel):
 
 
 class SearchHistoryTool(BuiltinTool):
+    execution_policy = ToolExecutionPolicy(read_only=True, parallel_safe=True, exclusive_resource="retrieval")
     name = "search_history"
     description = builtin_description("search_history")
     input_schema = SearchHistoryInput

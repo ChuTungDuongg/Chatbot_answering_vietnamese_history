@@ -199,26 +199,38 @@ class OpenAIResponsesRuntime:
             async for item in events:
                 yield item if isinstance(item, ModelDelta) else item[1]
 
-    async def plan(self, messages, *, tools, cancel):
+    async def plan(self, messages, *, tools, cancel, max_output_tokens=None):
         """Return native calls and replayable output, including encrypted reasoning."""
         result = None
-        async with aclosing(self._run(messages, cancel, tools=tools)) as events:
+        # A request-local adapter enforces the remaining planning output budget;
+        # the shared client and final-answer adapter are never mutated.
+        from dataclasses import replace
+        runtime = self if max_output_tokens is None else OpenAIResponsesRuntime(
+            self.client, replace(self.options, max_output_tokens=min(self.options.max_output_tokens, max_output_tokens)))
+        async with aclosing(runtime._run(messages, cancel, tools=tools)) as events:
             async for item in events:
                 if not isinstance(item, ModelDelta):
                     result = item
         if result is None:
             raise OpenAIProviderError("OpenAI request was cancelled.")
         response, done = result
-        calls, failures, replay = [], 0, []
+        calls, failures, replay, seen = [], 0, [], set()
         for item in _get(response, "output", []):
             replay.append(item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else item)
             if _get(item, "type") != "function_call":
                 continue
+            call_id, name = _get(item, "call_id"), _get(item, "name")
+            if not isinstance(call_id, str) or not call_id or call_id in seen or not isinstance(name, str) or not name:
+                raise OpenAIProviderError("OpenAI returned an invalid function-call envelope.", "malformed_tool_call")
+            seen.add(call_id)
             try:
                 args = json.loads(_get(item, "arguments", ""))
                 if not isinstance(args, dict) or not _get(item, "call_id") or not _get(item, "name"):
                     raise ValueError()
-                calls.append(DecodedFunctionCall(_get(item, "call_id"), _get(item, "name"), args))
+                calls.append(DecodedFunctionCall(call_id, name, args))
             except (ValueError, TypeError):
                 failures += 1
+                # Preserve correlation and provide a sanitized error output; do
+                # not execute malformed arguments or replay an orphaned call.
+                calls.append(DecodedFunctionCall(call_id, name, {}, error="invalid_arguments"))
         return HermesDecodeResult("", tuple(calls), failures), replay, done

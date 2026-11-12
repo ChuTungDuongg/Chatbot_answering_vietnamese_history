@@ -55,17 +55,41 @@ def safe_contexts(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def safe_observation(contexts: list[dict[str, Any]], error: str | None = None) -> str:
+def safe_observation(contexts: list[dict[str, Any]], error: str | None = None, *, max_chars: int = 8000) -> str:
     import json
     if error:
         return json.dumps({"success": False, "error": error if error in {
-            "tool_not_allowed", "external_evidence_required"} else "tool_failed"})
+            "tool_not_allowed", "external_evidence_required", "dependency_not_observed", "repeated_call",
+            "round_tool_budget", "total_tool_budget", "tool_timeout", "invalid_arguments",
+            "invalid_planner_control", "observation_budget", "execution_deadline", "retrieval_unavailable"}
+            else "tool_failed"})
     evidence = [{"chunk_id": str(c["chunk_id"]), "source_kind": str(c.get("source_kind") or "history"),
                  "title": str(c.get("title") or "")[:250], "text": str(c.get("text") or "")[:1500],
                  "metadata": {k: v for k, v in (c.get("metadata") if isinstance(c.get("metadata"), dict) else {}).items()
                               if k in {"page_id", "language", "truncated"} and isinstance(v, (str, int, bool))}}
                 for c in contexts[:4]]
-    return json.dumps({"untrusted_evidence": evidence}, ensure_ascii=False)
+    from urllib.parse import urlsplit
+    for row, original in zip(evidence, contexts):
+        url = original.get("url")
+        try:
+            parsed = urlsplit(url) if isinstance(url, str) else None
+            if parsed and parsed.scheme in {"https", "http"} and parsed.hostname and not parsed.username and not parsed.password:
+                row["url"] = url[:2000]
+        except ValueError:
+            pass
+    truncated = len(contexts) > len(evidence) or any(len(str(c.get("text") or "")) > 1500 for c in contexts[:4])
+    payload = {"untrusted_evidence": evidence, "observation_truncated": truncated}
+    while True:
+        value = json.dumps(payload, ensure_ascii=False)
+        if len(value) <= max_chars:
+            return value
+        payload["observation_truncated"] = True
+        if not evidence:
+            return '{"success": false, "error": "observation_budget"}'
+        if len(evidence[-1]["text"]) > 64:
+            evidence[-1]["text"] = evidence[-1]["text"][:len(evidence[-1]["text"]) // 2]
+        else:
+            evidence.pop()
 
 
 class HiddenMarkupFilter:

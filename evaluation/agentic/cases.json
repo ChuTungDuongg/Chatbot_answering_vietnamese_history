@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "simple_fact", "question": "Bạch Đằng năm 938?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "query": "938", "finish": true}]],
+      "results": {"938": ["938"]}, "required": ["938"], "maximum_useful_calls": 1
+    },
+    {
+      "id": "wikipedia_chain", "question": "Lịch sử thế giới thời La Mã?", "tools": ["search_wikipedia", "fetch_wikipedia_page"],
+      "plans": [[{"name": "search_wikipedia", "query": "Rome"}], [{"name": "fetch_wikipedia_page", "page": "77", "finish": true}]],
+      "results": {"Rome": ["wiki_vi_77"], "77": ["full_77"]}, "required": ["full_77"], "maximum_useful_calls": 2
+    },
+    {
+      "id": "independent_searches", "question": "Đối chiếu hai nguồn lịch sử?", "tools": ["search_history", "search_wikipedia"],
+      "plans": [[{"name": "search_history", "query": "A", "independent": true, "finish": true}, {"name": "search_wikipedia", "query": "B", "independent": true, "finish": true}]],
+      "results": {"A": ["A"], "B": ["wiki_vi_77"]}, "required": ["A", "wiki_vi_77"], "maximum_useful_calls": 2
+    },
+    {
+      "id": "three_campaigns", "question": "So sánh chiến thuật ba cuộc kháng chiến chống Nguyên?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "query": "broad"}], [{"name": "search_history", "query": "1285"}], [{"name": "search_history", "query": "1288", "finish": true}]],
+      "results": {"broad": ["1258"], "1285": ["1285"], "1288": ["1288"]}, "required": ["1258", "1285", "1288"], "maximum_useful_calls": 3
+    },
+    {
+      "id": "empty_then_refine", "question": "Tìm nguồn cụ thể về Bạch Đằng?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "query": "broad"}], [{"name": "search_history", "query": "specific", "finish": true}]],
+      "results": {"broad": [], "specific": ["938"]}, "required": ["938"], "maximum_useful_calls": 2
+    },
+    {
+      "id": "speculative_reader", "question": "Lịch sử thế giới thời La Mã?", "tools": ["search_wikipedia", "fetch_wikipedia_page"],
+      "plans": [[{"name": "search_wikipedia", "query": "Rome", "finish": true}, {"name": "fetch_wikipedia_page", "page": "999", "finish": true}], [{"name": "fetch_wikipedia_page", "page": "77", "finish": true}]],
+      "results": {"Rome": ["wiki_vi_77"], "999": ["unrelated_999"], "77": ["full_77"]}, "invalid_arguments": ["999"], "required": ["full_77"], "maximum_useful_calls": 2
+    },
+    {
+      "id": "repeated_search", "question": "Phân tích các chiến thuật chưa được xác minh?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "query": "same"}], [{"name": "search_history", "query": "same"}], [{"name": "search_history", "query": "same"}], [{"name": "search_history", "query": "same"}]],
+      "results": {"same": ["partial"]}, "required": ["missing"], "maximum_useful_calls": 1
+    },
+    {
+      "id": "native_simple_fact", "provider": "openai", "question": "Bạch Đằng năm 938?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "query": "938", "finish": true}], []],
+      "results": {"938": ["938"]}, "required": ["938"], "maximum_useful_calls": 1
+    },
+    {
+      "id": "native_malformed_recovery", "provider": "openai", "question": "Bạch Đằng năm 938?", "tools": ["search_history"],
+      "plans": [[{"name": "search_history", "malformed": true}], [{"name": "search_history", "query": "938", "finish": true}], []],
+      "results": {"938": ["938"]}, "required": ["938"], "maximum_useful_calls": 1
+    }
+  ]
+}

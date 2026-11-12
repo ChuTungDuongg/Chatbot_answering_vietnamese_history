@@ -20,6 +20,7 @@ class MCPManager:
         self.enabled, self.repo_root, self.factory = enabled, Path(repo_root or Path.cwd()), factory
         self.connections, self.adapters, self.connection_ms, self.errors = {}, {}, {}, {}
         self.pending_calls = set()
+        self.execution_locks = {}
 
     @classmethod
     def from_settings(cls, settings):
@@ -104,7 +105,13 @@ class MCPManager:
                     "tool": tool, **({"latency_ms": latency} if latency is not None else {})})
         start = time.perf_counter_ns()
         emit("started")
-        call = asyncio.create_task(connection.client.call_tool(tool, arguments))
+        # Serialize the shared remote session, including calls from other requests.
+        # The existing timeout/cancellation watcher also bounds time in this queue.
+        lock = self.execution_locks.setdefault(server, asyncio.Lock())
+        async def remote_call():
+            async with lock:
+                return await connection.client.call_tool(tool, arguments)
+        call = asyncio.create_task(remote_call())
         async def wait_cancel():
             while context.cancel is not None and not context.cancel.is_set(): await asyncio.sleep(.05)
             if context.cancel is None: await asyncio.Future()

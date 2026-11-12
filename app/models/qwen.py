@@ -257,9 +257,10 @@ class QwenRuntime:
         finally:
             if not generation_finished:
                 cancel.set()
-            # A timed join can leave generate() and its CUDA inputs alive after
-            # the caller has moved to the next question or model.
-            worker.join()
+            # Keep the worker/inputs alive until decode exits, without blocking
+            # the event loop when a stopping criterion is slow to cooperate.
+            # The worker owns the generation gate throughout this cleanup.
+            await asyncio.to_thread(worker.join)
             del worker, generate_worker, inputs, streamer, clock, messages_queue
 
     async def generate(self, messages: list[dict[str, Any]], *, max_new_tokens: int,

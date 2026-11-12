@@ -115,6 +115,44 @@ def test_qwen_actual_termination_without_guessing(model_id, tokens, budget, othe
     assert done.metrics["model_ttft_ms"] is not None
 
 
+def test_qwen_cancel_cleanup_does_not_block_event_loop_or_release_model_gate_early():
+    import torch
+    import threading
+    from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer  # warm lazy imports before timing
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    class Tokenizer:
+        pad_token_id, eos_token_id = 0, 99
+    class Model:
+        def generate(self, **kwargs):
+            started.set()
+            release.wait(2)
+            finished.set()
+            return None
+    runtime = QwenRuntime(model_id=CENTRAL_MODEL_ID)
+    runtime.model, runtime.tokenizer = Model(), Tokenizer()
+    runtime._prepare = lambda *args: ({"input_ids": torch.tensor([[50]])}, 1)
+    async def exercise():
+        cancel = threading.Event()
+        task = asyncio.create_task(runtime.generate([], max_new_tokens=2, cancel=cancel))
+        assert await asyncio.to_thread(started.wait, 2)
+        # A watchdog releases the fake uncooperative decode even if cleanup blocks
+        # the event loop. No real model or CUDA resource is involved.
+        watchdog = threading.Timer(.6, release.set)
+        watchdog.start()
+        try:
+            task.cancel()
+            await asyncio.sleep(.02)
+            assert not finished.is_set(), "cleanup blocked the event loop until decode finished"
+            assert runtime._generate_lock.locked(), "active worker lost its serialization gate"
+        finally:
+            release.set()
+            watchdog.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert finished.is_set() and not runtime._generate_lock.locked()
+    asyncio.run(exercise())
+
+
 def test_completed_trace_update_is_owner_and_conversation_scoped(tmp_path):
     _, store, _, _ = _app(tmp_path)
     conversation = store.create_conversation("owner")

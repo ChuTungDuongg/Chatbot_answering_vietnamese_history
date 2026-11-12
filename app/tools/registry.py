@@ -27,6 +27,13 @@ class AgentTool(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ToolExecutionPolicy:
+    read_only: bool = False
+    parallel_safe: bool = False
+    exclusive_resource: str | None = None
+
+
 @dataclass
 class ToolCallRecord:
     name: str
@@ -57,6 +64,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, AgentTool] = {}
         self._descriptors: dict[str, dict[str, Any]] = {}
+        self._sync_locks: dict[str, threading.Lock] = {}
 
     def register(self, tool: AgentTool) -> None:
         if tool.name in self._tools:
@@ -67,6 +75,21 @@ class ToolRegistry:
         }
         self._tools[tool.name] = tool
         self._descriptors[tool.name] = descriptor
+
+    def execution_policy(self, name: str) -> ToolExecutionPolicy:
+        tool = self.get(name)
+        # Remote readOnlyHint is not evidence of session concurrency safety.
+        if self._descriptors[name].get("provider") == "mcp":
+            return ToolExecutionPolicy()
+        policy = getattr(tool, "execution_policy", None)
+        if not isinstance(policy, ToolExecutionPolicy):
+            return ToolExecutionPolicy(exclusive_resource=f"tool:{name}")
+        return policy
+
+    def validate_arguments(self, name: str, arguments: dict[str, Any]):
+        tool = self.get(name)
+        validator = getattr(tool, "validate_arguments", None)
+        return validator(arguments) if callable(validator) else tool.input_schema.model_validate(arguments)
 
     def get(self, name: str) -> AgentTool:
         try:
@@ -94,9 +117,9 @@ class ToolRegistry:
             if context and context.allowed_tools is not None and name not in context.allowed_tools:
                 return None, ToolCallRecord(name=name, arguments={}, error="tool_not_allowed")
             tool = self.get(name)
-            provider, server = getattr(tool, "provider", "builtin"), getattr(tool, "server", None)
-            validator = getattr(tool, "validate_arguments", None)
-            parsed = validator(arguments) if callable(validator) else tool.input_schema.model_validate(arguments)
+            provider = self._descriptors[name].get("provider", "builtin")
+            server = getattr(tool, "server", None)
+            parsed = self.validate_arguments(name, arguments)
             if context is None:
                 runner = tool.run
                 call_args = (parsed,)
@@ -106,11 +129,39 @@ class ToolRegistry:
                 call_args = (parsed, context) if callable(run_with_context) else (parsed,)
             stages = StageProgress(context.progress if context else None,
                                    context.retrieval_backend if context else None)
+            resource = self.execution_policy(name).exclusive_resource
             with (nullcontext() if provider == "mcp" else stages.track(f"tool:{name}")):
                 if inspect.iscoroutinefunction(runner):
-                    result = await runner(*call_args)
+                    if resource:
+                        # Share the same gate with synchronous workers; never
+                        # release a worker's gate merely because its awaiter stops.
+                        lock = self._sync_locks.setdefault(resource, threading.Lock())
+                        while not lock.acquire(blocking=False):
+                            if context and context.cancel and context.cancel.is_set():
+                                raise asyncio.CancelledError()
+                            await asyncio.sleep(.01)
+                        try:
+                            result = await runner(*call_args)
+                        finally:
+                            lock.release()
+                    else:
+                        result = await runner(*call_args)
                 else:
-                    result = await asyncio.to_thread(runner, *call_args)
+                    lock = self._sync_locks.setdefault(resource, threading.Lock()) if resource else None
+                    def invoke():
+                        acquired = False
+                        try:
+                            while lock and not acquired:
+                                if context and context.cancel and context.cancel.is_set():
+                                    raise asyncio.CancelledError()
+                                acquired = lock.acquire(timeout=.05)
+                            if context and context.cancel and context.cancel.is_set():
+                                raise asyncio.CancelledError()
+                            return runner(*call_args)
+                        finally:
+                            if acquired:
+                                lock.release()
+                    result = await asyncio.to_thread(invoke)
                     if inspect.isawaitable(result):
                         result = await result
             count = len(result) if hasattr(result, "__len__") else None

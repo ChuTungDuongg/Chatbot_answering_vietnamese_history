@@ -179,7 +179,7 @@ def test_early_exit_requires_successful_usable_untruncated_evidence(bad_result):
     model = Planner([call("search_history", query="Bạch Đằng") + READY,
                      call("fetch_wikipedia_page", page_id_or_title="Bạch Đằng") + READY],
                     finish_reason="length" if bad_result == "plan_length" else "stop")
-    prepared = asyncio.run(CentralRuntime(model=model, tools=tools).prepare("Bạch Đằng?", 3, []))
+    prepared = asyncio.run(CentralRuntime(model=model, tools=tools, max_action_rounds=2).prepare("Bạch Đằng?", 3, []))
     assert prepared.action_rounds == 2 and not prepared.planning["rounds"][0]["early_exit"]
 
 

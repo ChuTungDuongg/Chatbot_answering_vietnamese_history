@@ -143,7 +143,12 @@ image = modal.Image.from_dockerfile(
         "MODEL_ADAPTER_PATH": adapter_path,
         "DO_SAMPLE": "false",
         "ENABLE_THINKING": "false",
-        "CENTRAL_MAX_ACTION_ROUNDS": "2",
+        "CENTRAL_MAX_ACTION_ROUNDS": os.getenv("CENTRAL_MAX_ACTION_ROUNDS", "4"),
+        **{key: os.environ[key] for key in (
+            "CENTRAL_MAX_TOOL_CALLS_PER_ROUND", "CENTRAL_MAX_TOTAL_TOOL_CALLS", "CENTRAL_MAX_IDENTICAL_TOOL_CALLS",
+            "CENTRAL_MAX_PARALLEL_TOOL_CALLS", "CENTRAL_EXECUTION_DEADLINE_SECONDS", "CENTRAL_TOOL_TIMEOUT_SECONDS",
+            "CENTRAL_MAX_OBSERVATION_CHARS", "CENTRAL_MAX_TOTAL_OBSERVATION_CHARS",
+            "CENTRAL_MAX_PLANNING_OUTPUT_TOKENS", "CENTRAL_MAX_PLANNING_INPUT_TOKENS") if key in os.environ},
         "CENTRAL_ACTION_MAX_NEW_TOKENS": "256",
         "CENTRAL_FINAL_MAX_NEW_TOKENS": "1536",
         # Omit the default so container Settings is the single source of truth.

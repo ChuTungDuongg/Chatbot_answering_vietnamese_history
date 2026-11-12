@@ -1,0 +1,1 @@
+Planner control only. True explicitly declares this call independent of every other call in this round, using only previously observed inputs. The backend may parallelize only approved read-only concurrency-safe implementations; this never grants permission. Omit or use false when uncertain. Removed before tool execution.

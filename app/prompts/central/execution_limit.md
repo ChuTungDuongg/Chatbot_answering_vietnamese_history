@@ -1,0 +1,1 @@
+Quá trình tìm chứng cứ đã dừng trước khi xác nhận đủ toàn bộ yêu cầu. Chỉ trả lời các phần được nguồn đã chọn hỗ trợ; nói rõ phần còn thiếu, chưa xác minh hoặc mâu thuẫn. Không diễn đạt như thể đã nghiên cứu đầy đủ, không suy đoán và không tự tạo trích dẫn để lấp khoảng trống.

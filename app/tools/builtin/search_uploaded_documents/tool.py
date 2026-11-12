@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, Field
 from app.tools.declarations import BuiltinTool, builtin_description
+from app.tools.registry import ToolExecutionPolicy
 from app.chat.attachments import TemporaryCorpusRetriever
 from app.tools.registry import ToolExecutionContext
 
@@ -13,6 +14,7 @@ class SearchUploadedDocumentsInput(BaseModel):
 
 
 class SearchUploadedDocumentsTool(BuiltinTool):
+    execution_policy = ToolExecutionPolicy(read_only=True, parallel_safe=True, exclusive_resource="retrieval")
     name = "search_uploaded_documents"
     description = builtin_description("search_uploaded_documents")
     input_schema = SearchUploadedDocumentsInput

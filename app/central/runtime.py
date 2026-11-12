@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+import json
 import threading
 import time
 from typing import Any
@@ -9,11 +12,13 @@ from typing import Any
 from app.models.tool_calls import HermesFunctionCallCodec
 from app.models.base import ModelDone
 from app.prompts.loader import load_prompt
-from app.central.planning import (PLANNER_INSTRUCTION, evidence_chunks, final_after_tools,
-                                  question_domain, terminal_evidence, planner_tool_schemas, COMPLETION_FIELD)
+from app.central.budgets import AgentDeadline, AgentLimits, bounded_wait
+from app.central.execution import AgentExecutor, merge_tool_metrics
+from app.central.planning import (AGENTIC_PLANNER_INSTRUCTION, final_after_tools, tool_evidence, select_evidence,
+                                  evidence_kind, question_domain, terminal_evidence, planner_tool_schemas, COMPLETION_FIELD, INDEPENDENT_FIELD)
 from app.rag.prompting import build_messages
 from app.rag.schemas import PreparedAnswer
-from app.tools.registry import ToolCallRecord, ToolExecutionContext, ToolRegistry
+from app.tools.registry import ToolExecutionContext, ToolRegistry
 from app.tools.policy import tool_view
 from app.rag.progress import StageProgress, ProgressCallback
 from app.security.guardrails import guard_question, safe_contexts, safe_observation
@@ -21,18 +26,22 @@ from app.security.guardrails import guard_question, safe_contexts, safe_observat
 
 EXTERNAL_DOMAIN_INSTRUCTION = load_prompt("central/external_domain")
 GROUNDED_FINAL_INSTRUCTION = load_prompt("central/grounded_final")
+EXECUTION_LIMIT_INSTRUCTION = load_prompt("central/execution_limit")
 
 
 class CentralRuntime:
-    def __init__(self, *, model: Any, tools: ToolRegistry, max_action_rounds: int = 2,
+    def __init__(self, *, model: Any, tools: ToolRegistry, max_action_rounds: int = 4,
                  action_max_new_tokens: int = 256, mcp_manager=None,
-                 max_mcp_tools: int = 8, mcp_schema_budget: int = 16384):
+                 max_mcp_tools: int = 8, mcp_schema_budget: int = 16384, limits: AgentLimits | None = None):
         from app.config import CENTRAL_MODEL_ID
 
         from app.models.openai_responses import OPENAI_MODELS
         if not (model.model_id == CENTRAL_MODEL_ID or
                 (getattr(model, "inference_backend", None) == "openai" and model.model_id in OPENAI_MODELS)):
             raise ValueError("Central must use vanilla Qwen3-8B")
+        if not 0 <= max_action_rounds <= 8:
+            raise ValueError("Central planning rounds must be between 0 and 8")
+        self.limits = limits or AgentLimits()
         self.model = model
         self.tools = tools
         self.max_action_rounds = max_action_rounds
@@ -71,7 +80,7 @@ class CentralRuntime:
             mcp_schema_budget=self.mcp_schema_budget)
         messages: list[dict[str, Any]] = [{
             "role": "system",
-            "content": PLANNER_INSTRUCTION,
+            "content": AGENTIC_PLANNER_INSTRUCTION,
         }]
         if domain == "external":
             messages[0]["content"] += EXTERNAL_DOMAIN_INSTRUCTION
@@ -84,9 +93,15 @@ class CentralRuntime:
                                        retrieval_backend=retrieval_backend, progress=progress,
                                        allowed_tools=view.allowed_names, cancel=cancel,
                                        mcp_failure_policy=view.failure_policy)
+        executor = AgentExecutor(self.tools, context, self.limits, cancel=cancel, question=question)
         stages = StageProgress(progress, retrieval_backend)
         contexts_by_id: dict[str, dict[str, Any]] = {}
         tool_records: list[dict[str, Any]] = []
+        evidence_groups, observed_evidence = [], []
+        observation_chars = 0
+        observation_error_chars = 0
+        output_tokens = input_tokens = 0
+        observation_exhausted = False
         retrieval_ms = 0.0
         parse_failures = 0
         model_calls = 0
@@ -95,32 +110,104 @@ class CentralRuntime:
         exit_reason = "max_action_rounds"
         native = getattr(self.model, "inference_backend", None) == "openai"
 
+        def ingest(outcomes, *, append_outputs=True):
+            nonlocal retrieval_ms, observation_chars, observation_error_chars, observation_exhausted
+            usable = True
+            for outcome in outcomes:
+                call, record = outcome.call, outcome.record
+                merge_tool_metrics(context, outcome.context)
+                if call.name == "search_history":
+                    retrieval_ms += outcome.latency_ms
+                tool_records.append({"name": call.name, "call_id": call.id, "round": rounds,
+                    "latency_ms": outcome.latency_ms, "error": record.error,
+                    "result_count": record.result_count, "provider": record.provider, "server": record.server,
+                    "execution_mode": outcome.execution_mode, "batch": outcome.batch,
+                    **(outcome.context.mcp_metrics[-1] if outcome.context is not context
+                       and not outcome.context.cancel.is_set() and outcome.context.mcp_metrics else {})})
+                chunks = safe_contexts(tool_evidence(call.name, outcome.output)) if not record.error else []
+                group = []
+                for chunk in chunks:
+                    key = str(chunk["chunk_id"])
+                    group.append(key)
+                    if key not in contexts_by_id or call.name in {"fetch_wikipedia_page", "fetch_web_page"}:
+                        contexts_by_id[key] = chunk
+                if group:
+                    evidence_groups.append(group)
+                usable = usable and not record.error and terminal_evidence(call.name, chunks, view.allowed_names)
+                remaining = self.limits.total_observation_chars - observation_chars
+                if remaining < 256:
+                    observation_exhausted = True
+                    observation = safe_observation([], "observation_budget")
+                    # Close every accepted native call even after the evidence
+                    # budget. This fixed, bounded protocol overhead is separate.
+                    observation_error_chars += len(observation)
+                else:
+                    observation = safe_observation(chunks, record.error,
+                        max_chars=min(self.limits.observation_chars, remaining))
+                    observation_chars += len(observation)
+                    observed_evidence.extend(json.loads(observation).get("untrusted_evidence", []))
+                if append_outputs:
+                    if native:
+                        messages.append({"type": "function_call_output", "call_id": call.id, "output": observation})
+                    else:
+                        messages.append({"role": "tool", "name": call.name, "content": observation})
+            return usable
+
         if trace:
             trace.mark("retrieval_started")
+        required_kinds = (("history", "external") if domain == "mixed" else
+                          ("external",) if external_required else ()) + (("attachment",) if attachment_ids else ())
+        def selected_evidence():
+            return select_evidence(evidence_groups, contexts_by_id, top_k, required_kinds)
+
+        def covers_scope(selected):
+            return all(any(evidence_kind(row, kind) for row in selected) for kind in required_kinds)
+
         for _ in range(self.max_action_rounds):
             if cancel.is_set():
-                raise RuntimeError("Request cancelled")
+                raise asyncio.CancelledError()
+            if time.monotonic() >= executor.deadline:
+                exit_reason = "execution_deadline"
+                break
+            if (output_tokens >= self.limits.planning_output_tokens or input_tokens >= self.limits.planning_input_tokens):
+                exit_reason = "planning_token_budget"
+                break
             rounds += 1
-            round_started = time.perf_counter_ns()
-            with stages.track("tool_selection"):
-                if native:
-                    parsed, native_output, plan_done = await self.model.plan(
-                        messages, tools=planner_schemas, cancel=cancel)
-                    if parsed.failures or len(parsed.tool_calls) > 4:
-                        raise RuntimeError("OpenAI returned malformed or too many tool calls.")
-                else:
-                    plan_text, plan_done = await self.model.generate(
-                        messages, tools=planner_schemas, max_new_tokens=self.action_max_new_tokens,
-                        cancel=cancel,
-                    )
-            round_finished = time.perf_counter_ns()
             model_calls += 1
-            if not native:
-                parsed = self.codec.decode(plan_text)
+            round_started = time.perf_counter_ns()
+            planning_cancel = threading.Event()
+            try:
+                with stages.track("tool_selection"):
+                    remaining_tokens = self.limits.planning_output_tokens - output_tokens
+                    if native:
+                        parsed, native_output, plan_done = await bounded_wait(self.model.plan(
+                            messages, tools=planner_schemas, cancel=planning_cancel,
+                            max_output_tokens=remaining_tokens), cancel=cancel,
+                            deadline=executor.deadline, on_abort=planning_cancel.set)
+                    else:
+                        plan_text, plan_done = await bounded_wait(self.model.generate(
+                            messages, tools=planner_schemas,
+                            max_new_tokens=min(self.action_max_new_tokens, remaining_tokens), cancel=planning_cancel),
+                            cancel=cancel, deadline=executor.deadline, on_abort=planning_cancel.set)
+                        parsed = self.codec.decode(plan_text)
+            except AgentDeadline:
+                planning_rounds.append({"round": rounds,
+                    "wall_ms": (time.perf_counter_ns() - round_started) / 1e6,
+                    "model_ms": None, "ttft_ms": None, "input_tokens": None, "output_tokens": None,
+                    "reasoning_tokens": None, "cached_input_tokens": None, "early_exit": False,
+                    "tools_requested": [], "error": "execution_deadline"})
+                exit_reason = "execution_deadline"
+                break
+            # Refuse an unbounded/malformed transcript before accepting any call.
+            if len(parsed.tool_calls) > 64:
+                raise RuntimeError("Planner returned too many tool calls.")
+            round_finished = time.perf_counter_ns()
             parse_failures += parsed.failures
             wall_ms = (round_finished - round_started) / 1e6
             model_metrics = plan_done.metrics if isinstance(plan_done, ModelDone) else {}
             model_ms = model_metrics.get("generation_ms")
+            output_tokens += model_metrics.get("output_tokens") or 0
+            input_tokens += model_metrics.get("input_tokens") or 0
             round_metrics = {"round": rounds, "wall_ms": wall_ms,
                              "started_ms": (round_started - (trace.started_ns if trace else prepare_started)) / 1e6,
                              "finished_ms": (round_finished - (trace.started_ns if trace else prepare_started)) / 1e6,
@@ -143,94 +230,75 @@ class CentralRuntime:
                 messages.extend(native_output)
             else:
                 messages.append({"role": "assistant", "content": plan_text})
-            complete_evidence = parsed.failures == 0 and len(parsed.tool_calls) <= 4
             completion_declared = (final_after_tools(parsed.content) if "<plan_status>" in parsed.content else
                                    all(call.name in controlled_tools and call.arguments.get(COMPLETION_FIELD) is True
                                        for call in parsed.tool_calls))
             round_metrics["completion_declared"] = completion_declared
-            external_evidence = any(c.get("source_kind") in {"wikipedia", "web", "mcp"}
-                                    for c in contexts_by_id.values())
-            local_evidence = any(c.get("source_kind", "history") == "history"
-                                 for c in contexts_by_id.values())
-            for call in parsed.tool_calls[:4]:
-                if cancel.is_set():
-                    raise RuntimeError("Request cancelled")
-                started = time.perf_counter_ns()
-                mcp_count = len(context.mcp_metrics)
-                arguments = {key: value for key, value in call.arguments.items()
-                             if not (call.name in controlled_tools and key == COMPLETION_FIELD)}
-                if external_required and call.name == "search_history":
-                    output, record = None, ToolCallRecord(call.name, {}, error="external_evidence_required")
-                else:
-                    output, record = await self.tools.call(call.name, arguments, context=context)
-                elapsed = (time.perf_counter_ns() - started) / 1e6
-                if call.name == "search_history":
-                    retrieval_ms += elapsed
-                tool_records.append({"name": call.name, "latency_ms": elapsed,
-                                     "error": record.error, "result_count": record.result_count,
-                                     "provider": record.provider, "server": record.server,
-                                     **(context.mcp_metrics[-1] if len(context.mcp_metrics) > mcp_count else {})})
-                chunks = safe_contexts(evidence_chunks(output)) if not record.error else []
-                for chunk in chunks:
-                    key = str(chunk["chunk_id"])
-                    if key not in contexts_by_id or call.name in {"fetch_wikipedia_page", "fetch_page"}:
-                        contexts_by_id[key] = chunk
-                complete_evidence = complete_evidence and not record.error and terminal_evidence(call.name, chunks, view.allowed_names)
-                external_evidence = external_evidence or (call.name in external_names and bool(chunks))
-                local_evidence = local_evidence or (call.name == "search_history" and bool(chunks))
-                observation = safe_observation(chunks, record.error)
-                if native:
-                    messages.append({"type": "function_call_output", "call_id": call.id,
-                                     "output": observation[:8000]})
-                else:
-                    messages.append({"role": "tool", "name": call.name, "content": observation[:8000]})
+            calls, independent = [], set()
+            for index, call in enumerate(parsed.tool_calls):
+                error = call.error
+                arguments = dict(call.arguments)
+                if call.name in controlled_tools:
+                    if any(key in arguments and type(arguments[key]) is not bool
+                           for key in (COMPLETION_FIELD, INDEPENDENT_FIELD)):
+                        error = "invalid_planner_control"
+                    if arguments.pop(INDEPENDENT_FIELD, False) is True:
+                        independent.add(index)
+                    arguments.pop(COMPLETION_FIELD, None)
+                calls.append(replace(call, arguments=arguments, error=error))
+            outcomes = await executor.execute(calls, independent=independent, evidence=observed_evidence,
+                blocked=frozenset({"search_history"}) if external_required else frozenset())
+            complete_evidence = ingest(outcomes) and parsed.failures == 0
+            round_metrics.update({"tool_calls": len(outcomes),
+                "tools_executed": sum(row.execution_mode != "rejected" for row in outcomes),
+                "execution_modes": [row.execution_mode for row in outcomes],
+                "tool_errors": [row.record.error for row in outcomes if row.record.error],
+                "evidence_chunks": len(contexts_by_id)})
             # No implicit "nonempty result means sufficient" shortcut: the planner
             # must declare full coverage and no pending dependencies, and actual
             # outputs must be successful, usable evidence. Missing/truncated plans,
             # snippets awaiting a reader, failures and mixed-domain gaps replan.
-            if (not native and complete_evidence and completion_declared
+            if (complete_evidence and completion_declared and not observation_exhausted
                     and model_metrics.get("finish_reason") != "length"
-                    and (not external_required or external_evidence)
-                    and (domain != "mixed" or (local_evidence and external_evidence))
-                    and not attachment_ids):
+                    and covers_scope(selected_evidence())):
                 round_metrics["early_exit"] = True
                 exit_reason = "evidence_sufficient"
                 break
+            round_metrics["replan_reason"] = ("tool_failure" if any(row.record.error for row in outcomes)
+                else "evidence_incomplete" if not complete_evidence else "planner_requires_more")
+            if all(row.record.error == "repeated_call" for row in outcomes):
+                exit_reason = "repeated_calls"
+                break
+            if time.monotonic() >= executor.deadline:
+                exit_reason = "execution_deadline"
+                break
+            if observation_exhausted:
+                exit_reason = "observation_budget"
+                break
+            if executor.calls >= self.limits.total_calls:
+                exit_reason = "total_tool_budget"
+                break
 
-        if (domain != "external" and exit_reason != "evidence_sufficient" and "search_history" in view.allowed_names
-                and not any(item["name"] == "search_history" for item in tool_records)):
-            started = time.perf_counter_ns()
-            output, record = await self.tools.call(
-                "search_history", {"query": question, "top_k": top_k}, context=context
-            )
-            elapsed = (time.perf_counter_ns() - started) / 1e6
-            retrieval_ms += elapsed
-            tool_records.append({"name": "search_history", "latency_ms": elapsed,
-                                 "error": record.error, "result_count": record.result_count, "provider": "builtin"})
-            if not record.error:
-                for chunk in safe_contexts(evidence_chunks(output)):
-                    contexts_by_id.setdefault(str(chunk["chunk_id"]), chunk)
-
-        # An explicit world-history question must not rely on the planner's
-        # memory when it skips the available Wikipedia search tool.
-        if (domain == "external" and "search_wikipedia" in view.allowed_names
-                and not any(item["name"] in {"search_wikipedia", "fetch_wikipedia_page"} for item in tool_records)):
-            started = time.perf_counter_ns()
-            output, record = await self.tools.call(
-                "search_wikipedia", {"query": question, "top_k": min(top_k, 10)}, context=context)
-            tool_records.append({"name": "search_wikipedia", "latency_ms": (time.perf_counter_ns() - started) / 1e6,
-                                 "error": record.error, "result_count": record.result_count, "provider": "builtin"})
-            if not record.error:
-                for chunk in safe_contexts(evidence_chunks(output)):
-                    contexts_by_id.setdefault(str(chunk["chunk_id"]), chunk)
-
+        # Compatibility fallback uses the same permissions, deadline and call budgets.
+        # It never changes the selected dense backend or supplies orphaned native outputs.
+        fallback = None
+        if exit_reason not in {"evidence_sufficient", "execution_deadline", "planning_token_budget",
+                               "observation_budget", "total_tool_budget"}:
+            from app.models.tool_calls import DecodedFunctionCall
+            if (domain != "external" and "search_history" in view.allowed_names
+                    and not any(item["name"] == "search_history" for item in tool_records)):
+                fallback = DecodedFunctionCall("fallback_history", "search_history", {"query": question, "top_k": top_k})
+            elif (domain == "external" and "search_wikipedia" in view.allowed_names
+                    and not any(item["name"] in {"search_wikipedia", "fetch_wikipedia_page"} for item in tool_records)):
+                fallback = DecodedFunctionCall("fallback_wikipedia", "search_wikipedia", {"query": question, "top_k": min(top_k, 10)})
+        if fallback and time.monotonic() < executor.deadline:
+            ingest(await executor.execute([fallback], independent=set(), evidence=observed_evidence), append_outputs=False)
         if trace:
             trace.mark("retrieval_finished")
-        selected = list(contexts_by_id.values())[:top_k]
-        if any(chunk.get("source_kind") == "mcp" for chunk in contexts_by_id.values()):
-            # MCP supplements local evidence instead of consuming its slots.
-            selected = [c for c in contexts_by_id.values() if c.get("source_kind", "history") != "mcp"][:top_k]
-            selected += [c for c in contexts_by_id.values() if c.get("source_kind") == "mcp"][:2]
+        selected = selected_evidence()
+        if selected and not covers_scope(selected):
+            exit_reason = "selected_evidence_incomplete"
+
         prompt_started = time.perf_counter_ns()
         with stages.track("prompt_preparation"):
             final_messages = build_messages(question, selected, history)
@@ -245,19 +313,31 @@ class CentralRuntime:
                      + final_messages[0]["content"]},
                     final_messages[-1],
                 ]
+            if (exit_reason not in {"evidence_sufficient", "planner_no_tools"}
+                    or (exit_reason == "planner_no_tools" and any(row["error"] for row in tool_records))):
+                if native and model_calls:
+                    final_messages[-2]["content"] += " " + EXECUTION_LIMIT_INSTRUCTION
+                else:
+                    final_messages.insert(-1, {"role": "system", "content": EXECUTION_LIMIT_INSTRUCTION})
         prompt_build_ms = (time.perf_counter_ns() - prompt_started) / 1e6
         if trace:
             trace.mark("prompt_ready")
         planning = {"rounds": planning_rounds, "exit_reason": exit_reason, "domain": domain,
-                    "total_wall_ms": sum(row["wall_ms"] for row in planning_rounds)}
+                    "total_wall_ms": sum(row["wall_ms"] for row in planning_rounds),
+                    "tools_executed": executor.calls, "repeats_avoided": executor.repeats_avoided,
+                    "tool_wall_ms": executor.wall_ms, "observation_chars": observation_chars,
+                    "observation_error_chars": observation_error_chars,
+                    "observation_total_chars": observation_chars + observation_error_chars,
+                    "parallel_batches": len({row["batch"] for row in tool_records if row["execution_mode"] == "parallel"}),
+                    "replanning_events": max(0, len(planning_rounds) - 1),
+                    "unknown_usage_rounds": sum(row["output_tokens"] is None for row in planning_rounds)}
         for name, field in (("total_model_ms", "model_ms"), ("total_ttft_ms", "ttft_ms"),
                             ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
                             ("reasoning_tokens", "reasoning_tokens"), ("cached_input_tokens", "cached_input_tokens")):
             planning[name] = (sum(row[field] for row in planning_rounds)
                               if all(row[field] is not None for row in planning_rounds) else None)
-        tool_ms = sum(row["latency_ms"] for row in tool_records)
         planning["orchestration_ms"] = max(0.0, (time.perf_counter_ns() - prepare_started) / 1e6
-                                           - planning["total_wall_ms"] - tool_ms - prompt_build_ms)
+                                           - planning["total_wall_ms"] - executor.wall_ms - prompt_build_ms)
         return PreparedAnswer(final_messages, selected,
                               {"final_context": selected, "query_variants": [question],
                                "retrieval_backend": context.retrieval_metrics.get("backend", retrieval_backend),

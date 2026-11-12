@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.conversations import router as conversations_router
 from app.api.routes import router as api_router
 from app.central.runtime import CentralRuntime
+from app.central.budgets import AgentLimits
 from app.chat.attachments import AttachmentService, TemporaryCorpusRetriever
 from app.chat.store import ConversationStore
 from app.config import settings
@@ -140,6 +141,7 @@ async def lifespan(app: FastAPI):
                     registry.register(FetchPageTool())
                 manager.register(registry)
                 central = CentralRuntime(model=central_model, tools=registry,
+                                         limits=AgentLimits.from_settings(settings),
                                          max_action_rounds=settings.central_max_action_rounds,
                                          action_max_new_tokens=settings.central_action_max_new_tokens,
                                          mcp_manager=manager, max_mcp_tools=settings.mcp_max_tools_per_request,
