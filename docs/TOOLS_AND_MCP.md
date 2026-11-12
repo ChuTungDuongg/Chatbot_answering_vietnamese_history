@@ -16,6 +16,8 @@ Web mặc định tắt. History fallback chỉ chạy khi tool policy cho phép
 ## Architecture và SDK
 
 Central dùng provider được chọn theo request: OpenAI Responses API hoặc Qwen3-8B local cho planning và final grounded generation.
+
+Central v2 có [scheduler và execution budgets](AGENTIC_RAG_V2.md): planner chọn calls dựa trên observations, backend kiểm tra quyền/dependencies trước khi chạy. `__central_independent` là optional planner-only boolean, không sửa public YAML signatures; flag không đủ để cấp parallel execution. Built-in phải có policy Python tường minh; history/uploaded-document retrieval dùng chung resource gate. MCP luôn chạy tuần tự trong executor và shared session được serialize theo server qua các request. Reader chỉ nhận ID/title/URL đã quan sát hoặc người dùng cung cấp rõ; speculative same-round fetch trả lỗi an toàn để planner lập lại call. Timeout vẫn tôn trọng `mcp_failure_policy=fail`. Trace chỉ chứa metadata/outcomes, không raw arguments hoặc reasoning.
 Built-ins và MCP adapters dùng cùng registry. Một immutable `ToolView`
 lưu allowlist riêng cho mỗi request, lọc schemas trước khi planner nhận chúng;
 `ToolExecutionContext` mang backend, permissions, cancellation và telemetry riêng.

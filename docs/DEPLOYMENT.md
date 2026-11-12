@@ -34,6 +34,16 @@ modal deploy modal_app.py
 modal app logs vn-history-rag-api --since 2h
 ```
 
+Trong Bash/Git Bash, dùng Python của môi trường đã cài dependencies (Windows worktree hiện tại có `.venv/Scripts/python.exe`):
+
+```bash
+LOCAL_INFERENCE_ENABLED=false MODAL_RETRIEVAL_GPU_CLASS=T4 \
+OPENAI_ENABLED=true CENTRAL_MAX_ACTION_ROUNDS=4 \
+  .venv/Scripts/python.exe -m modal deploy modal_app.py
+```
+
+Lệnh dùng lại Modal Secrets đã cấu hình; không truyền API key/mật khẩu trên command line. Trên Linux/macOS thay đường dẫn Python bằng `.venv/bin/python`. Deploy khởi động lại app đã stop với URL ổn định. Central v2 budgets được chuyển từ settings vào image env; `.env` cũ có `CENTRAL_MAX_ACTION_ROUNDS=2` vẫn override default bốn rounds, nên cập nhật hoặc đặt biến như trên. Không có secret mới, không đổi Volumes hay Qdrant collections. Xem [configuration](CONFIGURATION.md) và [giới hạn Central](AGENTIC_RAG_V2.md).
+
 Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` không tải Qwen; E5/reranker vẫn cần corpus và chạy trên CPU hoặc GPU theo cấu hình riêng.
 
 Mặc định Modal là CPU-only khi `LOCAL_INFERENCE_ENABLED=false` và `MODAL_RETRIEVAL_GPU_CLASS` rỗng. Để tăng tốc E5 và reranker mà vẫn dùng OpenAI cho câu trả lời, giữ `LOCAL_INFERENCE_ENABLED=false`, đặt `MODAL_RETRIEVAL_GPU_CLASS=T4` (hoặc `L4`) và deploy lại. T4 dùng retrieval float32; không yêu cầu bfloat16. Xóa giá trị này và deploy lại để trở về CPU-only. Khi cần chạy Qwen, đặt `LOCAL_INFERENCE_ENABLED=true` và `MODAL_GPU_CLASS=A100-40GB`; cấu hình GPU cho Qwen có ưu tiên hơn GPU retrieval. Tất cả cấu hình đều scale-to-zero và cần secret đăng nhập. `MODAL_GPU_CLASS` không được dùng khi Qwen bị tắt.

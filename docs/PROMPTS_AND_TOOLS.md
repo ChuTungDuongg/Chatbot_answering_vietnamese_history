@@ -19,6 +19,9 @@ app/
     hybrid/live_style.md
     central/
       planner.md
+      agentic_loop.md
+      independent_parameter.md
+      execution_limit.md
       completion_parameter.md
       external_domain.md
       grounded_final.md
@@ -55,7 +58,7 @@ app/
 
 ## Sửa hoặc thêm prompt
 
-`load_prompt(name)` chỉ nhận tên trong `PROMPT_NAMES`, resolve tương đối với `loader.py` và cache theo process. Không có đường dẫn từ HTTP request, network fetch, template engine hoặc LLM call. Các constant import prompt một lần; FastAPI lifespan validate/warm toàn bộ 18 file trước khi tạo service, đọc corpus hay load model. File thiếu, UTF-8 lỗi, rỗng, BOM, NUL hoặc CRLF làm startup fail rõ ràng. Git attributes giữ Markdown ở LF trên Windows.
+`load_prompt(name)` chỉ nhận tên trong `PROMPT_NAMES`, resolve tương đối với `loader.py` và cache theo process. Không có đường dẫn từ HTTP request, network fetch, template engine hoặc LLM call. Các constant import prompt một lần; FastAPI lifespan validate/warm toàn bộ 21 file trước khi tạo service, đọc corpus hay load model. File thiếu, UTF-8 lỗi, rỗng, BOM, NUL hoặc CRLF làm startup fail rõ ràng. Git attributes giữ Markdown ở LF trên Windows.
 
 Sửa file Markdown rồi restart process/redeploy. Không trim hoặc tự thêm newline: một số instruction có dấu cách đầu/cuối để nối chuỗi. `shared/grounded_system.md` dùng chung cho Hybrid và final answer Central. `LIVE_SYSTEM_PROMPT` vẫn là `SYSTEM_PROMPT + " " + LIVE_STYLE_INSTRUCTION`. Các import `SYSTEM_PROMPT`, `LIVE_SYSTEM_PROMPT`, `LIVE_STYLE_INSTRUCTION`, `PLANNER_INSTRUCTION`, `MODE_INSTRUCTIONS`, `SFT_GROUNDING_INSTRUCTION` và builder cũ tiếp tục dùng được.
 
@@ -77,6 +80,8 @@ Khi thêm prompt, tạo file UTF-8/LF, thêm logical name vào `PROMPT_NAMES`, l
 Pydantic input models trong `tool.py` tiếp tục validate runtime, kể cả defaults và giới hạn cũ. `validate_builtin_contracts()` so tập tên YAML với `BUILTIN_TOOL_TYPES`, rồi so schema với Pydantic; chỉ bỏ annotation tài liệu như title/description, không bỏ types, required, enums, bounds hoặc defaults. Kiểm tra chạy tại startup và khi registry lấy descriptor built-in, ngoài hot path. Thêm hoặc đổi argument chỉ ở một phía làm fail sớm.
 
 `BuiltinTool` cung cấp descriptor từ YAML. Registry vẫn generic: kiểm tra tên trùng, validate arguments, gọi sync/async, truyền `ToolExecutionContext`, enforce allowlist, xử lý lỗi và telemetry. YAML không tự register tool. `app/main.py` tiếp tục quyết định tool nào được bật và inject retriever/client. `ToolView` lọc schema theo request trước khi planner nhận; quyền vẫn kiểm tra lúc thực thi. Adapter OpenAI Responses và envelope Qwen/Hermes giữ nguyên. Planner completion flag vẫn thêm vào bản copy và strip trước thực thi.
+
+Central v2 nối `agentic_loop.md` vào live planner bằng `AGENTIC_PLANNER_INSTRUCTION`; constant `PLANNER_INSTRUCTION` và frozen fixtures vẫn nguyên byte. Optional independence flag cũng chỉ thêm vào planner schema copy. Khi thêm tool, mặc định chạy thận trọng; chỉ cấp `ToolExecutionPolicy(read_only=True, parallel_safe=True)` sau khi xác minh shared clients/state an toàn. Tool dùng shared resource có `exclusive_resource` gate. YAML/TOOL.md không tự cấp quyền parallel hay quyền sử dụng MCP. Xem [Central v2](AGENTIC_RAG_V2.md).
 
 `TOOL.md` là tài liệu người bảo trì, không load vào prompt và không cấp quyền. Frontmatter ghi provider/kind, environment, inputs/outputs, side effects và confirmation. HTTP helper Wikipedia và search providers chỉ có một implementation dùng chung. Module cũ re-export để import và test hiện tại vẫn hoạt động.
 

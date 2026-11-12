@@ -17,6 +17,8 @@ Inference có thể chọn Qwen local hoặc OpenAI Responses API cho từng req
 
 Modal hỗ trợ OpenAI API với retrieval trên CPU hoặc GPU nhỏ: giữ `LOCAL_INFERENCE_ENABLED=false` và đặt `MODAL_RETRIEVAL_GPU_CLASS=T4` để tăng tốc E5/reranker; để trống biến GPU retrieval để chạy CPU-only. Chỉ đặt `LOCAL_INFERENCE_ENABLED=true` khi muốn tải Qwen. Central ưu tiên Qdrant cho tư liệu Việt Nam và Wikipedia cho lịch sử thế giới, đồng thời tôn trọng lựa chọn nguồn/công cụ của người dùng.
 
+[Central Agent v2](docs/AGENTIC_RAG_V2.md) bổ sung dependency checks, chạy song song tool an toàn, replan theo evidence và budgets riêng từng request. Câu hỏi đơn giản vẫn có thể kết thúc sau một retrieval. Evaluation offline và giới hạn của kết quả được ghi kèm trong tài liệu.
+
 ## Bắt đầu
 
 - [Cài đặt và chạy local](docs/SETUP.md)

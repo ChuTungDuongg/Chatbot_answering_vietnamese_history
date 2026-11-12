@@ -33,6 +33,24 @@ missing backend metadata remains null rather than estimated.
 `planning_model_ms`, `planning_model_ttft_ms`, `planning_input_tokens`,
 `planning_output_tokens` and `planning_wall_ms`.
 
+Central v2 adds `planning.tool_wall_ms`, `parallel_batches`, `tools_executed`,
+`repeats_avoided`, `replanning_events`, `exit_reason`, `unknown_usage_rounds`,
+`observation_chars`, `observation_error_chars` and `observation_total_chars`.
+Per-round records include execution modes, admitted call count, error categories,
+evidence count and replan reason. Tool records carry original call ID, round,
+batch, sequential/parallel/rejected mode and latency without arguments.
+`performance.tool_execution_ms` remains the sum of individual call latencies;
+`tool_wall_ms` is elapsed scheduler time. The pre-final timing partition uses wall
+time to avoid double-counting overlapping calls. Replanning counts transitions
+between actual planning rounds, including the final no-tools decision.
+
+Observation data is bounded by the configured evidence budget. Fixed error
+closures for already accepted native calls have a separate bounded allowance;
+`observation_total_chars` includes them. Unknown token usage stays null. Aggregate
+input budget is checked after each response and can overshoot by one round; it is
+not a monetary cap. See [Central v2](AGENTIC_RAG_V2.md) for measured offline results
+and limitations.
+
 `performance.pre_final_breakdown_ms` partitions time before the final model
 starts: request preparation, planning (including load/tokenization/queue), tools,
 prompt construction, orchestration, prepare-to-model-request and final model
@@ -53,7 +71,8 @@ The runtime additionally requires all calls to succeed
 with nonempty source IDs/text, no truncated evidence, no truncated/malformed plan,
 no skipped calls, and no unresolved reader dependency. Search snippets keep the
 next planner round when a corresponding reader is allowed. Mixed-domain queries
-retain planning if either evidence domain is missing; attachments retain planning.
+retain planning if either evidence domain is absent from the selected final context;
+requests with attachments require selected attachment evidence.
 Absent/malformed completion status preserves the original loop limit. Tool output
 cannot supply this status. No new model call measures or judges sufficiency.
 

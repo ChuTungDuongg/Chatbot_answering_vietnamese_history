@@ -38,7 +38,17 @@ Khi đặt cả `CORPUS_PATH` và `RETRIEVAL_ROOT`, đường dẫn runtime mặ
 | `HYBRID_MAX_NEW_TOKENS` | `1536` | Chung cho vanilla và SFT. |
 | `CENTRAL_ACTION_MAX_NEW_TOKENS` | `256` | Budget mỗi lần planner sinh action. |
 | `CENTRAL_FINAL_MAX_NEW_TOKENS` | `1536` | Budget câu trả lời cuối. |
-| `CENTRAL_MAX_ACTION_ROUNDS` | `2` | Cho phép `0..8`; tối đa 4 tool calls trong mỗi round. |
+| `CENTRAL_MAX_ACTION_ROUNDS` | `4` | Cho phép `0..8`; completion hợp lệ có thể dừng sau round đầu. |
+| `CENTRAL_MAX_TOOL_CALLS_PER_ROUND` | `4` | Calls được thực thi tối đa mỗi round (1..16). |
+| `CENTRAL_MAX_TOTAL_TOOL_CALLS` | `12` | Tổng calls được thực thi mỗi request (1..64). |
+| `CENTRAL_MAX_IDENTICAL_TOOL_CALLS` | `1` | Repeat limit với arguments đã normalize (1..3). |
+| `CENTRAL_MAX_PARALLEL_TOOL_CALLS` | `3` | Chỉ tool có policy an toàn và explicit independence (1..8). |
+| `CENTRAL_EXECUTION_DEADLINE_SECONDS` | `180` | Planning + tools; final generation có timeout riêng. |
+| `CENTRAL_TOOL_TIMEOUT_SECONDS` | `30` | Mỗi tool, tính cả chờ resource gate. |
+| `CENTRAL_MAX_OBSERVATION_CHARS` | `8000` | JSON evidence observation mỗi call. |
+| `CENTRAL_MAX_TOTAL_OBSERVATION_CHARS` | `48000` | Evidence observations/request; fixed native error closures đếm riêng. |
+| `CENTRAL_MAX_PLANNING_OUTPUT_TOKENS` | `40000` | Actual usage cộng dồn, cap output round tiếp theo. |
+| `CENTRAL_MAX_PLANNING_INPUT_TOKENS` | `120000` | Dừng sau round chạm budget; không ước lượng token chưa đo. |
 
 Token budget là trần; model có thể dừng sớm bằng EOS. Live API/UI chỉ có hai chat modes, không có `response_mode`. Các giá trị `concise/standard/detailed` chỉ còn phục vụ dữ liệu và đánh giá offline đã cố định.
 
@@ -60,7 +70,7 @@ OpenAI mặc định tắt. Modal bắt buộc xác thực bằng mật khẩu; 
 | MODAL_RETRIEVAL_GPU_CLASS | Rỗng: CPU; `T4` hoặc `L4` cấp GPU cho E5/reranker khi Qwen tắt |
 | MODAL_GPU_CLASS | `L4`; chỉ dùng khi `LOCAL_INFERENCE_ENABLED=true` |
 
-Central có thể gọi model tới số action rounds đã cấu hình cộng một lần sinh cuối; giới hạn token áp dụng cho từng lần gọi. High và Very High có thể tăng thời gian và chi phí. API trả incomplete nếu hết budget và ứng dụng không lưu answer đó. Requests dùng store=false; điều này không tự tạo bảo đảm Zero Data Retention cho tài khoản. Model access, quota và chính sách dữ liệu phải được xác minh với tài khoản OpenAI.
+Central có thể gọi model tới số action rounds đã cấu hình cộng một lần sinh cuối; có thêm aggregate planning budgets bên trên. Usage không có từ provider để null; input budget có thể vượt bởi một round đang chạy, không phải hard USD cap. High và Very High có thể tăng thời gian và chi phí. API trả incomplete nếu hết budget và ứng dụng không lưu answer đó. Requests dùng store=false; điều này không tự tạo bảo đảm Zero Data Retention cho tài khoản. Model access, quota và chính sách dữ liệu phải được xác minh với tài khoản OpenAI. Chi tiết dừng và protocol overhead: [Central v2](AGENTIC_RAG_V2.md).
 
 Payload cũ mặc định local. Với OpenAI, gửi provider là openai, tùy chọn model và reasoning_effort, và cookie phiên đăng nhập. Model/effort ngoài allowlist bị từ chối. Status stream báo đang xử lý, không hiển thị reasoning nội bộ. Khi model không khả dụng hoặc bị rate limit, thử lại hoặc chọn provider khác; không tự chuyển provider.
 
