@@ -16,7 +16,7 @@ def test_all_resources_are_cached_and_independent_of_working_directory(tmp_path,
     monkeypatch.chdir(tmp_path)
     loader.validate_prompt_resources()
     expected = {name: loader.load_prompt(name) for name in loader.PROMPT_NAMES}
-    assert len(expected) == len(set(loader.PROMPT_NAMES)) == 21
+    assert len(expected) == len(set(loader.PROMPT_NAMES)) == 22
     assert {p.relative_to(loader.PROMPT_ROOT).with_suffix("").as_posix()
             for p in loader.PROMPT_ROOT.rglob("*.md")} == set(expected)
     def no_io(*args, **kwargs):

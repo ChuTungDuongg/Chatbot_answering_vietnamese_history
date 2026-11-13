@@ -8,7 +8,7 @@ PROMPT_ROOT = Path(__file__).resolve().parent
 PROMPT_NAMES = (
     "shared/grounded_system", "hybrid/live_style",
     "central/planner", "central/completion_parameter", "central/external_domain", "central/grounded_final",
-    "central/agentic_loop", "central/independent_parameter", "central/execution_limit",
+    "central/agentic_loop", "central/independent_parameter", "central/execution_limit", "central/recover_empty_plan",
     "offline/no_rag", "offline/sft_grounding",
     "offline/modes/concise", "offline/modes/standard", "offline/modes/detailed",
     "offline/semantic/generate", "offline/semantic/relevance", "offline/semantic/verify",

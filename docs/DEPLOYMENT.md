@@ -98,3 +98,5 @@ modal run --detach --write-result reports/restore/runtime_smoke.json modal_app.p
 ```
 
 Không gửi mật khẩu, cookie, key hoặc secret vào logs hay ảnh chụp màn hình. Nếu deployment lỗi, kiểm tra secret bắt buộc, artifacts, quota GPU, model access và log đã loại bỏ dữ liệu nhạy cảm. `modal serve` chỉ là phiên phát triển tạm thời.
+
+Nếu Central báo chưa có nguồn, kiểm tra **Công cụ Central**: bật Kho sử liệu cho Việt Nam, Wikipedia/Đọc Wikipedia cho nguồn ngoài, hoặc MCP đã cấu hình. Tắt toàn bộ tools không cấp quyền gọi bất kỳ tool nào. Trace `agent_exit_reason=no_tools_available/no_external_tools` giải thích quyền bị thiếu mà không tốn lượt planner OpenAI. Với lỗi `planner_no_tools`, xem `effective_tools`, `agent_domain` và `evidence_context_count`; zero tools/evidence không chứng minh Qdrant bị mất kết nối. SSE có thể trả HTTP 200 nhưng chứa `error`, nên dùng `done.status` và request ID để xác nhận kết quả. Xem [vòng lặp Central](AGENTIC_RAG_V2.md#planner-openai-dừng-khi-chưa-có-nguồn).

@@ -27,6 +27,7 @@ from app.security.guardrails import guard_question, safe_contexts, safe_observat
 EXTERNAL_DOMAIN_INSTRUCTION = load_prompt("central/external_domain")
 GROUNDED_FINAL_INSTRUCTION = load_prompt("central/grounded_final")
 EXECUTION_LIMIT_INSTRUCTION = load_prompt("central/execution_limit")
+EMPTY_PLAN_RECOVERY = load_prompt("central/recover_empty_plan")
 
 
 class CentralRuntime:
@@ -170,7 +171,14 @@ class CentralRuntime:
         def covers_scope(selected):
             return all(any(evidence_kind(row, kind) for row in selected) for kind in required_kinds)
 
-        for _ in range(self.max_action_rounds):
+        action_round_limit = self.max_action_rounds
+        if native and not planner_schemas:
+            exit_reason, action_round_limit = "no_tools_available", 0
+        elif (native and domain == "external" and not external_names
+              and not (attachment_ids and "search_uploaded_documents" in view.allowed_names)):
+            exit_reason, action_round_limit = "no_external_tools", 0
+
+        for _ in range(action_round_limit):
             if cancel.is_set():
                 raise asyncio.CancelledError()
             if time.monotonic() >= executor.deadline:
@@ -189,7 +197,8 @@ class CentralRuntime:
                     if native:
                         parsed, native_output, plan_done = await bounded_wait(self.model.plan(
                             messages, tools=planner_schemas, cancel=planning_cancel,
-                            max_output_tokens=remaining_tokens, reasoning_effort=planner_effort), cancel=cancel,
+                            max_output_tokens=remaining_tokens, reasoning_effort=planner_effort,
+                            tool_choice="auto" if contexts_by_id else "required"), cancel=cancel,
                             deadline=executor.deadline, on_abort=planning_cancel.set)
                     else:
                         plan_text, plan_done = await bounded_wait(self.model.generate(
@@ -229,10 +238,23 @@ class CentralRuntime:
                              "finish_reason": model_metrics.get("finish_reason"),
                              "tools_requested": [call.name for call in parsed.tool_calls],
                              "parse_failures": parsed.failures, "early_exit": False}
+            if native:
+                round_metrics["tool_choice"] = "auto" if contexts_by_id else "required"
             planning_rounds.append(round_metrics)
             if not parsed.tool_calls:
                 if native:
                     messages.extend(native_output)
+                    refused = any(part.get("type") == "refusal" for item in native_output
+                                  for part in item.get("content", []) if isinstance(part, dict))
+                    if refused:
+                        exit_reason = "planner_refused"
+                        break
+                    # One bounded repair for a premature first-round text response.
+                    # Later stops after actual evidence retain their existing meaning.
+                    if rounds == 1 and not contexts_by_id and rounds < action_round_limit:
+                        round_metrics["replan_reason"] = "planner_no_tools_without_evidence"
+                        messages.append({"role": "system", "content": EMPTY_PLAN_RECOVERY})
+                        continue
                 exit_reason = "planner_no_tools"
                 break
             if native:
@@ -292,7 +314,7 @@ class CentralRuntime:
         # It never changes the selected dense backend or supplies orphaned native outputs.
         fallback = None
         if exit_reason not in {"evidence_sufficient", "execution_deadline", "planning_token_budget",
-                               "observation_budget", "total_tool_budget"}:
+                               "observation_budget", "total_tool_budget", "planner_refused"}:
             from app.models.tool_calls import DecodedFunctionCall
             if (domain != "external" and "search_history" in view.allowed_names
                     and not any(item["name"] == "search_history" for item in tool_records)):
@@ -305,7 +327,7 @@ class CentralRuntime:
         if trace:
             trace.mark("retrieval_finished")
         selected = selected_evidence()
-        if selected and not covers_scope(selected):
+        if selected and not covers_scope(selected) and exit_reason != "planner_refused":
             exit_reason = "selected_evidence_incomplete"
 
         prompt_started = time.perf_counter_ns()
@@ -332,6 +354,9 @@ class CentralRuntime:
         if trace:
             trace.mark("prompt_ready")
         planning = {"rounds": planning_rounds, "exit_reason": exit_reason, "domain": domain,
+                    "effective_tools": sorted(view.allowed_names), "evidence_context_count": len(selected),
+                    "empty_plan_recoveries": sum(row.get("replan_reason") == "planner_no_tools_without_evidence"
+                                                 for row in planning_rounds),
                     "reasoning_effort": planner_effort, "final_reasoning_effort": final_effort,
                     "total_wall_ms": sum(row["wall_ms"] for row in planning_rounds),
                     "tools_executed": executor.calls, "repeats_avoided": executor.repeats_avoided,

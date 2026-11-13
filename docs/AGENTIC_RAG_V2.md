@@ -23,6 +23,14 @@ Planner nhận observations của rounds trước để tự sửa query, đổi
 
 Default tăng từ hai lên bốn rounds: đủ cho search → fetch → query bổ sung → fetch. Một câu factual có completion hợp lệ vẫn chỉ planner → retrieval → final, cho cả local và OpenAI. Không có LLM call bổ sung để đánh giá sufficiency. Đây là đánh giá của planner được chặn bởi kiểm tra backend; không phải chứng minh ngữ nghĩa mọi subquestion đã được trả lời.
 
+### Planner OpenAI dừng khi chưa có nguồn
+
+Khi chưa có evidence và vẫn có schema được cấp, native planner dùng `tool_choice: "required"`; sau khi có evidence, dùng `auto` để vẫn có thể dừng sớm. Đây là điều khiển [function calling chính thức](https://developers.openai.com/api/docs/guides/function-calling#tool-choice), không ép một tool cụ thể hoặc mở rộng allowlist. Nếu lượt đầu vẫn trả text/không có calls, harness cho phép đúng một lượt sửa kế hoạch trong rounds/deadline/token budget hiện có; replay giữ nguyên native items. Text planner không trở thành evidence hay câu trả lời cuối. Refusal tường minh của provider không được retry hoặc bypass bằng fallback.
+
+OpenAI không gọi planner khi request không có tool được phép, hoặc câu hỏi world-history chỉ được cấp corpus Việt Nam. SSE báo rõ cần bật công cụ phù hợp; `allowed_tools=[]` vẫn có nghĩa không cấp tool, không được diễn giải thành tất cả công cụ. Khi nguồn vẫn rỗng, guardrail tiếp tục chặn final generation và không lưu assistant answer thành công. Hybrid và local Qwen giữ nguyên hành vi.
+
+Trace có thêm `agent_domain`, `effective_tools` (tên đã được cấp), `evidence_context_count`, `empty_plan_recoveries` và `tool_choice` theo planning round. Không log câu hỏi, tool arguments, response text hay private reasoning. HTTP 200 của `/chat/stream` chỉ xác nhận stream đã mở: phải đọc SSE `error` và `done.status`, rồi đối chiếu request ID. `planner_no_tools` + zero tool/evidence khác lỗi kết nối Qdrant; không tắt guardrail để che lỗi này.
+
 ### Planning latency và reasoning theo giai đoạn
 
 Một trace production gần nhất với Central/Luna/xhigh đo 99,52 giây E2E, gồm 54,69 giây planning, 22,99 giây tool wall và 21,77 giây final generation; tổng năm model calls, bốn planning rounds. Trace không lưu câu hỏi nên không khẳng định đây chính xác là câu Napoleon/Waterloo/Hitler của owner. Đây là một quan sát, không phải p50/p95 hay baseline A/B.
@@ -82,6 +90,7 @@ app/prompts/central/
   agentic_loop.md           # live planner extension
   independent_parameter.md # model-visible control description
   execution_limit.md       # qualification on incomplete execution
+  recover_empty_plan.md    # bounded repair after an empty native first plan
 evaluation/agentic/
   cases.json
   run.py
@@ -91,7 +100,7 @@ tests/
   test_agentic_eval.py
 ```
 
-`PLANNER_INSTRUCTION` public constant và prompt fixtures cũ không đổi. Live runtime dùng `AGENTIC_PLANNER_INSTRUCTION` nối extension mới. Tất cả 21 Markdown resources validate/cache lúc startup; không network/hot-path file IO. `tools.yaml` không cần đổi: tool names, arguments, defaults và descriptions hiện tại vẫn phù hợp. Parallel safety là quyền executor trong Python, không phải điều YAML/model tự cấp.
+`PLANNER_INSTRUCTION` public constant và prompt fixtures cũ không đổi. Live runtime dùng `AGENTIC_PLANNER_INSTRUCTION` nối extension mới. Tất cả 22 Markdown resources validate/cache lúc startup; không network/hot-path file IO. `tools.yaml` không cần đổi: tool names, arguments, defaults và descriptions hiện tại vẫn phù hợp. Parallel safety là quyền executor trong Python, không phải điều YAML/model tự cấp.
 
 ## Evaluation có thể tái lập
 

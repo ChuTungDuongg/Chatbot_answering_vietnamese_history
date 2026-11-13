@@ -92,7 +92,7 @@ class OpenAIResponsesRuntime:
         # The application lifespan owns the shared client.
         pass
 
-    async def _events(self, messages, cancel, tools=None):
+    async def _events(self, messages, cancel, tools=None, tool_choice=None):
         stream = None
         pending = None
         try:
@@ -101,6 +101,8 @@ class OpenAIResponsesRuntime:
                           max_output_tokens=self.options.max_output_tokens)
             if tools:
                 kwargs["tools"] = _tools(tools)
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
             pending = asyncio.create_task(self.client.responses.create(**kwargs))
             while not pending.done() and not cancel.is_set():
                 await asyncio.wait({pending}, timeout=0.1)
@@ -140,11 +142,11 @@ class OpenAIResponsesRuntime:
                     # Upstream cleanup must not leak exception text or credentials.
                     pass
 
-    async def _run(self, messages, cancel, tools=None):
+    async def _run(self, messages, cancel, tools=None, tool_choice=None):
         started = time.perf_counter_ns()
         first_token = None
         response = None
-        async with aclosing(self._events(messages, cancel, tools)) as events:
+        async with aclosing(self._events(messages, cancel, tools, tool_choice)) as events:
             async for event in events:
                 kind = _get(event, "type")
                 if kind == "response.output_text.delta" and not tools:
@@ -199,8 +201,10 @@ class OpenAIResponsesRuntime:
             async for item in events:
                 yield item if isinstance(item, ModelDelta) else item[1]
 
-    async def plan(self, messages, *, tools, cancel, max_output_tokens=None, reasoning_effort=None):
+    async def plan(self, messages, *, tools, cancel, max_output_tokens=None, reasoning_effort=None, tool_choice="auto"):
         """Return native calls and replayable output, including encrypted reasoning."""
+        if tool_choice not in {"auto", "required"} or (tool_choice == "required" and not tools):
+            raise ValueError("Invalid planner tool choice or missing allowed tool schemas")
         result = None
         # A request-local adapter enforces the remaining planning output budget;
         # the shared client and final-answer adapter are never mutated.
@@ -209,7 +213,7 @@ class OpenAIResponsesRuntime:
             reasoning_effort=self.options.reasoning_effort if reasoning_effort is None else reasoning_effort,
             max_output_tokens=(self.options.max_output_tokens if max_output_tokens is None
                                else min(self.options.max_output_tokens, max_output_tokens))))
-        async with aclosing(runtime._run(messages, cancel, tools=tools)) as events:
+        async with aclosing(runtime._run(messages, cancel, tools=tools, tool_choice=tool_choice)) as events:
             async for item in events:
                 if not isinstance(item, ModelDelta):
                     result = item

@@ -22,6 +22,7 @@ app/
       agentic_loop.md
       independent_parameter.md
       execution_limit.md
+      recover_empty_plan.md
       completion_parameter.md
       external_domain.md
       grounded_final.md

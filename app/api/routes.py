@@ -239,7 +239,11 @@ def _model_metrics(completed: ModelDone | None, trace: RequestTrace,
             metrics.update({"parallel_tool_batches": prepared.planning.get("parallel_batches", 0),
                             "repeated_calls_avoided": prepared.planning.get("repeats_avoided", 0),
                             "replanning_events": prepared.planning.get("replanning_events", 0),
-                            "agent_exit_reason": prepared.planning.get("exit_reason")})
+                            "agent_exit_reason": prepared.planning.get("exit_reason"),
+                            "agent_domain": prepared.planning.get("domain"),
+                            "effective_tools": prepared.planning.get("effective_tools", []),
+                            "evidence_context_count": prepared.planning.get("evidence_context_count"),
+                            "empty_plan_recoveries": prepared.planning.get("empty_plan_recoveries", 0)})
         metrics["tool_parse_failures"] = prepared.tool_parse_failures
         metrics["action_rounds"] = prepared.action_rounds
         metrics["time_until_final_generation_ms"] = trace.offset_ms("generation_started")
@@ -430,7 +434,13 @@ async def _execute(payload: ChatRequest, request: Request, owner_id: str, store:
         prepared = prepare_task.result()
         if cancel.is_set():
             return
+        if payload.provider == "openai" and mode == ChatMode.CENTRAL and prepared.planning.get("exit_reason") == "planner_refused":
+            raise GuardrailError("Mô hình đã từ chối yêu cầu; không tiếp tục tạo câu trả lời. Hãy thử điều chỉnh câu hỏi.")
         if payload.provider == "openai" and mode == ChatMode.CENTRAL and not prepared.contexts:
+            if prepared.planning.get("exit_reason") == "no_tools_available":
+                raise GuardrailError("Central chưa được cấp công cụ. Hãy bật Kho sử liệu hoặc Wikipedia trong Công cụ Central.")
+            if prepared.planning.get("exit_reason") == "no_external_tools":
+                raise GuardrailError("Câu hỏi lịch sử thế giới cần nguồn bên ngoài. Hãy cho phép Wikipedia hoặc công cụ bên ngoài đã cấu hình.")
             raise GuardrailError("Không tìm được nguồn phù hợp để trả lời; hãy thử câu hỏi hoặc nguồn khác.")
         current_stage = "generation"
         yield "status", {"stage": "generation", "state": "started", "message": (
