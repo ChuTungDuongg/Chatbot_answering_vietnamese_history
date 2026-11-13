@@ -18,6 +18,7 @@ Tài liệu mô tả mã nguồn và cấu hình đang có trong repository. Gi�
 | Dynamic planning, dependencies, budgets và so sánh offline | [Central Agent v2](AGENTIC_RAG_V2.md) |
 | Markdown prompts, YAML contracts và thêm built-in tool | [Prompt và tool resources](PROMPTS_AND_TOOLS.md) |
 | Nhãn câu hỏi, retrieval và các metric chất lượng | [Đánh giá](EVALUATION.md) |
+| Biên soạn benchmark, experiments, human/blind review và backup | [Eval Studio v1.1](EVAL_STUDIO.md) |
 | Quy trình gán nhãn có người kiểm duyệt | [GOLD annotation](GOLD_ANNOTATION_GUIDE.md) |
 | Gán nhãn tự động và các batch SILVER | [SILVER benchmark](SILVER_BENCHMARK.md) |
 | SILVER V1 cố định, QLoRA, adapter và six-way benchmark | [Training và đánh giá model](TRAINING_AND_EVALUATION.md) |

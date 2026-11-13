@@ -168,6 +168,8 @@ image = modal.Image.from_dockerfile(
         "WEB_SEARCH_PROVIDER": os.getenv("WEB_SEARCH_PROVIDER", "local-only"),
         "DEFAULT_INFERENCE_MODE": "hybrid",
         "CHAT_DATABASE_PATH": "/data/chat.sqlite3",
+        "EVAL_STUDIO_ENABLED": os.getenv("EVAL_STUDIO_ENABLED", "false"),
+        "EVAL_STUDIO_MODAL_VOLUME": "vn-history-chat-data",
         "HF_HOME": "/hf-cache",
         "HF_HUB_CACHE": "/hf-cache/hub",
         "MODEL_CACHE_DIR": "/hf-cache/hub",

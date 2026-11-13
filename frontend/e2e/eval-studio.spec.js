@@ -1,0 +1,36 @@
+import { test, expect } from "@playwright/test";
+
+test("author, autosave, reload and review a response", async ({ page }, testInfo) => {
+  await page.goto("/login");
+  const login = await page.evaluate(async () => { const r = await fetch("/auth/login", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({password: "test-password"}) }); return r.status; });
+  expect(login).toBe(200);
+  await page.goto("/eval-studio");
+  await expect(page.getByRole("heading", {name: "Tổng quan dataset"})).toBeVisible();
+  await page.screenshot({path: `../reports/eval-studio-${testInfo.project.name}.png`, fullPage: true});
+  await page.getByRole("navigation").getByRole("button", {name: /Ngân hàng câu hỏi/}).click();
+  await page.getByRole("button", {name: /HIST-EVAL-001/}).click();
+  const question = page.getByRole("textbox", {name:"Câu hỏi", exact:true});
+  await page.screenshot({path: `../reports/eval-editor-${testInfo.project.name}.png`});
+  await page.route("**/api/v1/eval/questions/HIST-EVAL-001", async route => { if (route.request().method() === "PATCH") await new Promise(resolve => setTimeout(resolve, 900)); await route.continue(); });
+  const saveStarted = page.waitForRequest(req => req.url().includes("/api/v1/eval/questions/HIST-EVAL-001") && req.method() === "PATCH");
+  await question.fill(`Câu hỏi kiểm thử ${testInfo.project.name} đầu`);
+  await saveStarted;
+  await question.fill(`Câu hỏi kiểm thử ${testInfo.project.name} cuối`);
+  await page.getByRole("button", {name: "Câu sau"}).click();
+  await expect(page.locator(".editor-id code")).toHaveText("HIST-EVAL-002");
+  await page.getByRole("button", {name: /HIST-EVAL-001/}).click();
+  await expect(page.locator(".editor-id code")).toHaveText("HIST-EVAL-001");
+  await expect(question).toHaveValue(`Câu hỏi kiểm thử ${testInfo.project.name} cuối`);
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", {name: /Ngân hàng câu hỏi/}).click();
+  await page.getByRole("button", {name: /HIST-EVAL-001/}).click();
+  await expect(page.getByRole("textbox", {name:"Câu hỏi", exact:true})).toHaveValue(`Câu hỏi kiểm thử ${testInfo.project.name} cuối`);
+  await page.getByRole("button", {name: "Human review"}).click();
+  await page.getByLabel("Câu trả lời model").fill("Câu trả lời được nhập thủ công.");
+  await page.getByRole("button", {name: "Lưu output"}).click();
+  await expect(page.getByText("Câu trả lời được nhập thủ công.")).toBeVisible();
+  await expect(page.getByRole("button", {name:"Lưu đánh giá"})).toBeDisabled();
+  for (const name of ["Historical Accuracy", "Coverage", "Reasoning Depth", "Evidence & Citation", "Clarity & Structure"]) await page.getByLabel(`Điểm ${name}`).selectOption("5");
+  await page.getByRole("button", {name:"Lưu đánh giá"}).click();
+  await expect(page.getByText("100/100 · needs_review")).toBeVisible();
+});

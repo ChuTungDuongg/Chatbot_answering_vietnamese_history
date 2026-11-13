@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 // Uses an already installed browser. No browser/weights download or backend is needed.
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "eval*.spec.js",
   fullyParallel: true,
   workers: 3,
   reporter: "list",

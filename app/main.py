@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.conversations import router as conversations_router
+from app.eval_studio.api import router as eval_studio_router
 from app.api.routes import router as api_router
 from app.central.runtime import CentralRuntime
 from app.central.budgets import AgentLimits
@@ -178,6 +179,7 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
 app.add_middleware(OwnerAuthMiddleware, settings=settings)
 app.include_router(api_router)
 app.include_router(conversations_router)
+app.include_router(eval_studio_router)
 
 
 @app.get("/")

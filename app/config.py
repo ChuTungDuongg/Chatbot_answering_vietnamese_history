@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     app_version: str = "2.0.0"
     app_env: str = "development"
     auth_enabled: bool = False
+    eval_studio_enabled: bool = False
     auth_password_hash: SecretStr | None = None
     auth_session_secret: SecretStr | None = None
     app_mode: Literal["api-only", "retrieval-only", "full"] = "api-only"

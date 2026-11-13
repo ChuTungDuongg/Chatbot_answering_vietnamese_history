@@ -257,6 +257,7 @@ Clone repository chưa bao gồm corpus/index lớn, adapter weights hoặc mode
 | Công cụ ngoài | [Central tools và MCP](docs/TOOLS_AND_MCP.md) |
 | Bảo trì prompt và built-in tools | [Markdown prompts và YAML tool contracts](docs/PROMPTS_AND_TOOLS.md) |
 | Training và kiểm chứng chất lượng | [Training](docs/TRAINING_AND_EVALUATION.md) · [Evaluation](docs/EVALUATION.md) |
+| Dataset và đánh giá thủ công nội bộ | [Sử Việt Eval Studio v1.1](docs/EVAL_STUDIO.md) |
 | Hiệu năng và vận hành | [Benchmark](docs/BENCHMARKS.md) · [Telemetry](docs/RUNTIME_TELEMETRY.md) |
 | Làm việc với mã nguồn | [Phát triển và kiểm tra](docs/DEVELOPMENT.md) |
 
