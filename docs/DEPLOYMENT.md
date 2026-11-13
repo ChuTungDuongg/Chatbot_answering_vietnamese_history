@@ -41,13 +41,21 @@ $env:CENTRAL_OPENAI_PLANNING_REASONING_EFFORT = 'low'
 & '.\.venv\Scripts\python.exe' scripts/modal_session.py
 ```
 
-Script deploy cùng `modal_app.py`, giữ URL ổn định, resolve App ID trong environment đã chọn rồi follow logs. Nhấn **Ctrl+C** để dừng log process và gọi `modal app stop APP_ID --yes`. Chờ thông báo xác nhận dừng rồi đóng terminal/tắt máy. App và running containers bị dừng; named Volumes, hội thoại và Secrets không bị xóa. Muốn mở lại, chạy lại script để deploy. Không mở hai controller cho cùng app.
+Script deploy cùng `modal_app.py`, giữ URL ổn định, resolve App ID và URL `fastapi_app` trong environment đã chọn rồi follow logs. Sau đó script gọi `/health` để đánh thức container, chờ ASGI startup hoàn tất và chỉ in **`Sử Việt is ready: URL`** khi HTTP trả 200 với JSON `status: ok`. Trình duyệt tự mở ở thời điểm này; bạn không cần mở URL trong lúc container còn Pending. Kiểm tra không gửi password, cookie, token hay gọi paid inference.
+
+Khởi động lần đầu vẫn cần thời gian cấp CPU/GPU và nạp retrieval. Terminal hiển thị tiến độ khoảng 15 giây/lần; mặc định chờ tối đa 960 giây, mỗi HTTP probe tối đa 5 giây. Dùng `--ready-timeout 1200` nếu cần chờ lâu hơn và `--no-browser` khi chạy trên máy không có trình duyệt. Timeout/lỗi khởi động trả exit code khác 0, không báo ready và dừng app đã nhận quản lý. Nếu hệ điều hành không mở được browser, URL ready vẫn được in để mở thủ công.
+
+Nhấn **Ctrl+C** cả trong lúc chờ startup hoặc sau khi web sẵn sàng để dừng log process và gọi `modal app stop APP_ID --yes`. Chờ thông báo xác nhận dừng rồi đóng terminal/tắt máy. App và running containers bị dừng; named Volumes, hội thoại và Secrets không bị xóa. Muốn mở lại, chạy lại script để deploy. Không mở hai controller cho cùng app.
+
+Nếu DNS của máy đang bị treo, controller vẫn bắt đầu dừng app khi timeout/Ctrl+C; sau thông báo cloud đã dừng, Python có thể còn chờ bộ phân giải DNS của hệ điều hành kết thúc trước khi trả lại prompt.
 
 Nếu đã deploy và chỉ muốn Ctrl+C điều khiển app hiện tại, không cần build/deploy lại:
 
 ```powershell
 & '.\.venv\Scripts\python.exe' scripts/modal_session.py --attach
 ```
+
+`--attach` cũng warm/check web trước khi mở trình duyệt. Nếu môi trường Conda cục bộ nằm trong `.conda`, có thể thay đường dẫn Python bằng `'.\.conda\python.exe'`. Không chạy thêm controller `--attach` nếu terminal khác đang quản lý cùng app.
 
 `--name` chọn app khác và `--env` chọn Modal environment; mặc định đọc `MODAL_APP_NAME`, `MODAL_ENVIRONMENT`/active profile. Controller chỉ tự động stop bằng exact App ID sau lookup. Ctrl+C giữa deploy cũng cố resolve và stop ID đó; nếu lookup không thành công, script exit nonzero và yêu cầu kiểm tra Dashboard/stop thủ công, không tự dừng theo tên có thể đã đổi sang deployment khác. Deploy thất bại bình thường không dừng deployment cũ. Lỗi follow logs kết thúc controller và có bước stop; nếu không xác nhận được stop, script exit nonzero và in lệnh để chủ ứng dụng chạy thủ công.
 
@@ -72,7 +80,7 @@ Lệnh dùng lại Modal Secrets đã cấu hình; không truyền API key/mật
 
 Planner OpenAI mặc định dùng `CENTRAL_OPENAI_PLANNING_REASONING_EFFORT=low` cho việc chọn tool; UI reasoning của final answer không thay đổi. Đặt `inherit` nếu muốn planner cũng dùng effort của request. Cấu hình mới có hiệu lực sau redeploy; `--attach` chỉ điều khiển deployment đang tồn tại.
 
-Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. Scale-to-zero sau khoảng 120 giây không hoạt động. `LOCAL_INFERENCE_ENABLED=false` không tải Qwen; E5/reranker vẫn cần corpus và chạy trên CPU hoặc GPU theo cấu hình riêng.
+Mở URL `fastapi_app` được CLI và Modal Dashboard hiển thị, lưu URL đó vào bookmark, và đăng nhập. Không cần `VITE_API_BASE_URL` hay `MODAL_GPU_API_URL`. Lệnh `modal deploy` đơn thuần không chờ web ready hoặc tự mở browser; dùng controller ở trên để có bước kiểm tra này. Khởi động lạnh có thể mất nhiều phút do tải retrieval và model; GPU phát sinh chi phí khi container hoạt động. Scale-to-zero sau khoảng 120 giây không hoạt động: nếu quay lại sau thời gian idle, lần truy cập kế tiếp vẫn có thể cold start. Readiness gate chỉ warm khi bắt đầu phiên, không giữ GPU chạy liên tục. `LOCAL_INFERENCE_ENABLED=false` không tải Qwen; E5/reranker vẫn cần corpus và chạy trên CPU hoặc GPU theo cấu hình riêng.
 
 Mặc định Modal là CPU-only khi `LOCAL_INFERENCE_ENABLED=false` và `MODAL_RETRIEVAL_GPU_CLASS` rỗng. Để tăng tốc E5 và reranker mà vẫn dùng OpenAI cho câu trả lời, giữ `LOCAL_INFERENCE_ENABLED=false`, đặt `MODAL_RETRIEVAL_GPU_CLASS=T4` (hoặc `L4`) và deploy lại. T4 dùng retrieval float32; không yêu cầu bfloat16. Xóa giá trị này và deploy lại để trở về CPU-only. Khi cần chạy Qwen, đặt `LOCAL_INFERENCE_ENABLED=true` và `MODAL_GPU_CLASS=A100-40GB`; cấu hình GPU cho Qwen có ưu tiên hơn GPU retrieval. Tất cả cấu hình đều scale-to-zero và cần secret đăng nhập. `MODAL_GPU_CLASS` không được dùng khi Qwen bị tắt.
 

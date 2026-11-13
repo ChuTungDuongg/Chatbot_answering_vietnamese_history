@@ -216,8 +216,11 @@ flowchart LR
     Mode -->|--attach| Existing["Lookup deployment hiện có"]
     Deploy --> ID["Resolve exact App ID + selected Modal environment"]
     Existing --> ID
-    ID --> Follow["Follow logs trong terminal<br/>Chờ Ctrl+C"]
-    Follow -->|Ctrl+C| Cleanup["Stop/reap local log process<br/>modal app stop APP_ID --yes"]
+    ID --> Follow["Follow logs + lấy URL fastapi_app từ Modal"]
+    Follow --> Warm["Đánh thức container<br/>Poll /health trong thời gian giới hạn"]
+    Warm -->|HTTP 200 + status ok| Ready["Sử Việt is ready: URL<br/>Tự mở trình duyệt; chờ Ctrl+C"]
+    Warm -->|Timeout hoặc Ctrl+C| Cleanup["Stop/reap local log process<br/>modal app stop APP_ID --yes"]
+    Ready -->|Ctrl+C| Cleanup
     Cleanup --> Offline["App và containers dừng<br/>Named Volumes / Secrets được giữ"]
     Offline -->|Chạy lại script| Deploy
 ```
@@ -225,12 +228,14 @@ flowchart LR
 PowerShell tại root repository, với environment/Secrets đã cấu hình:
 
 ```powershell
-# Deploy rồi giữ terminal; Ctrl+C dừng app Modal.
+# Deploy, chờ web sẵn sàng rồi tự mở trình duyệt; Ctrl+C dừng app Modal.
 & '.\.venv\Scripts\python.exe' scripts/modal_session.py
 
 # Hoặc điều khiển deployment đang có, không deploy lại.
 & '.\.venv\Scripts\python.exe' scripts/modal_session.py --attach
 ```
+
+Chờ dòng **`Sử Việt is ready: URL`**; thông báo deploy thành công của Modal chỉ xác nhận đã đăng ký deployment, chưa xác nhận container/web đã khởi động. Script tự warm container và chờ tối đa 960 giây, có tiến độ trong terminal, rồi mở URL. Dùng `--no-browser` nếu chỉ muốn in URL, hoặc `--ready-timeout 1200` để đổi giới hạn chờ. Khởi động lỗi/timeout trả exit code khác 0 và dừng app; Ctrl+C trong lúc chờ cũng dừng app.
 
 Chờ thông báo đã dừng trước khi tắt máy. Mất điện, force-kill terminal hoặc mất mạng không bảo đảm gửi được stop tới cloud; script báo lệnh stop thủ công nếu không xác nhận được. `modal deploy modal_app.py` thông thường vẫn là deployment độc lập với terminal. Xem [Deployment](docs/DEPLOYMENT.md) cho cấu hình T4/API-only và lifecycle đầy đủ.
 

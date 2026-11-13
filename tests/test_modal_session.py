@@ -3,6 +3,7 @@ import json
 import sys
 import threading
 import time
+import webbrowser
 
 import pytest
 
@@ -27,6 +28,8 @@ if operation == "logs" or (operation == "deploy" and os.environ.get("SESSION_TES
         monkeypatch.setenv("SESSION_TEST_BLOCK", "1")
     monkeypatch.setattr(modal_session, "MODAL_COMMAND", [sys.executable, str(fake)])
     monkeypatch.setattr(modal_session, "lookup_app_id", lambda name, environment: "ap-owned")
+    monkeypatch.setattr(modal_session, "prepare_website", lambda *args, **kwargs: "https://history.modal.run")
+    monkeypatch.setattr(webbrowser, "open", lambda url: True)
     return modal_session, log
 
 
@@ -71,6 +74,101 @@ def test_interrupt_during_deploy_also_stops_owned_app(tmp_path, monkeypatch):
     watcher.join()
     assert observed.is_set()
     assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes"]
+
+
+@pytest.mark.parametrize("attach", [False, True])
+def test_browser_opens_only_after_health_is_ready(tmp_path, monkeypatch, capsys, attach):
+    session, log = controller(tmp_path, monkeypatch)
+    stop = threading.Event()
+    steps = []
+    def ready(name, environment, event, *, timeout, process):
+        assert name == "history" and event is stop and timeout == 23
+        steps.append("ready")
+        return "https://history.modal.run"
+    def browser(url):
+        assert steps == ["ready"]
+        steps.append("browser")
+        stop.set()
+        return True
+    monkeypatch.setattr(session, "prepare_website", ready)
+    monkeypatch.setattr(webbrowser, "open", browser)
+    assert session.run_session(name="history", environment=None, attach=attach, stop=stop, ready_timeout=23) == 0
+    assert steps == ["ready", "browser"]
+    assert "Sử Việt is ready: https://history.modal.run" in capsys.readouterr().out
+    assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes"]
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_unready_startup_never_opens_browser_and_stops_owned_app(tmp_path, monkeypatch, capsys, cancelled):
+    session, log = controller(tmp_path, monkeypatch)
+    stop = threading.Event()
+    opened = []
+    def unready(*args, **kwargs):
+        if cancelled:
+            stop.set()
+        return None
+    monkeypatch.setattr(session, "prepare_website", unready)
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    assert session.run_session(name="history", environment="private", attach=False, stop=stop) == int(not cancelled)
+    assert opened == []
+    captured = capsys.readouterr()
+    assert "Sử Việt is ready:" not in captured.out
+    if not cancelled:
+        assert "did not become ready" in captured.err
+    assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes", "--env", "private"]
+
+
+@pytest.mark.parametrize("browser_failure", [False, True])
+def test_browser_failure_does_not_stop_ready_app_until_interrupt(tmp_path, monkeypatch, capsys, browser_failure):
+    session, log = controller(tmp_path, monkeypatch)
+    stop = threading.Event()
+    reached_wait = []
+    def browser(url):
+        if browser_failure:
+            raise OSError("sensitive OS detail")
+        return False
+    original_wait = session._wait
+    def wait(process, event):
+        reached_wait.append(True)
+        event.set()
+        return original_wait(process, event)
+    monkeypatch.setattr(webbrowser, "open", browser)
+    monkeypatch.setattr(session, "_wait", wait)
+    assert session.run_session(name="history", environment=None, attach=True, stop=stop) == 0
+    assert reached_wait == [True]
+    captured = capsys.readouterr()
+    assert "Sử Việt is ready:" in captured.out
+    assert "sensitive OS detail" not in captured.err
+    assert "Open the ready URL manually" in captured.err
+
+
+def test_no_browser_option_still_waits_for_readiness(tmp_path, monkeypatch):
+    session, log = controller(tmp_path, monkeypatch)
+    stop = threading.Event()
+    checked = []
+    def ready(*args, **kwargs):
+        checked.append(True)
+        return "https://history.modal.run"
+    def browser(url):
+        pytest.fail("--no-browser must not launch a browser")
+    monkeypatch.setattr(session, "prepare_website", ready)
+    monkeypatch.setattr(webbrowser, "open", browser)
+    watcher, observed = interrupt_when(log, ["app", "logs"], stop)
+    assert session.run_session(name="history", environment=None, attach=True, stop=stop, open_browser=False) == 0
+    watcher.join()
+    assert observed.is_set()
+    assert checked == [True]
+
+
+def test_cancellation_before_readiness_skips_url_lookup(tmp_path, monkeypatch):
+    session, log = controller(tmp_path, monkeypatch)
+    stop = threading.Event()
+    stop.set()
+    def unexpected(*args):
+        pytest.fail("Cancelled startup must skip URL lookup")
+    monkeypatch.setattr(session, "prepare_website", unexpected)
+    assert session.run_session(name="history", environment=None, attach=True, stop=stop) == 0
+    assert calls(log) == [["app", "stop", "ap-owned", "--yes"]]
     assert not any(row[:2] == ["app", "logs"] for row in calls(log))
 
 
@@ -124,3 +222,51 @@ def test_local_process_cleanup_failure_cannot_skip_exact_id_remote_stop(tmp_path
     finally:
         watcher.join()
     assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes"]
+
+
+def test_log_failure_during_startup_prevents_browser_and_stops_app(tmp_path, monkeypatch, capsys):
+    import asyncio
+    from scripts import modal_session
+    prepare = modal_session.prepare_website
+    session, log = controller(tmp_path, monkeypatch, failure="logs")
+    async def pending_lookup(*args):
+        await asyncio.Event().wait()
+    opened = []
+    monkeypatch.setattr(session, "prepare_website", prepare)
+    monkeypatch.setattr(session, "_lookup_web_url", pending_lookup)
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    assert session.run_session(name="history", environment=None, attach=True, stop=threading.Event(), ready_timeout=3) == 1
+    assert opened == []
+    captured = capsys.readouterr()
+    assert "Sử Việt is ready:" not in captured.out
+    assert "log follower exited" in captured.err
+    assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes"]
+
+
+def test_log_failure_immediately_before_ready_does_not_open_browser(tmp_path, monkeypatch, capsys):
+    session, log = controller(tmp_path, monkeypatch, failure="logs")
+    def ready(*args, process, **kwargs):
+        assert process.wait(timeout=3) == 7
+        return "https://history.modal.run"
+    opened = []
+    monkeypatch.setattr(session, "prepare_website", ready)
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    assert session.run_session(name="history", environment=None, attach=True, stop=threading.Event()) == 1
+    assert opened == [] and "Sử Việt is ready:" not in capsys.readouterr().out
+    assert calls(log)[-1] == ["app", "stop", "ap-owned", "--yes"]
+
+
+def test_cli_passes_readiness_options_to_controller(monkeypatch):
+    import dotenv
+    from scripts import modal_session
+    captured = {}
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["modal_session.py", "--attach", "--name", "history", "--env", "private",
+                                      "--ready-timeout", "23", "--no-browser"])
+    def run(**kwargs):
+        captured.update(kwargs)
+        return 0
+    monkeypatch.setattr(modal_session, "run_session", run)
+    assert modal_session.main() == 0
+    assert captured["name"] == "history" and captured["environment"] == "private"
+    assert captured["attach"] and not captured["open_browser"] and captured["ready_timeout"] == 23
