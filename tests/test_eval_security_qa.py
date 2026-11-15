@@ -60,6 +60,10 @@ def altered_backup(tmp_path, transform):
     changed = tmp_path / "changed.sqlite"
     with store.connect() as source, closing(sqlite3.connect(changed)) as target:
         for table in TABLES:
+            if not source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
+                continue
             sql = source.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
             target.execute(transform(table, sql))
             rows = source.execute(f'SELECT * FROM "{table}"').fetchall()

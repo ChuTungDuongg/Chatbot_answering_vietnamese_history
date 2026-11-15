@@ -18,7 +18,7 @@ class BoundedRoute(APIRoute):
         original = super().get_route_handler()
 
         async def handler(request):
-            if request.url.path.endswith(("/batch/preview", "/batch/apply", "/import")):
+            if request.method in ("POST", "PATCH", "PUT"):
                 limit = 2_100_000
                 try:
                     declared = int(request.headers.get("content-length", "0"))

@@ -5,7 +5,7 @@ test("v1.1 experiment, blind review, comparison and import preview", async ({pag
   expect((await page.request.get("/api/v1/eval/experiments")).status()).toBe(401);
   await page.goto("/login");
   expect(await page.evaluate(async()=> (await fetch("/auth/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:"test-password"})})).status)).toBe(200);
-  const version=`v11-${testInfo.project.name}`;
+  const version=`v11-${testInfo.project.name}-${Date.now()}`;
   expect(await page.evaluate(async version => (await fetch("/api/v1/eval/snapshots", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({version})})).status,version)).toBe(201);
   await page.goto("/eval-studio");
   await page.getByRole("navigation").getByRole("button",{name:"Experiments"}).click();

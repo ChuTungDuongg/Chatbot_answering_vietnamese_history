@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .behavior import BehaviorSpec
 
 DATASET_ID = "vietnamese-history-eval-v1"
 QUOTAS = {
@@ -52,6 +53,7 @@ class Question(BaseModel):
     question_type: str = ""
     ranking_criteria: list[str] = Field(default_factory=list)
     rubric_overrides: dict[str, str] = Field(default_factory=dict)
+    expected_behavior: BehaviorSpec | None = None
 
     @model_validator(mode="after")
     def approval_rules(self):

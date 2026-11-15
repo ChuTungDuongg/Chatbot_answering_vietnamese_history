@@ -6,7 +6,9 @@ export async function api(path, options = {}) {
   if (!response.ok) {
     if (response.status === 401) window.location.assign("/login");
     const body = await response.json().catch(() => ({}));
-    throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || "Không thể hoàn tất yêu cầu"));
+    const error = new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || "Không thể hoàn tất yêu cầu"));
+    error.status = response.status;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 }

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.conversations import router as conversations_router
 from app.eval_studio.api import router as eval_studio_router
+from app.eval_studio.benchmark_api import router as eval_benchmark_router
 from app.api.routes import router as api_router
 from app.central.runtime import CentralRuntime
 from app.central.budgets import AgentLimits
@@ -155,6 +156,9 @@ async def lifespan(app: FastAPI):
             app.state.chat_mode_router = ChatModeRouter(hybrid=hybrid, central=central)
         yield
     finally:
+        benchmark_manager = getattr(app.state, "eval_benchmark_manager", None)
+        if benchmark_manager is not None:
+            await benchmark_manager.shutdown()
         for name in ("hybrid_runtime", "central_runtime"):
             runtime = getattr(app.state, name, None)
             if runtime is not None:
@@ -180,6 +184,7 @@ app.add_middleware(OwnerAuthMiddleware, settings=settings)
 app.include_router(api_router)
 app.include_router(conversations_router)
 app.include_router(eval_studio_router)
+app.include_router(eval_benchmark_router)
 
 
 @app.get("/")

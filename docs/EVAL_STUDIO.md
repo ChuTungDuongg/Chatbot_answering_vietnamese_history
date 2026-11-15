@@ -63,7 +63,7 @@ cd frontend
 npx playwright test --config eval.playwright.config.js
 ```
 
-Browser fixture dùng password thử nghiệm, dữ liệu thử riêng và chỉ lắng nghe loopback. Playwright cần Chrome cài sẵn. Không chạy fixture thử trên mạng công khai.
+Browser fixture dùng password thử nghiệm, dữ liệu thử riêng và chỉ lắng nghe loopback. Nó inject executor offline vào app trong bộ nhớ; không có HTTP option hoặc environment flag để chọn fake provider trên production. Playwright dùng Chrome trên local, Chromium được cài trong CI. Không chạy fixture thử trên mạng công khai.
 
 ## Kiến trúc và migration v1.1
 
@@ -71,7 +71,7 @@ Khi truy cập một API v1.1 lần đầu, migration idempotent tạo thêm `ev
 
 DDL và seed/migration dùng transaction rõ ràng: lỗi tạo một bảng rollback toàn migration. Có indexes theo response/question/run/snapshot cho lookup và khóa ngoại. ID tự cấp nằm trong `HIST-EVAL-001`–`HIST-EVAL-999999999`; numeric ID import ngoài khoảng này được giữ như external ID và không làm tràn SQLite counter. Việc khởi động sửa counter không hợp lệ từ bản cũ mà không đổi question IDs.
 
-Không tự chạy benchmark hoặc gọi LLM. Một experiment chứa metadata do người dùng cung cấp; giá trị chưa biết để trống/null. Trong **Experiments**, tạo experiment từ snapshot rồi thêm output thủ công, hoặc dùng import batch. Không dán API key, mật khẩu, token, private chain-of-thought hay secret vào metadata, output hoặc evidence. Input v1.1 và backup từ chối một số mẫu credential phổ biến; kiểm tra này không thể phát hiện mọi bí mật. Cấu hình experiment bị khóa khi đã có run; run bị khóa khi có review hoặc blind assignment. Xóa chỉ khả dụng khi không có dữ liệu phụ thuộc.
+Luồng nhập v1.1 không tự chạy benchmark hoặc gọi LLM. Một experiment chứa metadata do người dùng cung cấp; giá trị chưa biết để trống/null. Trong **Experiments**, tạo experiment từ snapshot rồi thêm output thủ công, hoặc dùng import batch. Không dán API key, mật khẩu, token, private chain-of-thought hay secret vào metadata, output hoặc evidence. Input v1.1 và backup từ chối một số mẫu credential phổ biến; kiểm tra này không thể phát hiện mọi bí mật. Cấu hình experiment bị khóa khi đã có run hoặc benchmark v1.2; run bị khóa khi có review, blind assignment hoặc measurement tự động. Xóa chỉ khả dụng khi không có dữ liệu phụ thuộc.
 
 Record run mẫu dùng trong JSONL (thay ID bằng giá trị thật):
 
@@ -132,4 +132,78 @@ Modal: dừng app và bảo đảm không còn container ghi Volume; tải backu
 
 ## Giới hạn
 
-Không có LLM judge, tự xác minh sử liệu, benchmark runner hay capture tự động từ chatbot. Evidence/telemetry phải được nhập từ run thực. Không có cách ly quyền reviewer độc lập cho blind A/B; không bảo đảm phát hiện mọi dấu hiệu định danh trong chính output. Review đã lưu chỉ đọc; tạo review mới hoặc phiên blind mới để đánh giá lại. JSONL/CSV export question không tự chứa manifest; xuất JSON cùng bộ lọc. Chưa kiểm tra deploy hoặc restore Modal thực tế.
+Không tự xác minh sử liệu hoặc chạy LLM judge. V1.2 capture tự động chỉ cho benchmark do owner chủ động khởi chạy; output chatbot cũ vẫn nhập thủ công. Không có cách ly quyền reviewer độc lập cho blind A/B; không bảo đảm phát hiện mọi dấu hiệu định danh trong chính output. Review đã lưu chỉ đọc; tạo review mới hoặc phiên blind mới để đánh giá lại. JSONL/CSV export question không tự chứa manifest; xuất JSON cùng bộ lọc. Chưa kiểm tra deploy hoặc restore Modal thực tế.
+
+## V1.2 — Automated Benchmark Runner
+
+V1.2 thêm workspace **Benchmarks** bên cạnh các workspace cũ. Các bảng mới chỉ được tạo idempotent, không drop/recreate bảng cũ: `evaluation_benchmarks`, `evaluation_benchmark_items`, `evaluation_run_measurements`, `evaluation_judge_profiles`, `evaluation_judge_scores`. Job gắn experiment/snapshot; từng item gắn question; mỗi attempt tạo run riêng. Run completed có response v1.0 để tiếp tục Human Review và Blind A/B. Run, evidence, measurement và trạng thái item được ghi trong cùng transaction. Backup schema `1.2` chứa cả năm bảng mới; restore vẫn nhận archive `1.1` và giữ nguyên IDs/relationships.
+
+Backend chia thành các module: `execution.py` bọc runtime hiện có cho riêng request benchmark; `benchmark.py` quản lý job/lease/attempt; `behavior.py` tính deterministic observations; `analytics.py` ghép cặp measurements; `judge.py` lưu profile/result và xuất structured contract. `benchmark_api.py` dùng owner session, feature flag và CSRF/Origin protection giống API cũ. SQLite/file I/O chạy trong threadpool; provider streaming vẫn chạy qua execution boundary và quota của chatbot. Không ghi ephemeral benchmark conversations vào lịch sử chat.
+
+### Workflow từ snapshot đến so sánh
+
+1. Biên soạn các câu cần chạy, sau đó tạo immutable snapshot. Snapshot 40 slots trống không chạy được: mọi câu được chọn phải có question dài 2–1.000 ký tự. Có thể chọn vài ID đã biên soạn hoặc smoke trước khi hoàn thiện cả 40 câu.
+2. Tạo experiment trong **Experiments**, chọn cùng snapshot cho các cấu hình cần so sánh. Live execution yêu cầu provider, model ID thật (ví dụ `gpt-6-luna` hoặc `gpt-6.1-terra` theo allowlist runtime), Hybrid/Central, FAISS/Qdrant và `final_k`. OpenAI cần reasoning effort; Central cần planning reasoning effort (`inherit`, `low`, `medium`, `high`, `xhigh`). Local model ID phải khớp model đang được runtime phục vụ. Metadata chưa biết không được suy đoán; live runner sẽ từ chối cấu hình thiếu trường cần thiết.
+3. Mở **Benchmarks**, chọn experiment, question IDs hoặc smoke, timeout, requests/minute và retry. Mặc định không retry. Có thể đặt prompt overrides theo tên tài nguyên hiện trên UI và tool description overrides theo tool được phép. Chọn **Xem cấu hình trước khi tạo**, rồi **Tạo benchmark chưa chạy**. Hai thao tác này không gọi model.
+4. Kiểm tra cấu hình đã đóng băng và các hash. Đánh dấu xác nhận riêng cho lần **Start/Resume**, rồi nhấn nút chạy. Chỉ thao tác này mới có thể gọi API có tính phí. Runtime phải đang chạy full mode với provider/retrieval hợp lệ; chế độ API-only không thể chạy model thật.
+5. Theo dõi số câu pending/running/completed/failed/cancelled. Mở run để xem answer, retrieved evidence, final context, citations, tool diagnostics và metrics. Các trường chưa capture hiển thị `Not captured`/`Chưa ghi`. Không truy vấn lại retrieval backend để dựng evidence cũ.
+6. Chấm run completed trong **Human review** theo rubric 30/20/20/20/10, hoặc tạo Blind A/B từ các experiments. Điểm human vẫn riêng với metrics tự động.
+7. Chọn **So sánh tự động** trong Benchmarks, chọn experiments và một benchmark cụ thể cho mỗi experiment hoặc dùng bản mới nhất. Chỉ cùng snapshot được ghép cặp. Xem từng metric, latency/usage/cost có thật, W/T/L theo question và drill-down. **Model Comparison** v1.1 vẫn giữ cách tổng hợp human review hiện có.
+
+Một experiment chỉ có một configuration identity sau khi tạo benchmark. Để so sánh Prompt v1/v2 hoặc mô tả tool khác nhau, tạo hai experiments. Job lưu prompt đã resolve, tool descriptors, hash cấu hình, git SHA, runtime/retrieval settings, index/corpus fingerprints có sẵn. Start/resume và mỗi câu đều kiểm tra live baseline; thay đổi code/prompt/index/model làm từ chối drift, cần tạo experiment/job mới. Không sửa prompt hoặc ranking production. Tool variants chỉ đổi descriptions; argument schema và tool policy vẫn được runtime kiểm soát. MCP chỉ chạy khi được cấu hình và cho phép rõ ràng; metadata MCP nếu dùng phải là JSON `ToolSteering` hợp lệ.
+
+### Timeout, retry, cancellation và recovery
+
+Mỗi job chạy tuần tự; requests/minute giới hạn thời điểm bắt đầu câu/attempt và quota/concurrency của provider vẫn áp dụng. Retry chỉ cho lỗi tạm thời được phân loại, tối đa 3 lần, exponential backoff; owner chọn trước vì một request timeout vẫn có thể đã bị tính phí. Mỗi attempt đã ghi giữ nguyên error/measurement; không ghi đè attempt cũ. Hoàn tất job có thể còn failed questions: tạo job mới cho một replicate khác. Cancel/resume giữ các câu completed và chỉ thử lại phần chưa hoàn tất. Cancel đúng lúc provider trả xong vẫn giữ answer đã nhận.
+
+SQLite transaction cấp lease 30 giây cho một worker, heartbeat gia hạn trong lúc chạy. Worker hết lease không được ghi hoặc retry attempt của worker mới. Khởi động app không tự tiếp tục paid work. Sau restart/container eviction, mở job, chờ lease hết hạn nếu cần, kiểm tra cảnh báo interrupted attempt và chủ động Resume. Không thể bảo đảm exactly-once billing nếu process chết sau khi upstream nhận request nhưng trước khi SQLite xác nhận kết quả. Timeout/process death có thể làm mất phần usage/trace chưa hoàn tất; các giá trị này giữ null và không được ước tính. App shutdown yêu cầu dừng worker trước khi đóng provider.
+
+Trên Modal, job/items/results dùng cùng `/data/chat.sqlite3` trên Volume hiện có và commit sau các chuyển trạng thái/kết quả. Giữ một container/writer; runner nằm trong process ASGI, không phải durable external queue. Container có thể dừng giữa job; dùng recovery ở trên. Chưa xác minh live Modal persistence/eviction trong v1.2. Không bật runner trên nhiều container cùng Volume SQLite.
+
+### Expected behavior và giới hạn deterministic evaluation
+
+Question Editor có JSON editor **Expected agent behavior** tùy chọn. Metadata này nằm trong snapshot; chỉ question text được gửi vào model benchmark, không gửi reference answer, facts hoặc expected behavior. Ví dụ:
+
+```json
+{
+  "required_tools": ["search_history"],
+  "any_tool_groups": [["get_events", "search_history"]],
+  "forbidden_tools": ["search_web"],
+  "max_tool_calls": 6,
+  "max_repeated_calls": 1,
+  "expected_evidence_ids": ["known-chunk-id"],
+  "evidence_terms": ["thuật ngữ cần có trong evidence"],
+  "expected_exit_reasons": ["evidence_sufficient"],
+  "require_citations": true,
+  "output_format": "text"
+}
+```
+
+Đây là expectations, không phải tool allowlist runtime. Có thể dùng `allowed_tools`, `required_json_keys` khi `output_format="json"`, `answerable`, `in_domain`; schema từ chối trường lạ. Không ép một chuỗi tool-call duy nhất. Argument validity dựa schema thực; repetition dựa tên tool + fingerprint arguments, không lưu raw arguments. Tool success và argument-validity rates có denominators quan sát được. Không có trace thì không suy ra từ aggregate count. Tool lựa chọn hợp lý về ngữ nghĩa, lập luận, grounded claims, answerability/OOD vẫn cần human/judge; rule checks không xác nhận chúng.
+
+Tái sử dụng metrics trong `evaluation/metrics/` cho lexical answer overlap, citation ID validity và evidence phrase coverage. Nhãn UI ghi rõ đây là heuristic. Không có composite heuristic "accuracy score"; missing observations và chưa được chấm luôn null. Lexical LCS được bỏ qua nếu answer/reference quá 8.192 ký tự hoặc 512 tokens; evidence checks cần dữ liệu đầy đủ được bỏ qua nếu quá 500 chunks/65.536 ký tự, không tính điểm trên prefix rồi giả như toàn bộ dữ liệu. Artifact gốc vẫn được lưu. Metrics ghi `schema_version=1.2`, `metric_version=behavior-v1` để truy vết.
+
+So sánh tự động dùng đúng một benchmark được chọn cho mỗi experiment và đúng final completed attempt của mỗi question; review human mới nhất của response tương ứng. Các metric được paired riêng chỉ khi cả hai phía có giá trị trên cùng question/snapshot; missing score không là 0. Telemetry trung bình ở bảng chính thuộc final completed attempts; `attempt_totals` gồm cả retry/failed attempts và chỉ có tổng nếu mọi attempt có giá trị. W/T/L lấy phía A làm mốc; delta là B − A và hướng tốt/xấu tùy metric. Điểm human không được thay bằng heuristic hoặc judge score.
+
+### Optional judge contract (offline)
+
+Không có automatic LLM-as-a-Judge execution trong milestone này. API hỗ trợ profile bất biến theo name/version, provider/model/version, configurable five-criterion rubric có tổng weight 100; xuất input/schema contract và import structured scores 0–5. Judge result là ý kiến đánh giá được nhập, không phải sự thật lịch sử đã xác minh. Không chấp nhận trường reasoning/replay tùy ý; notes chỉ dành cho nhận xét ngắn. Owner tự quản lý việc chạy judge bên ngoài và không nhập credentials/private reasoning.
+
+Kết quả judge append-only, external ID retry idempotent, liên kết run/profile cụ thể. Calibration đối chiếu latest judge với latest human review của cùng response, báo số cặp và mean absolute difference trên thang 100. Muốn dùng judge trong automated comparison API phải chọn rõ `judge_profile_id`; mặc định không trộn các judge model/rubric khác nhau. UI MVP hiển thị chỗ cho judge score nhưng chưa có form tạo/chạy judge; dùng API cho contract/import/calibration. Việc chạy judge tự động và UI calibration là phần mở rộng sau.
+
+### API v1.2
+
+Tất cả đường dẫn dưới `/api/v1/eval`, cùng auth/flag cũ; body mutation tối đa 2,1 MB.
+
+| Nhóm | Endpoint |
+| --- | --- |
+| Khả năng runtime | `GET /benchmark/capabilities` |
+| Job | `GET/POST /benchmarks`, `GET /benchmarks/{id}` |
+| Chủ động chạy/hủy | `POST /benchmarks/{id}/start` với `{"confirm_live":true}`, `POST /benchmarks/{id}/cancel` |
+| Diagnostics/metrics | `GET /runs/{id}/measurements` (null cho legacy run) |
+| So sánh tự động | `POST /benchmark/compare` với `experiment_ids`, optional `benchmark_ids`, `judge_profile_id` |
+| Judge profile/result | `GET/POST /judge/profiles`, `GET/POST /judge/scores` |
+| Structured contract | `GET /judge/profiles/{id}/contract/{run_id}` |
+| Calibration | `GET /judge/profiles/{id}/calibration` |
+
+Live benchmarks không tự ước tính cost từ bảng giá: hiện provider không trả cost nên để null; chỉ lưu actual token usage khi đủ các phase được capture. Không capture raw model messages, tool arguments, encrypted replay hoặc private chain-of-thought. Bộ lọc secrets fail closed với mẫu đã biết nhưng không thể bảo đảm nhận diện mọi dữ liệu nhạy cảm trong answer/evidence do người dùng cung cấp.

@@ -180,6 +180,8 @@ class StudioV11:
                 raise KeyError(item["snapshot_id"])
             if db.execute("SELECT 1 FROM evaluation_runs WHERE experiment_id=?", (id,)).fetchone():
                 raise ConflictError("Experiment configuration is locked after the first run")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='evaluation_benchmarks'").fetchone() and db.execute("SELECT 1 FROM evaluation_benchmarks WHERE experiment_id=?", (id,)).fetchone():
+                raise ConflictError("Experiment configuration is locked by a benchmark")
             item.update(id=id, created_at=old["created_at"], updated_at=now())
             db.execute(
                 "UPDATE evaluation_experiments SET snapshot_id=?, data=? WHERE id=?",
@@ -207,6 +209,8 @@ class StudioV11:
             row = db.execute("SELECT data,response_id FROM evaluation_runs WHERE id=?", (id,)).fetchone()
             if not row:
                 raise KeyError(id)
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='evaluation_run_measurements'").fetchone() and db.execute("SELECT 1 FROM evaluation_run_measurements WHERE run_id=?", (id,)).fetchone():
+                raise ConflictError("Recorded benchmark runs are immutable")
             old = json.loads(row[0])
             if (
                 item["experiment_id"],

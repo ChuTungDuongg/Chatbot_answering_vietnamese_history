@@ -28,8 +28,13 @@ TABLES = (
     "evaluation_blind_reviews",
     "evaluation_import_batches",
     "evaluation_id_counters",
+    "evaluation_benchmarks",
+    "evaluation_benchmark_items",
+    "evaluation_run_measurements",
+    "evaluation_judge_profiles",
+    "evaluation_judge_scores",
 )
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 def sha(data):
@@ -165,7 +170,7 @@ def restore_backup(archive_path, target):
             raise ValueError("Backup too large")
         manifest = json.loads(archive.read("manifest.json"))
         payload = archive.read("evaluation.sqlite")
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    if manifest.get("schema_version") not in ("1.1", SCHEMA_VERSION):
         raise ValueError("Incompatible backup schema")
     if sha(payload) != manifest.get("sha256"):
         raise ValueError("Backup checksum mismatch")
@@ -195,10 +200,14 @@ def restore_backup(archive_path, target):
                 raise ValueError("Unexpected schema objects")
             from .store import EvalStore
             from .v11 import StudioV11
+            from .benchmark import BenchmarkStore
+            from .judge import JudgeStore
 
             with tempfile.TemporaryDirectory(prefix="eval-schema-") as directory:
                 expected_path = Path(directory) / "expected.sqlite"
-                StudioV11(EvalStore(expected_path))
+                expected_store = EvalStore(expected_path)
+                BenchmarkStore(StudioV11(expected_store))
+                JudgeStore(expected_store)
                 with closing(sqlite3.connect(expected_path)) as expected_db:
                     for table in tables:
                         if table_schema(db, table) != table_schema(expected_db, table):

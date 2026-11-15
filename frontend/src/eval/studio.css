@@ -37,4 +37,47 @@
 .eval-form-fields { display:grid; gap:16px; min-width:0; padding:0; margin:0; border:0; }
 .editor-id { flex-wrap:wrap; }
 .editor-id code { white-space:nowrap; }
+.benchmark-create>summary { display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:700; }
+.benchmark-create>form { margin-top:16px; }
+.benchmark-layout { display:grid; grid-template-columns:minmax(220px,.65fr) minmax(0,1.7fr); gap:16px; align-items:start; }
+.benchmark-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.benchmark-variants { margin-top:14px; }
+.benchmark-preview,.benchmark-confirm { padding:16px; background:var(--bg-elevated); border:1px solid var(--border); border-radius:7px; }
+.benchmark-preview h3,.benchmark-preview p { margin:0; }
+.benchmark-preview pre,.benchmark-json { max-width:100%; max-height:350px; padding:14px; overflow:auto; background:var(--bg); border-radius:6px; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 var(--font-mono); }
+.benchmark-hashes { margin:0; display:grid; gap:10px; }
+.benchmark-hashes>div { display:grid; grid-template-columns:135px minmax(0,1fr); gap:10px; }
+.benchmark-hashes dt { color:var(--text-muted); }
+.benchmark-hashes dd { margin:0; overflow-wrap:anywhere; }
+.benchmark-state.running { color:var(--accent); background:var(--accent-soft); }
+.benchmark-state.completed { color:var(--success); background:color-mix(in srgb,var(--success) 13%,transparent); }
+.benchmark-state.paused,.benchmark-state.cancelled { color:var(--text-primary); }
+.benchmark-progress { display:grid; gap:10px; }
+.benchmark-progress p { margin:0; color:var(--text-secondary); }
+.benchmark-table caption,.automated-comparison caption,.tool-diagnostics caption { text-align:left; font-weight:700; padding:8px 0; }
+.benchmark-detail>.panel-heading { margin-bottom:0; }
+.benchmark-table th:first-child { min-width:145px; }
+.automated-option { min-width:0; }
+.benchmark-page,.automated-comparison { grid-template-columns:minmax(0,1fr); min-width:0; }
+.automated-comparison>* { min-width:0; }
+.automated-comparison .experiment-options { max-height:360px; overflow-y:auto; }
+.automated-comparison .experiment-options label>span { min-width:0; overflow-wrap:anywhere; }
+.automated-comparison .comparison-note { overflow-wrap:anywhere; }
+.automated-option>.eval-field { display:grid; padding:10px; }
+.automated-option .eval-field>span { font-size:11px; }
+.metric-direction { display:block; color:var(--text-muted); margin-top:5px; font-weight:400; }
+.paired-metrics>summary { cursor:pointer; font-weight:700; min-height:44px; }
+.paired-assessment { display:inline-block; padding:6px 8px; border-radius:5px; color:var(--text-secondary); background:var(--bg-elevated); }
+.paired-assessment.regression { color:var(--danger); background:var(--danger-soft); }
+.paired-assessment.improvement { color:var(--success); background:color-mix(in srgb,var(--success) 13%,transparent); }
+.run-measurements { margin-top:22px; padding-top:12px; border-top:1px solid var(--border); }
+.measurement-values { display:grid; gap:0; }
+.measurement-values>div { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:12px; border-bottom:1px solid var(--border-subtle); padding:10px 0; }
+.measurement-values dd { margin:0; font-variant-numeric:tabular-nums; }
+.measurement-values code,.tool-diagnostics code { overflow-wrap:anywhere; }
+.tool-diagnostics td small { display:block; margin-top:5px; }
+.benchmark-page button,.benchmark-page summary,.run-measurements button { min-height:44px; }
+.benchmark-page input[type=checkbox] { flex-shrink:0; }
+@media(max-width:1050px) { .benchmark-layout { grid-template-columns:1fr; } }
+@media(max-width:700px) { .benchmark-options { grid-template-columns:1fr; } .benchmark-hashes>div { grid-template-columns:1fr; gap:4px; } .benchmark-page .checkbox-line { align-items:flex-start; line-height:1.6; } .benchmark-page .checkbox-line input { margin-top:4px; } .benchmark-preview pre,.benchmark-json { font-size:12px; } .benchmark-create,.benchmark-detail,.automated-comparison { padding:16px; } }
 @media(min-width:701px) and (max-width:1050px) { .editor-header { flex-direction:column; gap:12px; } .editor-actions { width:100%; } }

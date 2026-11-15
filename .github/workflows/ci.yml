@@ -17,6 +17,31 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-corpus.txt pytest modal==1.5.3
       - run: python -m compileall -q app frontend_server scripts evaluation benchmarks
       - run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - name: Build same-origin Eval Studio assets
+        run: npm --prefix frontend run build
+        env:
+          VITE_API_BASE_URL: '/'
+      - run: cd frontend && npx playwright install --with-deps chromium
+      - name: Eval Studio authenticated offline browser regression
+        shell: bash
+        run: |
+          python tests/eval_browser_server.py > /tmp/eval-studio-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; cat /tmp/eval-studio-server.log' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8765/health; then break; fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then exit 1; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/health
+          cd frontend
+          npx playwright test --config eval.playwright.config.js
 
   frontend:
     runs-on: ubuntu-latest
