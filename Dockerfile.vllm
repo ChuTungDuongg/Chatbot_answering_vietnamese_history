@@ -44,6 +44,8 @@ RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /workspace/requirements.txt
 
 COPY app /workspace/app
+COPY evaluation/__init__.py /workspace/evaluation/__init__.py
+COPY evaluation/metrics /workspace/evaluation/metrics
 COPY --from=ui-builder /workspace/frontend/dist /workspace/frontend_dist
 
 EXPOSE 8000

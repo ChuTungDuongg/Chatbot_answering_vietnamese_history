@@ -1,1 +1,1 @@
-"""Offline deterministic baseline evaluation. Never imported by the application."""
+"""Evaluation utilities; production reuses only lightweight deterministic metrics."""

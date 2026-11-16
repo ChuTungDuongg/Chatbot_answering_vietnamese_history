@@ -50,7 +50,9 @@ checkpoints/
 # Local datasets / generated artifacts
 data/
 outputs/
-evaluation/
+evaluation/*
+!evaluation/__init__.py
+!evaluation/metrics/
 
 # Modal test scripts
 modal_*sanity.py
@@ -74,3 +76,7 @@ reports/
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+
+# Keep recursive caches excluded even below an allowlisted runtime directory.
+**/__pycache__/
+**/*.py[cod]
