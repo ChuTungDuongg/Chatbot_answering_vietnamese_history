@@ -1,5 +1,6 @@
 """The production image must import Studio without the repository/test tree."""
 
+import asyncio
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,7 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_modal_build_context_excludes_nested_caches_secrets_and_datasets():
-    from modal.file_pattern_matcher import FilePatternMatcher
+    # Modal 1.5 changes the process-wide Windows asyncio policy on import.
+    # Keep that SDK side effect out of later MCP subprocess/runtime tests.
+    policy = asyncio.get_event_loop_policy()
+    try:
+        from modal.file_pattern_matcher import FilePatternMatcher
+    finally:
+        asyncio.set_event_loop_policy(policy)
 
     excluded = FilePatternMatcher.from_file(ROOT / ".dockerignore")
     for name in (

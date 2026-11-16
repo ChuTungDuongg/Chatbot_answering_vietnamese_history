@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   Check,
+  FlaskConical,
   Menu,
   MessageSquare,
   Moon,
@@ -22,6 +23,7 @@ function ChatSidebar({
   isLoading,
   isRunning,
   theme,
+  evalStudioEnabled = false,
   onClose,
   onNewConversation,
   onSelectConversation,
@@ -180,6 +182,12 @@ function ChatSidebar({
       </div>
 
       <div className="sidebar-footer">
+        {evalStudioEnabled && (
+          <a className="studio-navigation-link" href="/eval-studio">
+            <FlaskConical aria-hidden="true" />
+            <span>Eval Studio</span>
+          </a>
+        )}
         <button type="button" onClick={onToggleTheme}>
           {theme === "dark" ? <Sun /> : <Moon />}
           <span>{theme === "dark" ? "Giao diện sáng" : "Giao diện tối"}</span>

@@ -21,7 +21,7 @@ Công cụ nội bộ để con người biên soạn và đánh giá câu trả
 
 ## Modal
 
-Triển khai theo [DEPLOYMENT.md](DEPLOYMENT.md), giữ secret auth và URL ASGI hiện tại. Trước khi deploy, đặt `EVAL_STUDIO_ENABLED=true` trong môi trường chạy `modal deploy modal_app.py`; flag mặc định là `false`. Mở `https://<URL-fastapi_app>/eval-studio` và đăng nhập. Tắt bằng cách đặt flag về `false` và deploy lại; dữ liệu vẫn nằm trong volume.
+Triển khai theo [DEPLOYMENT.md](DEPLOYMENT.md), giữ secret auth và URL ASGI hiện tại. App Modal này bật Studio mặc định theo cấu hình owner; `Settings` dùng chung vẫn mặc định tắt ở môi trường khác. Có thể đặt `EVAL_STUDIO_ENABLED=true` rõ ràng trước khi deploy để ghi đè giá trị `false` trong `.env`. Sau khi đăng nhập, chọn **Eval Studio** ở cuối sidebar chat hoặc mở `https://<URL-fastapi_app>/eval-studio`. Nút chỉ hiện khi Studio và authentication cùng bật. Tắt bằng cách đặt `EVAL_STUDIO_ENABLED=false` và deploy lại; dữ liệu vẫn nằm trong volume.
 
 Các bảng `evaluation_datasets`, `evaluation_questions`, `evaluation_responses`, `human_reviews`, `dataset_versions` nằm trong `CHAT_DATABASE_PATH` hiện có (`/data/chat.sqlite3` trên Modal). Volume `vn-history-chat-data` được commit sau mỗi thay đổi Studio; deploy giữ một container/writer như cấu hình hiện tại. Không dùng nhiều container ghi cùng SQLite trên Volume. Backup và khôi phục toàn bộ SQLite/Volume theo quy trình vận hành của bạn. Chưa chạy thử deploy hay khôi phục Modal trong thay đổi này. Studio dùng URL ASGI cùng origin; gateway frontend-only cũ không chuyển owner cookie và không hỗ trợ luồng này.
 

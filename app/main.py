@@ -225,6 +225,7 @@ async def ready():
                    "reasoning_efforts": ["low", "medium", "high", "xhigh"]},
     }
     state["authentication"] = {"enabled": settings.auth_enabled}
+    state["eval_studio"] = {"enabled": settings.eval_studio_enabled and settings.auth_enabled}
     if settings.is_full:
         hybrid = getattr(app.state, "hybrid_runtime", None)
         central = getattr(app.state, "central_runtime", None)

@@ -41,6 +41,25 @@ test("hiển thị hội thoại đã có sau khi bootstrap", async () => {
   expect(await screen.findByRole("heading", { name: "Nhà Trần", level: 1 })).toBeInTheDocument();
 });
 
+test("enabled owner Studio is discoverable from the chat sidebar on the same origin", async () => {
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss"],
+    authentication: { enabled: true }, eval_studio: { enabled: true } });
+  render(<App />);
+  const link = await screen.findByRole("link", { name: "Eval Studio" });
+  expect(link).toHaveAttribute("href", "/eval-studio");
+});
+
+test.each([
+  { authentication: { enabled: true }, eval_studio: { enabled: false } },
+  { authentication: { enabled: false }, eval_studio: { enabled: true } },
+  {},
+])("Studio navigation stays hidden when unavailable (%j)", async (capabilities) => {
+  api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss"], ...capabilities });
+  render(<App />);
+  await screen.findByRole("heading", { name: "Nhà Trần", level: 1 });
+  expect(screen.queryByRole("link", { name: "Eval Studio" })).not.toBeInTheDocument();
+});
+
 test("provider preferences persist without a service-token input", async () => {
   api.getRetrievalCapabilities.mockResolvedValue({ default_backend: "faiss", available_backends: ["faiss"],
     providers: { local: { available: true }, openai: { available: true } } });

@@ -245,6 +245,7 @@ function App() {
         isLoading={isLoadingConversations}
         isRunning={isRunning || isUploading || isLoadingConversations || isCreatingConversation || isDeletingConversation}
         theme={theme}
+        evalStudioEnabled={retrieval.capabilities.eval_studio?.enabled === true && retrieval.capabilities.authentication?.enabled === true}
         onClose={() => setSidebarOpen(false)}
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}

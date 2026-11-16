@@ -145,7 +145,8 @@ export async function getRetrievalCapabilities(options = {}) {
   return { ...(ready.retrieval ?? { available_backends: [] }),
     mcp: ready.mcp ?? { enabled: false, servers: [] }, tools: ready.tools ?? [], tool_policy: ready.tool_policy ?? {},
     providers: ready.providers ?? { local: { available: true }, openai: { available: false } },
-    authentication: ready.authentication ?? { enabled: false } };
+    authentication: ready.authentication ?? { enabled: false },
+    eval_studio: ready.eval_studio ?? { enabled: false } };
 }
 
 export async function streamChat({
